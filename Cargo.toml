@@ -1,0 +1,40 @@
+[package]
+name = "godot_xreal"
+version = "0.1.0"
+edition = "2021"
+authors = ["KOGA Mitsuhiro <shiena.jp@gmail.com>"]
+license = "MIT"
+repository = "https://github.com/shiena/godot-xreal"
+description = "Godot 4 GDExtension that drives XREAL glasses (3DoF head tracking) via the XREAL native C API, ported from the Unity com.xreal.xr SDK."
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+# api-4-4 is the minimum engine API level (works on Godot 4.4 and newer).
+# Bump to api-4-5 etc. if you want to depend on newer engine symbols.
+godot = { version = "0.5", features = ["api-4-4"] }
+# Runtime dlopen/dlsym of the vendored XREAL .so files (libXREALNativeSessionManager.so,
+# libXREALXRPlugin.so). Kept out of the link line so the extension still loads on a
+# desktop editor where those libraries are absent.
+libloading = "0.8"
+
+# Android-only: read the host JavaVM / Activity jobject published to the process, used as
+# the `unityActivity` pointer for InitUserDefinedSettings during session bootstrap.
+[target.'cfg(target_os = "android")'.dependencies]
+ndk-context = "0.1"
+# Receive the host Activity jobject + JavaVM from the Java side (XrealBridge) and publish
+# them into ndk-context, since Godot does not populate it. Used only by the JNI entry
+# point in src/jni_bridge.rs.
+jni = "0.21"
+
+[profile.dev]
+opt-level = 0
+debug = 1
+incremental = true
+
+[profile.release]
+opt-level = 3
+strip = true
+lto = true
+codegen-units = 1
