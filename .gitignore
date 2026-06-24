@@ -1,0 +1,30 @@
+# Rust
+/target/
+Cargo.lock
+
+# Godot
+.godot/
+*.import
+demo/addons/
+android
+jniLibs
+
+# Build artifacts
+*.dll
+*.so
+*.dylib
+
+# Release-only addon payload (assembled in CI, shipped in the release zip)
+/addons/godot_gsplat/bin/
+/addons/godot_gsplat/godot_gsplat.gdextension
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
