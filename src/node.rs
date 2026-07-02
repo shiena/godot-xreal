@@ -176,10 +176,34 @@ impl XrealHeadTracker {
             }
             return;
         };
+        // Apply the SDK's exact per-eye projection + eye offset when available (pixel-accurate AR),
+        // else fall back to the symmetric IPD + hardcoded FOV.
+        let proj = crate::unity_plugin::stereo_projection();
+        const NEAR: f32 = 0.05;
+        const FAR: f32 = 1000.0;
         for (i, cam) in rig.cameras.iter_mut().enumerate() {
-            let sign = if i == 0 { -1.0 } else { 1.0 };
-            let offset = Transform3D::new(Basis::IDENTITY, Vector3::new(sign * HALF_IPD, 0.0, 0.0));
-            cam.set_global_transform(head * offset);
+            let p = proj[i];
+            let eye_x = if p.valid && p.px != 0.0 {
+                p.px
+            } else if i == 0 {
+                -HALF_IPD
+            } else {
+                HALF_IPD
+            };
+            cam.set_global_transform(head * Transform3D::new(Basis::IDENTITY, Vector3::new(eye_x, 0.0, 0.0)));
+
+            if p.valid && (p.r - p.l) > 1e-4 && (p.t - p.b) > 1e-4 {
+                // Half-angle tangents → asymmetric frustum. Godot's Camera3D.set_frustum(size,
+                // offset, near, far) maps to near-plane extents ±size/2 (vert) / ±size*aspect/2
+                // (horiz) shifted by offset; near-plane coord = tangent*near.
+                let size = (p.t - p.b) * NEAR;
+                let offset = Vector2::new((p.r + p.l) * 0.5 * NEAR, (p.t + p.b) * 0.5 * NEAR);
+                cam.set_frustum(size, offset, NEAR, FAR);
+            } else {
+                cam.set_fov(EYE_FOV);
+                cam.set_near(NEAR);
+                cam.set_far(FAR);
+            }
         }
         let mut rs = RenderingServer::singleton();
         // Use the actual render-target texture RID (viewport_get_texture on the viewport RID), not
