@@ -1,6 +1,38 @@
-# Android customizations → EditorExportPlugin migration (investigation)
+# Android customizations → EditorExportPlugin migration
 
-Status: **investigation only** (no code yet). Goal: move the hand-edits in `android/build/`
+Status: **DONE (device-confirmed 2026-07-02).** `addons/godot_xreal/export_plugin.gd` injects the
+XREAL manifest entries + ships the `.aar`/`.jar` at export time; the Gradle template needs no
+hand-edits. Verified on XREAL One Pro: manifest markers present in the APK, `XrealBridge` (from the
+compiled `xreal_bridge.jar`) registers the Activity, `session_started=true`, stereo renders.
+
+## Implemented (Option B)
+- `addons/godot_xreal/export_plugin.gd` (`EditorExportPlugin`): `_get_android_manifest_element_contents`
+  (XREAL permissions), `_get_android_manifest_application_element_contents` (nreal_sdk / supportDevices /
+  nr_features / autoLog meta-data + `com.godot.game.XrealCompanionActivity` + `ai.nreal.activitylife.NRFakeActivity`),
+  `_get_android_libraries` (the bridge `.jar` + `nr_loader/nr_api/nr_common/GlassesDisplayPlugEvent/Log-Control` `.aar`).
+- Registered from `addons/godot_xreal/plugin.gd` (`add_export_plugin` in `_enter_tree`).
+- `XrealBridge.java` + `XrealCompanionActivity.java` moved to `addons/godot_xreal/android/src/com/godot/game/`
+  (kept in package `com.godot.game` so the JNI symbol `Java_com_godot_game_XrealBridge_nativeRegisterActivity`
+  is unchanged). Compile to `addons/godot_xreal/android/xreal_bridge.jar`:
+  ```bash
+  javac -encoding UTF-8 -source 11 -target 11 -classpath "<sdk>/platforms/android-35/android.jar" \
+    -d out addons/godot_xreal/android/src/com/godot/game/*.java
+  jar cf addons/godot_xreal/android/xreal_bridge.jar -C out .
+  ```
+- Registration/`System.loadLibrary` run from GDScript (`demo/main.gd` JavaClassWrapper path), so the
+  Gradle template's `GodotApp` needs no patch. `.so` still packaged via `godot_xreal.gdextension`.
+- The `.aar`/`.jar` under `addons/godot_xreal/android/` are gitignored (vendored/built locally, like
+  `jniLibs/*.so`); the Java **source** is committed.
+
+Remaining polish (non-blocking): revert the working template's `GodotApp.java` to stock (its
+`XrealBridge.register` call is now redundant with the GDScript path); fold the AAR-copy + JAR-build
+into `tools/vendor_xreal_libs.ps1`.
+
+---
+
+## Original investigation (kept for context)
+
+Goal: move the hand-edits in `android/build/`
 (which Godot wipes whenever the Android build template is reinstalled/regenerated — see
 `docs/android-setup.md` §4) into a Godot **Android export plugin** so they survive regeneration
 and live with the addon.
