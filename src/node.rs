@@ -60,6 +60,22 @@ impl INode3D for XrealHeadTracker {
             }
         }
 
+        // Publish Godot's rendered main-viewport color as the blit source for the glasses. On
+        // Android `process` runs on the GL thread, so the native handle is valid here; the frame
+        // tick blits it into the acquired eye textures.
+        if let Some(viewport) = self.base().get_viewport() {
+            if let Some(viewport_texture) = viewport.get_texture() {
+                let handle =
+                    RenderingServer::singleton().texture_get_native_handle(viewport_texture.get_rid());
+                let size = viewport.get_visible_rect().size;
+                crate::unity_plugin::set_godot_source_texture(
+                    handle as u32,
+                    size.x as i32,
+                    size.y as i32,
+                );
+            }
+        }
+
         // Drive the XREAL swapchain on the rendering thread (EGL context required).
         // First call invokes GfxThreadStart (CreateSwapchainEx → GL textures → SetSwapChainBuffers);
         // subsequent calls drive PopulateNextFrameDesc so the SDK's GLThread has a frame handle.

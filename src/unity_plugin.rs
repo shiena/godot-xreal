@@ -20,7 +20,7 @@
 use std::ffi::{c_char, c_void, CStr};
 use std::ptr;
 use std::sync::{
-    atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering},
+    atomic::{AtomicBool, AtomicI32, AtomicU32, AtomicU64, Ordering},
     Mutex,
 };
 
@@ -176,13 +176,28 @@ static XR_TEXTURES: Mutex<Vec<XrTexture>> = Mutex::new(Vec::new());
 static XR_TEXTURE_NEXT_ID: AtomicU32 = AtomicU32::new(1);
 static XR_QUERY_LOG: AtomicU32 = AtomicU32::new(0);
 
-fn xr_gl_texture_for(id: u32) -> Option<u32> {
+/// The GL texture name + size of Godot's main viewport color, published each frame from
+/// `XrealHeadTracker::process` so the frame tick can blit real scene content into the eye
+/// textures. `gl` = 0 means "not available yet" → the frame tick falls back to the test pattern.
+static GODOT_SRC_TEX: AtomicU32 = AtomicU32::new(0);
+static GODOT_SRC_W: AtomicI32 = AtomicI32::new(0);
+static GODOT_SRC_H: AtomicI32 = AtomicI32::new(0);
+
+/// Publish Godot's rendered viewport as the blit source for the glasses (see `GODOT_SRC_TEX`).
+pub fn set_godot_source_texture(gl_tex: u32, width: i32, height: i32) {
+    GODOT_SRC_TEX.store(gl_tex, Ordering::Relaxed);
+    GODOT_SRC_W.store(width, Ordering::Relaxed);
+    GODOT_SRC_H.store(height, Ordering::Relaxed);
+}
+
+/// Look up an engine texture by its `UnityXRRenderTextureId`, returning `(gl_id, width, height)`.
+fn xr_texture_for(id: u32) -> Option<(u32, i32, i32)> {
     XR_TEXTURES
         .lock()
         .expect("xr textures mutex")
         .iter()
         .find(|t| t.id == id)
-        .map(|t| t.gl_id)
+        .map(|t| (t.gl_id, t.width, t.height))
 }
 
 #[repr(C)]
@@ -1015,23 +1030,34 @@ pub fn run_frame_tick() {
     let pass_count = read_u32(0x580);
     let tex_ids = [read_u32(0x00), read_u32(0xfc)];
 
-    // Option (a) validation fill: paint each acquired eye texture with an animated colour so we
-    // can confirm on device that the compositor is presenting OUR engine textures. Left eye leans
-    // magenta, right eye cyan, cycling over ~3s. The real Godot-content blit
-    // (`crate::gl::blit_texture`) replaces this fill in the next milestone.
+    // Blit Godot's rendered viewport into each acquired eye texture. Until the viewport texture is
+    // published (`GODOT_SRC_TEX == 0`), fall back to an animated per-eye test pattern so we can
+    // still tell the compositor path is alive.
+    let src_tex = GODOT_SRC_TEX.load(Ordering::Relaxed);
+    let src_w = GODOT_SRC_W.load(Ordering::Relaxed);
+    let src_h = GODOT_SRC_H.load(Ordering::Relaxed);
+    let have_src = src_w > 0 && src_h > 0;
     let phase = (n % 180) as f32 / 180.0;
     let mut filled = 0u32;
     for (eye, &tex_id) in tex_ids.iter().enumerate().take(pass_count.max(1) as usize) {
         if tex_id == 0 {
             continue;
         }
-        if let Some(gl_tex) = xr_gl_texture_for(tex_id) {
-            let (r, g, b) = if eye == 0 {
-                (0.6 + 0.4 * phase, 0.05, 0.6 - 0.4 * phase)
+        if let Some((gl_tex, dw, dh)) = xr_texture_for(tex_id) {
+            if src_tex != 0 {
+                // Offscreen viewport texture (e.g. a SubViewport) is available.
+                crate::gl::blit_texture(src_tex, src_w, src_h, gl_tex, dw, dh);
+            } else if have_src {
+                // Root viewport renders direct-to-screen: read the default framebuffer.
+                crate::gl::blit_default_framebuffer(gl_tex, src_w, src_h, dw, dh);
             } else {
-                (0.05, 0.6 - 0.4 * phase, 0.6 + 0.4 * phase)
-            };
-            crate::gl::fill_texture(gl_tex, r, g, b);
+                let (r, g, b) = if eye == 0 {
+                    (0.6 + 0.4 * phase, 0.05, 0.6 - 0.4 * phase)
+                } else {
+                    (0.05, 0.6 - 0.4 * phase, 0.6 + 0.4 * phase)
+                };
+                crate::gl::fill_texture(gl_tex, r, g, b);
+            }
             filled += 1;
         }
     }
@@ -1050,7 +1076,8 @@ pub fn run_frame_tick() {
     if n < 5 || n % 300 == 0 {
         godot::global::godot_print!(
             "[xreal] frame_tick #{n} tid={}: populate={pop_status} passes={pass_count} \
-             tex0={} tex1={} filled={filled} submit={submit_status:?}",
+             tex0={} tex1={} filled={filled} submit={submit_status:?} \
+             src_gl={src_tex} src={src_w}x{src_h} blit={have_src}",
             current_tid(),
             tex_ids[0],
             tex_ids[1]

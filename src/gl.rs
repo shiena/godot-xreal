@@ -249,9 +249,7 @@ pub fn fill_texture(tex: u32, r: f32, g_: f32, b: f32) {
 /// Blit `src` (size `src_w`×`src_h`) into `dst` (size `dst_w`×`dst_h`), flipping vertically so a
 /// top-left-origin engine texture lands right-side-up in the bottom-left-origin GL texture.
 ///
-/// Used by the next milestone (real Godot content on the glasses); kept here so wiring it is a
-/// one-line change in the frame tick.
-#[allow(dead_code)]
+/// Blits Godot's rendered viewport color into an eye texture each frame.
 pub fn blit_texture(src: u32, src_w: i32, src_h: i32, dst: u32, dst_w: i32, dst_h: i32) {
     let Some(g) = gl() else { return };
     if src == 0 || dst == 0 {
@@ -280,6 +278,39 @@ pub fn blit_texture(src: u32, src_w: i32, src_h: i32, dst: u32, dst_w: i32, dst_
         }
 
         (g.framebuffer_texture_2d)(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
+        (g.framebuffer_texture_2d)(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
+        (g.bind_framebuffer)(GL_READ_FRAMEBUFFER, prev_read as u32);
+        (g.bind_framebuffer)(GL_DRAW_FRAMEBUFFER, prev_draw as u32);
+    }
+}
+
+/// Blit Godot's just-rendered window content (the default framebuffer / back buffer, fbo 0) into an
+/// eye texture. Godot's root viewport renders direct-to-screen, so it has no sampleable offscreen
+/// texture (`texture_get_native_handle` returns 0); reading fbo 0 gets its pixels instead. Flips Y.
+pub fn blit_default_framebuffer(dst: u32, src_w: i32, src_h: i32, dst_w: i32, dst_h: i32) {
+    let Some(g) = gl() else { return };
+    if dst == 0 {
+        return;
+    }
+    unsafe {
+        let mut prev_draw: i32 = 0;
+        let mut prev_read: i32 = 0;
+        (g.get_integerv)(GL_DRAW_FRAMEBUFFER_BINDING, &mut prev_draw);
+        (g.get_integerv)(GL_READ_FRAMEBUFFER_BINDING, &mut prev_read);
+
+        (g.bind_framebuffer)(GL_READ_FRAMEBUFFER, 0); // default framebuffer = window back buffer
+        let draw_fbo = scratch_fbo(g, 0);
+        (g.bind_framebuffer)(GL_DRAW_FRAMEBUFFER, draw_fbo);
+        (g.framebuffer_texture_2d)(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, dst, 0);
+
+        if (g.check_framebuffer_status)(GL_DRAW_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE {
+            // Straight copy (no Y-flip): fbo 0 and the eye texture share GL bottom-left origin, so
+            // flipping made it upside-down on the glasses.
+            (g.blit_framebuffer)(
+                0, 0, src_w, src_h, 0, 0, dst_w, dst_h, GL_COLOR_BUFFER_BIT, GL_LINEAR as u32,
+            );
+        }
+
         (g.framebuffer_texture_2d)(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
         (g.bind_framebuffer)(GL_READ_FRAMEBUFFER, prev_read as u32);
         (g.bind_framebuffer)(GL_DRAW_FRAMEBUFFER, prev_draw as u32);
