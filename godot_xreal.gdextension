@@ -24,5 +24,10 @@ android.release.arm64 = "res://target/aarch64-linux-android/release/libgodot_xre
 android.arm64 = {
 "res://jniLibs/arm64-v8a/libXREALNativeSessionManager.so" : "",
 "res://jniLibs/arm64-v8a/libXREALXRPlugin.so" : "",
-"res://jniLibs/arm64-v8a/libVulkanSupport.so" : ""
+"res://jniLibs/arm64-v8a/libVulkanSupport.so" : "",
+"res://jniLibs/arm64-v8a/libnr_api.so" : "",
+"res://jniLibs/arm64-v8a/libnr_libusb.so" : "",
+"res://jniLibs/arm64-v8a/libnr_loader.so" : "",
+"res://jniLibs/arm64-v8a/libnr_plugin_6dof.so" : "",
+"res://jniLibs/arm64-v8a/libnr_rgb_camera.so" : ""
 }

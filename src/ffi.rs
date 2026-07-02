@@ -40,7 +40,15 @@ impl NrPose {
     /// look-around is inverted on one axis, try the other variants (`(x,y,-z,-w)`,
     /// `(x,-y,z,-w)`, `(-x,y,-z,w)`).
     pub fn to_godot_quaternion(self) -> Quaternion {
-        Quaternion::new(-self.qx, -self.qy, self.qz, self.qw)
+        let converted = Quaternion::new(-self.qx, -self.qy, self.qz, self.qw).normalized();
+        let mut euler = converted.get_euler();
+
+        // Device-confirmed empirical correction on XREAL One Pro: yaw matches after the
+        // handedness conversion, while pitch is inverted and doubled. Apply the correction
+        // in Godot's own YXZ Euler space so the visible tracker angle changes directly.
+        euler.x *= -0.5;
+
+        Quaternion::from_euler(euler).normalized()
     }
 }
 
@@ -94,10 +102,13 @@ pub struct UserDefinedSettings {
 //     (NRSDK uniformly returns `NRResult` = i32, 0 on success).
 
 /// `int XREALGetHMDTimeNanos(uint64_t* out_time_ns)` — writes the HMD clock through an
-/// out-pointer and returns an NRResult status (`0` = success). NOT a value-returning fn.
+/// out-pointer. RE: SessionManager-style wrappers appear to use `0` as success, while
+/// libXREALXRPlugin.so's InputManager export returns bool-style `1` on success.
 pub type FnHmdTimeNanos = unsafe extern "C" fn(*mut u64) -> i32;
 
-/// `int XREALGetHeadPoseAtTime(uint64_t time_ns, NrPose* out)` — NRResult, `0` = success.
+/// `int XREALGetHeadPoseAtTime(uint64_t time_ns, NrPose* out)` — writes pose to `out`.
+/// RE: use this compact 7-float layout only with libXREALNativeSessionManager.so. The
+/// libXREALXRPlugin.so export of the same name writes a larger Unity-facing pose block.
 pub type FnGetHeadPoseAtTime = unsafe extern "C" fn(u64, *mut NrPose) -> i32;
 
 /// `void XREALLoadAPI(void)` — wires the session-manager perception delegate; must run
@@ -122,6 +133,24 @@ pub type FnCreateSession = unsafe extern "C" fn(bool) -> bool;
 /// `void RecenterGlasses(void)` (in `libXREALXRPlugin.so`).
 pub type FnVoid = unsafe extern "C" fn();
 
+/// `bool CreateFrame(void)` (in `libXREALXRPlugin.so`).
+///
+/// RE / unverified: the export is a no-argument trampoline to
+/// `DisplayManager::CreateFrame()` and returns `w0` as a boolean success flag.
+pub type FnCreateFrame = unsafe extern "C" fn() -> bool;
+
+/// `GetFrameMetaData(void)` (in `libXREALXRPlugin.so`).
+///
+/// RE / unverified: `DisplayManager::GetFrameMetaData()` returns two register values:
+/// metadata pointer and byte count. The data appears to be RGB triplets expanded to RGBA.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct XrealFrameMetaData {
+    pub ptr: *const c_void,
+    pub size: usize,
+}
+pub type FnGetFrameMetaData = unsafe extern "C" fn() -> XrealFrameMetaData;
+
 /// `IntPtr GetPluginVersion(void)` (C# DllImport) — a NUL-terminated C string.
 pub type FnGetPluginVersion = unsafe extern "C" fn() -> *const c_char;
 
@@ -136,3 +165,87 @@ pub type FnQueryInt = unsafe extern "C" fn() -> i32;
 /// `XREALPlugin.cs`). The Unity input-subsystem's perception start calls this; we probe it
 /// directly to try to kick perception without the full XR-subsystem host.
 pub type FnSwitchTrackingType = unsafe extern "C" fn(i32) -> bool;
+
+/// `int ControlSetDisplayBypassPsensorFlag(int flag)` (libXREALXRPlugin.so).
+/// RE-confirmed by disassembly: the C wrapper tail-calls
+/// `NativeGlasses::ControlSetDisplayBypassPsensorFlag(int)` once `NativeGlasses` is ready
+/// (`[NativeGlasses+0x18] != 0`), else no-ops. Setting flag=1 keeps the glasses display on when
+/// the proximity (wear) sensor would otherwise power it off after idle.
+pub type FnControlSetI32 = unsafe extern "C" fn(i32) -> i32;
+
+// ---- libnr_loader.so rendering path -------------------------------------------------
+//
+// RE / unverified. These are resolved from libnr_loader.so, based on
+// NRRenderingWrapper::InitWrapper in libXREALXRPlugin.so. Keep all direct NR calls behind
+// crate::native until the struct and enum layouts are confirmed on hardware.
+
+pub type NrHandle = u64;
+pub type NrResult = i32;
+
+pub type FnNrRenderingCreate = unsafe extern "C" fn(*mut NrHandle) -> NrResult;
+pub type FnNrRenderingOneHandle = unsafe extern "C" fn(NrHandle) -> NrResult;
+pub type FnNrRenderingSetI32 = unsafe extern "C" fn(NrHandle, i32) -> NrResult;
+pub type FnNrRenderingGetI32 = unsafe extern "C" fn(NrHandle, *mut i32) -> NrResult;
+/// NRGraphicContext: { type: i32 (5=OpenGL ES), _pad: [u8;4], context: *mut c_void (EGLContext) }
+#[repr(C)]
+pub struct NrGraphicContext {
+    pub gfx_type: i32,
+    pub _pad: [u8; 4],
+    pub context: *mut c_void,
+}
+pub type FnNrRenderingSetGraphicContext = unsafe extern "C" fn(NrHandle, *const NrGraphicContext) -> NrResult;
+pub type FnNrRenderingSetU64 = unsafe extern "C" fn(NrHandle, u64) -> NrResult;
+// NRRenderingAcquireFrame: uses NRRendering vtable (0x4904f0) not NRFrame vtable (0x490580).
+pub type FnNrRenderingAcquireFrame = unsafe extern "C" fn(NrHandle, *mut NrHandle) -> NrResult;
+
+pub type FnNrBufferSpecCreate = unsafe extern "C" fn(NrHandle, *mut NrHandle) -> NrResult;
+pub type FnNrHandleDestroy = unsafe extern "C" fn(NrHandle, NrHandle) -> NrResult;
+pub type FnNrBufferSpecSetSize = unsafe extern "C" fn(NrHandle, NrHandle, u32, u32) -> NrResult;
+pub type FnNrBufferSpecSetI32 = unsafe extern "C" fn(NrHandle, NrHandle, i32) -> NrResult;
+pub type FnNrBufferSpecSetU32 = unsafe extern "C" fn(NrHandle, NrHandle, u32) -> NrResult;
+pub type FnNrBufferSpecSetU64 = unsafe extern "C" fn(NrHandle, NrHandle, u64) -> NrResult;
+
+pub type FnNrSwapchainCreate = unsafe extern "C" fn(NrHandle, NrHandle, *mut NrHandle) -> NrResult;
+pub type FnNrSwapchainCreateAndroidSurface =
+    unsafe extern "C" fn(NrHandle, NrHandle, *mut *mut c_void, *mut *mut c_void) -> NrResult;
+pub type FnNrSwapchainSetBuffers =
+    unsafe extern "C" fn(NrHandle, NrHandle, u32, *mut *mut c_void) -> NrResult;
+pub type FnNrSwapchainGetRecommendBufferCount =
+    unsafe extern "C" fn(NrHandle, NrHandle, *mut u32) -> NrResult;
+
+pub type FnNrViewportCreate = unsafe extern "C" fn(NrHandle, *mut NrHandle) -> NrResult;
+pub type FnNrViewportSetI32 = unsafe extern "C" fn(NrHandle, NrHandle, i32) -> NrResult;
+pub type FnNrViewportSetU32 = unsafe extern "C" fn(NrHandle, NrHandle, u32) -> NrResult;
+pub type FnNrViewportSetU64 = unsafe extern "C" fn(NrHandle, NrHandle, u64) -> NrResult;
+pub type FnNrViewportSetF32x2 = unsafe extern "C" fn(NrHandle, NrHandle, f32, f32) -> NrResult;
+pub type FnNrViewportSetPtr = unsafe extern "C" fn(NrHandle, NrHandle, *const c_void) -> NrResult;
+pub type FnNrViewportSetNearFar = unsafe extern "C" fn(NrHandle, NrHandle, f32, f32) -> NrResult;
+
+pub type FnNrFrameCreate = unsafe extern "C" fn(NrHandle, *mut NrHandle) -> NrResult;
+pub type FnNrFrameSetBufferViewport =
+    unsafe extern "C" fn(NrHandle, NrHandle, u32, NrHandle) -> NrResult;
+// 3-arg variant: (rendering, frame, viewport) — no index parameter
+pub type FnNrFrameSetBufferViewport3 =
+    unsafe extern "C" fn(NrHandle, NrHandle, NrHandle) -> NrResult;
+pub type FnNrFrameGetViewportCount =
+    unsafe extern "C" fn(NrHandle, NrHandle, *mut u32) -> NrResult;
+pub type FnNrFrameGetBufferViewport =
+    unsafe extern "C" fn(NrHandle, NrHandle, u32, *mut NrHandle) -> NrResult;
+pub type FnNrBufferViewportGetSwapchain =
+    unsafe extern "C" fn(NrHandle, NrHandle, *mut NrHandle) -> NrResult;
+pub type FnNrFrameNoArgs = unsafe extern "C" fn(NrHandle, NrHandle) -> NrResult;
+// NRFrameCompose takes (rendering, frame, ..., ..., flags) — 5 args; pass 0s for unknown ones.
+pub type FnNrFrameCompose =
+    unsafe extern "C" fn(NrHandle, NrHandle, u64, u64, u32) -> NrResult;
+pub type FnNrFrameAcquireBuffers =
+    unsafe extern "C" fn(NrHandle, NrHandle, *mut NrHandle, *mut u32) -> NrResult;
+pub type FnNrFrameSetColorTextures =
+    unsafe extern "C" fn(NrHandle, NrHandle, *const *const c_void, u32) -> NrResult;
+pub type FnNrFrameSendMetaData = unsafe extern "C" fn(
+    NrHandle,
+    NrHandle,
+    NrHandle,
+    NrHandle,
+    *const *const c_void,
+    *mut u32,
+) -> NrResult;

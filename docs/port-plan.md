@@ -43,11 +43,27 @@ running on an XREAL-compatible host (phone / Beam) with the glasses on USB-C.
   that mode preclude it; (3) `NrPose` field order + quaternion sign in `NrPose::to_godot_quaternion`
   (log the 7 floats once tracking runs).
 
-### Phase 2 — display (hardest, unavoidable)
-- Get the glasses Surface via the Java `com.xreal.sdk.display.GlassesDisplay` (JNI), then drive
-  the compositor: `InitializeRendering` → `CreateProjectionRigLayer` → `CreateFrame`, handing the
-  Godot viewport texture (GL/Vulkan) to the layer.
+### Phase 2 — display ✅ ACHIEVED 2026-07-02
+> **Engine-owned GL textures reach the glasses on device.** A test pattern (per-eye animated colour)
+> displays on the XREAL One Pro. Winning recipe (see `docs/frame-submission-plan.md` + the project
+> memory `2026-07-02 SOLVED`):
+> 1. Full fake `IUnityXRDisplay` (`CreateTexture`/`QueryTextureDesc`/`DestroyTexture` at
+>    +0x18/+0x20/+0x28) allocating GL textures the engine owns.
+> 2. **`stereo_rendering_mode = 0` (Multi-pass)**, NOT Multiview(2): Multiview's single-buffer mode
+>    never calls `QueryTextureDesc`; Multi-pass makes a normal multi-buffer swapchain where
+>    `SetSwapChainBuffers → QueryTextureDesc` fires and registers our textures.
+> 3. Per frame: `PopulateNextFrameDesc` → fill `renderPasses[k].textureId` → `SubmitCurrentFrame`.
+> 4. `patch_update_metrics` (lib+0x68974 → `ret`) so `SubmitCurrentFrame`'s `UpdateMetrics` doesn't
+>    SIGBUS on the null metrics callback; presentation happens earlier via `SubmitFrame`.
+> Remaining for Phase 2/3: replace the test-pattern fill with real Godot content (blit the main
+> viewport into the eye textures), then per-eye stereo cameras. The RE below is the historical trail.
+
+- Start the Godot-side `XrealCompanionActivity` on the XREAL secondary display, then drive the
+  compositor through either the hidden `libXREALXRPlugin.so` display path or the public
+  `libnr_loader.so` `NRRendering*` API.
 - **RE item:** signatures/structs for `CreateFrame` / `GetFrameMetaData` / `CreateProjectionRigLayer`.
+- **RE item:** confirm whether the companion Activity is enough to trigger `NRDisplay START/RUN`;
+  if not, wire direct `NRRenderingCreate` → `NRRenderingStart` → swapchain/frame submission.
 - **Minimal alternative:** check whether any device/mode exposes the glasses as a plain external
   DisplayPort monitor for self-rendered side-by-side — would bypass the compositor RE entirely.
 

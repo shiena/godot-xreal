@@ -18,7 +18,10 @@ Crate output names (`crate-type = ["cdylib"]`): `godot_xreal.dll` (Windows),
 
 ## Android (XREAL device = arm64)
 
-```bash
+Run these commands from the repository root (`C:\Users\shien\dev\godot-xreal`). The `cargo ndk`
+output directory and the Gradle Android template library directory are not the same directory.
+
+```powershell
 rustup target add aarch64-linux-android
 cargo install cargo-ndk
 # ANDROID_NDK_HOME must point at an installed NDK
@@ -26,6 +29,51 @@ cargo ndk -t arm64-v8a -o ./jniLibs build --release
 #   -> jniLibs/arm64-v8a/libgodot_xreal.so
 #   -> target/aarch64-linux-android/release/libgodot_xreal.so  (referenced by the .gdextension)
 ```
+
+When building the Android template directly with Gradle, copy the freshly built `.so` from
+`jniLibs` into the template paths that Gradle actually packages:
+
+```powershell
+# Must be run from repo root, not from android/build.
+Copy-Item -LiteralPath .\jniLibs\arm64-v8a\libgodot_xreal.so `
+  -Destination .\android\build\libs\debug\arm64-v8a\libgodot_xreal.so -Force
+Copy-Item -LiteralPath .\jniLibs\arm64-v8a\libgodot_xreal.so `
+  -Destination .\android\build\libs\release\arm64-v8a\libgodot_xreal.so -Force
+```
+
+Then run Gradle with the package name explicitly passed. Without this property, a direct Gradle
+build falls back to `com.godot.game` even if `export_presets.cfg` says `com.example.godotxreal`.
+
+```powershell
+Push-Location .\android\build
+.\gradlew.bat assembleStandardDebug '-Pexport_package_name=com.example.godotxreal'
+Pop-Location
+```
+
+The debug APK produced by the template may need manual signing before `adb install` accepts it:
+
+```powershell
+$bt = 'C:\Users\shien\AppData\Local\Android\Sdk\build-tools\36.1.0'
+$unsigned = 'android\build\build\outputs\apk\standard\debug\android_debug.apk'
+$aligned = 'android\build\build\outputs\apk\standard\debug\android_debug-aligned.apk'
+$signed = 'android\build\build\outputs\apk\standard\debug\android_debug-signed.apk'
+
+Remove-Item -LiteralPath $aligned, $signed -Force -ErrorAction SilentlyContinue
+& "$bt\zipalign.exe" -f -p 4 $unsigned $aligned
+& "$bt\apksigner.bat" sign `
+  --ks "$env:USERPROFILE\.android\debug.keystore" `
+  --ks-pass pass:android `
+  --key-pass pass:android `
+  --ks-key-alias androiddebugkey `
+  --out $signed $aligned
+& "$bt\apksigner.bat" verify --verbose $signed
+
+adb install --no-incremental $signed
+adb shell am start -n com.example.godotxreal/com.godot.game.GodotAppLauncher
+```
+
+Use `--no-incremental` during RE iterations. Incremental install can keep stale native libraries
+around, which makes the log look like an old `libgodot_xreal.so` is still running.
 
 ### Vendor the XREAL runtime libraries (once)
 

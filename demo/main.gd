@@ -17,9 +17,11 @@ const RIG_SCENE := "res://addons/godot_xreal/xreal_rig.tscn"
 var _tracker: Node3D
 var _system: Object
 var _status: Label
+var _euler_label: Label
 var _extension_loaded := false
 
 func _ready() -> void:
+	_try_register_android_bridge()
 	_extension_loaded = ClassDB.class_exists(&"XrealSystem") and ClassDB.class_exists(&"XrealHeadTracker")
 	if _extension_loaded:
 		_system = ClassDB.instantiate(&"XrealSystem")
@@ -29,6 +31,35 @@ func _ready() -> void:
 	_build_room()
 	_spawn_rig()
 	_setup_ui()
+
+func _try_register_android_bridge() -> void:
+	if not OS.has_feature("android"):
+		return
+	if not Engine.has_singleton(&"AndroidRuntime"):
+		print("[demo] AndroidRuntime singleton unavailable")
+		return
+
+	var runtime := Engine.get_singleton(&"AndroidRuntime")
+	if runtime == null:
+		print("[demo] AndroidRuntime singleton is null")
+		return
+	var activity = runtime.getActivity()
+	if activity == null:
+		print("[demo] Android activity unavailable")
+		return
+
+	var bridge = JavaClassWrapper.wrap("com.godot.game.XrealBridge")
+	if bridge == null:
+		print("[demo] XrealBridge Java class unavailable")
+		return
+
+	# XrealBridge methods are idempotent; this is a Godot-side fallback for template drift.
+	var register_bridge := func() -> void:
+		bridge.register(activity)
+		bridge.startCompanionOnXrealDisplayIfNeeded(activity)
+		print("[demo] XrealBridge registered via JavaClassWrapper")
+
+	activity.runOnUiThread(runtime.createRunnableFromGodotCallable(register_bridge))
 
 func _spawn_rig() -> void:
 	if _extension_loaded:
@@ -43,28 +74,43 @@ func _spawn_rig() -> void:
 
 func _setup_ui() -> void:
 	_status = $UI/Panel/Margin/VBox/Status
+	$UI/Panel.visible = false
 	($UI/Panel/Margin/VBox/Recenter as Button).pressed.connect(_on_recenter_pressed)
+
+	_euler_label = Label.new()
+	_euler_label.name = "EulerDebug"
+	_euler_label.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_euler_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_euler_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_euler_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_euler_label.add_theme_font_size_override(&"font_size", 128)
+	_euler_label.add_theme_color_override(&"font_color", Color.WHITE)
+	_euler_label.add_theme_color_override(&"font_shadow_color", Color.BLACK)
+	_euler_label.add_theme_constant_override(&"shadow_offset_x", 4)
+	_euler_label.add_theme_constant_override(&"shadow_offset_y", 4)
+	$UI.add_child(_euler_label)
 
 func _on_recenter_pressed() -> void:
 	if _tracker and _tracker.has_method(&"recenter"):
 		_tracker.recenter()
 
 func _process(_delta: float) -> void:
-	if _status == null:
+	if _euler_label == null:
 		return
 	if not _extension_loaded:
-		_status.text = "GDExtension NOT loaded.\nXrealSystem / XrealHeadTracker missing.\nBuild the Android .so (cargo ndk) and\ncheck the .gdextension library paths."
+		_euler_label.text = "GDExtension\nNOT LOADED"
 		return
 	var tracking := false
 	if _tracker and _tracker.has_method(&"is_tracking"):
 		tracking = _tracker.is_tracking()
-	_status.text = "\n".join([
-		"SDK available: %s" % _system.is_available(),
-		"Session started: %s" % _system.is_session_started(),
-		"Plugin version: %s" % _system.get_plugin_version(),
-		"Device type: %d" % _system.get_device_type(),
-		"Head tracking: %s" % tracking,
-	])
+	if not tracking:
+		_euler_label.text = "NO\nHEAD\nTRACKING"
+		return
+	if _tracker.has_method(&"debug_pose_text"):
+		_euler_label.text = _tracker.debug_pose_text()
+		return
+	var euler := _tracker.rotation_degrees
+	_euler_label.text = "NODE X %.1f\nNODE Y %.1f\nNODE Z %.1f" % [euler.x, euler.y, euler.z]
 
 func _build_environment() -> void:
 	var env := Environment.new()

@@ -55,4 +55,42 @@ impl XrealSystem {
             .and_then(XrealSession::device_type)
             .unwrap_or(0) as i64
     }
+
+    /// Whether the direct NR rendering/compositor API was resolved from libnr_loader.so.
+    #[func]
+    fn is_nr_rendering_available(&self) -> bool {
+        session::shared()
+            .map(XrealSession::nr_rendering_available)
+            .unwrap_or(false)
+    }
+
+    /// Number of direct NR rendering symbols resolved from libnr_loader.so.
+    #[func]
+    fn get_nr_rendering_symbol_count(&self) -> i64 {
+        session::shared()
+            .map(XrealSession::nr_rendering_symbol_count)
+            .unwrap_or(0) as i64
+    }
+
+    /// RE probe: create and immediately destroy an NRRendering handle.
+    ///
+    /// Returns 0 on success, -1 when libnr_loader.so was not resolved, or the native
+    /// NRResult status on failure.
+    #[func]
+    fn smoke_test_nr_rendering_create_destroy(&self) -> i64 {
+        session::shared()
+            .map(XrealSession::nr_rendering_smoke_create_destroy)
+            .unwrap_or(-1) as i64
+    }
+
+    /// RE probe: create, start, stop, and destroy an NRRendering handle.
+    ///
+    /// Returns 0 on success, -1 when libnr_loader.so was not resolved, or the native
+    /// NRResult status on failure.
+    #[func]
+    fn smoke_test_nr_rendering_start_stop(&self) -> i64 {
+        session::shared()
+            .map(XrealSession::nr_rendering_smoke_start_stop)
+            .unwrap_or(-1) as i64
+    }
 }
