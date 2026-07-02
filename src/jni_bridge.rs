@@ -71,3 +71,43 @@ pub extern "system" fn Java_com_godot_game_XrealBridge_nativeRegisterActivity<'l
     // the activity is a leaked global ref.
     unsafe { ndk_context::initialize_android_context(vm_ptr, activity_ptr) };
 }
+
+/// Glasses hot-plug event counters. The JNI callbacks below run on the Android UI thread
+/// (DisplayManager listener), so they only bump these counters; `XrealHeadTracker::process`
+/// (Godot main thread) polls them and re-emits as `glasses_connected` / `glasses_disconnected`
+/// signals. Counters — not flags — so a fast disconnect→reconnect is never coalesced away.
+/// Defined for every target so the node can poll unconditionally (they stay 0 on desktop).
+static GLASSES_CONNECT_COUNT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+static GLASSES_DISCONNECT_COUNT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+/// Monotonic count of glasses-connected events observed so far.
+pub fn glasses_connect_count() -> u32 {
+    GLASSES_CONNECT_COUNT.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Monotonic count of glasses-disconnected events observed so far.
+pub fn glasses_disconnect_count() -> u32 {
+    GLASSES_DISCONNECT_COUNT.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// JNI: the XREAL glasses display was added (`DisplayManager.onDisplayAdded`).
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "system" fn Java_com_godot_game_XrealBridge_nativeOnGlassesConnected<'local>(
+    _env: jni::JNIEnv<'local>,
+    _class: jni::objects::JClass<'local>,
+    _display_id: jni::sys::jint,
+) {
+    GLASSES_CONNECT_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// JNI: the XREAL glasses display was removed (`DisplayManager.onDisplayRemoved`).
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "system" fn Java_com_godot_game_XrealBridge_nativeOnGlassesDisconnected<'local>(
+    _env: jni::JNIEnv<'local>,
+    _class: jni::objects::JClass<'local>,
+    _display_id: jni::sys::jint,
+) {
+    GLASSES_DISCONNECT_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+}

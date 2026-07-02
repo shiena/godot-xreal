@@ -41,6 +41,10 @@ pub struct XrealHeadTracker {
     stereo: Option<StereoRig>,
     /// Whether the `display_started` signal has been emitted (once, on first tracking).
     display_signaled: bool,
+    /// Last-seen glasses hot-plug event counts (from the JNI DisplayManager callbacks); a change
+    /// re-emits `glasses_connected` / `glasses_disconnected` on the Godot main thread.
+    last_connect_count: u32,
+    last_disconnect_count: u32,
 }
 
 #[godot_api]
@@ -53,6 +57,8 @@ impl INode3D for XrealHeadTracker {
             debug_pose: GString::new(),
             stereo: None,
             display_signaled: false,
+            last_connect_count: 0,
+            last_disconnect_count: 0,
         }
     }
 
@@ -64,6 +70,9 @@ impl INode3D for XrealHeadTracker {
 
     fn process(&mut self, _delta: f64) {
         self.frames = self.frames.wrapping_add(1);
+        // Re-emit glasses hot-plug events before the session check so connect/disconnect are
+        // reported even while no session exists yet (e.g. started without the glasses).
+        self.poll_glasses_events();
         let Some(session) = session::shared() else {
             self.tracking = false;
             return;
@@ -133,6 +142,21 @@ impl INode3D for XrealHeadTracker {
 }
 
 impl XrealHeadTracker {
+    /// Poll the JNI glasses hot-plug counters and re-emit any new events as signals (called on the
+    /// Godot main thread, where signal emission is safe — the JNI callbacks run on the UI thread).
+    fn poll_glasses_events(&mut self) {
+        let connect = crate::jni_bridge::glasses_connect_count();
+        if connect != self.last_connect_count {
+            self.last_connect_count = connect;
+            self.signals().glasses_connected().emit();
+        }
+        let disconnect = crate::jni_bridge::glasses_disconnect_count();
+        if disconnect != self.last_disconnect_count {
+            self.last_disconnect_count = disconnect;
+            self.signals().glasses_disconnected().emit();
+        }
+    }
+
     /// Create the two per-eye SubViewports + cameras once, sharing the main World3D so they render
     /// the same scene. No-op until the node is in the tree (needs a World3D).
     fn ensure_stereo(&mut self) {
@@ -226,6 +250,16 @@ impl XrealHeadTracker {
     /// direction "forward" at startup.
     #[signal]
     fn display_started();
+
+    /// Emitted when the XREAL glasses display is plugged in at runtime (`onDisplayAdded`). Fires
+    /// even if the app started with the glasses disconnected — the native session bootstrap then
+    /// retries `CreateSession` and `display_started` follows once tracking comes up.
+    #[signal]
+    fn glasses_connected();
+
+    /// Emitted when the XREAL glasses display is unplugged at runtime (`onDisplayRemoved`).
+    #[signal]
+    fn glasses_disconnected();
 
     /// Whether native head tracking fed a pose on the last frame.
     #[func]
