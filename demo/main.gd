@@ -115,7 +115,9 @@ func _process(_delta: float) -> void:
 func _build_environment() -> void:
 	var env := Environment.new()
 	env.background_mode = Environment.BG_COLOR
-	env.background_color = Color(0.05, 0.06, 0.09)
+	# Solid black. On the XREAL optical see-through display black reads as transparent,
+	# so the scene appears to float over the real world.
+	env.background_color = Color(0.0, 0.0, 0.0)
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
 	env.ambient_light_color = Color(0.6, 0.6, 0.7)
 	env.ambient_light_energy = 0.6

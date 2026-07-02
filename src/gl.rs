@@ -271,9 +271,10 @@ pub fn blit_texture(src: u32, src_w: i32, src_h: i32, dst: u32, dst_w: i32, dst_
         let read_ok = (g.check_framebuffer_status)(GL_READ_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
         let draw_ok = (g.check_framebuffer_status)(GL_DRAW_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
         if read_ok && draw_ok {
-            // Flip Y: source (0,src_h)->(src_w,0) maps to dest (0,0)->(dst_w,dst_h).
+            // Straight copy (no Y-flip): the SubViewport render target and the eye texture share
+            // GL bottom-left origin, matching blit_default_framebuffer (flipping showed upside-down).
             (g.blit_framebuffer)(
-                0, src_h, src_w, 0, 0, 0, dst_w, dst_h, GL_COLOR_BUFFER_BIT, GL_LINEAR as u32,
+                0, 0, src_w, src_h, 0, 0, dst_w, dst_h, GL_COLOR_BUFFER_BIT, GL_LINEAR as u32,
             );
         }
 
