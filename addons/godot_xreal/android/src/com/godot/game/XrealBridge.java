@@ -31,6 +31,9 @@ public final class XrealBridge {
 	private static boolean nativeLibrariesLoaded = false;
 	private static boolean companionLaunchRequested = false;
 	private static boolean displayListenerRegistered = false;
+	/// Display id of the XREAL glasses while connected (-1 = none); used to recognise its removal,
+	/// since onDisplayRemoved cannot query the (already gone) Display.
+	private static int xrealDisplayId = -1;
 
 	private XrealBridge() {}
 
@@ -135,6 +138,8 @@ public final class XrealBridge {
 				Log.i(TAG, BRIDGE_VERSION + ": display added "
 						+ (display == null ? displayId : describeDisplay(display)));
 				if (isXrealDisplay(display)) {
+					xrealDisplayId = displayId;
+					notifyGlassesConnected(displayId);
 					activity.runOnUiThread(() -> startCompanionOnXrealDisplayIfNeeded(activity));
 				}
 			}
@@ -142,6 +147,10 @@ public final class XrealBridge {
 			@Override
 			public void onDisplayRemoved(int displayId) {
 				Log.i(TAG, BRIDGE_VERSION + ": display removed " + displayId);
+				if (displayId == xrealDisplayId) {
+					xrealDisplayId = -1;
+					notifyGlassesDisconnected(displayId);
+				}
 				companionLaunchRequested = false;
 			}
 
@@ -161,6 +170,8 @@ public final class XrealBridge {
 		if (existing != null) {
 			Log.i(TAG, BRIDGE_VERSION + ": XREAL display already present at registration: "
 					+ describeDisplay(existing));
+			xrealDisplayId = existing.getDisplayId();
+			notifyGlassesConnected(xrealDisplayId);
 			activity.runOnUiThread(() -> startCompanionOnXrealDisplayIfNeeded(activity));
 		}
 	}
@@ -209,4 +220,26 @@ public final class XrealBridge {
 	}
 
 	private static native void nativeRegisterActivity(Activity activity);
+
+	private static native void nativeOnGlassesConnected(int displayId);
+
+	private static native void nativeOnGlassesDisconnected(int displayId);
+
+	/** Forward a glasses connect event to native, tolerating a missing symbol (template drift). */
+	private static void notifyGlassesConnected(int displayId) {
+		try {
+			nativeOnGlassesConnected(displayId);
+		} catch (Throwable t) {
+			Log.w(TAG, "nativeOnGlassesConnected unavailable", t);
+		}
+	}
+
+	/** Forward a glasses disconnect event to native, tolerating a missing symbol. */
+	private static void notifyGlassesDisconnected(int displayId) {
+		try {
+			nativeOnGlassesDisconnected(displayId);
+		} catch (Throwable t) {
+			Log.w(TAG, "nativeOnGlassesDisconnected unavailable", t);
+		}
+	}
 }

@@ -69,6 +69,10 @@ func _spawn_rig() -> void:
 		# Recenter the view to the current head direction once tracking goes live.
 		if _tracker.has_signal(&"display_started"):
 			_tracker.display_started.connect(_on_display_started)
+		# React to glasses hot-plug (connect/disconnect) at runtime.
+		if _tracker.has_signal(&"glasses_connected"):
+			_tracker.glasses_connected.connect(_on_glasses_connected)
+			_tracker.glasses_disconnected.connect(_on_glasses_disconnected)
 	else:
 		# Fallback so the scene is still visible (and the panel explains why).
 		var camera := Camera3D.new()
@@ -102,6 +106,14 @@ func _on_display_started() -> void:
 	if _tracker and _tracker.has_method(&"recenter"):
 		_tracker.recenter()
 		print("[demo] display_started -> recenter")
+
+func _on_glasses_connected() -> void:
+	# Glasses plugged in at runtime (fires even if the app started without them). The native
+	# session bootstrap retries automatically; display_started will follow once tracking is up.
+	print("[demo] glasses connected")
+
+func _on_glasses_disconnected() -> void:
+	print("[demo] glasses disconnected")
 
 func _process(_delta: float) -> void:
 	if _euler_label == null:
