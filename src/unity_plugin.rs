@@ -176,6 +176,39 @@ static XR_TEXTURES: Mutex<Vec<XrTexture>> = Mutex::new(Vec::new());
 static XR_TEXTURE_NEXT_ID: AtomicU32 = AtomicU32::new(1);
 static XR_QUERY_LOG: AtomicU32 = AtomicU32::new(0);
 
+/// Per-eye projection + eye pose, read from `UnityXRNextFrameDesc.renderPasses[k].renderParams[0]`
+/// by the frame tick and consumed by `XrealHeadTracker` to set the eye cameras. `l/r/t/b` are the
+/// XREAL half-angle tangents; `px/py/pz` is `deviceAnchorToEyePose.position`.
+#[derive(Clone, Copy)]
+pub struct EyeProj {
+    pub valid: bool,
+    pub l: f32,
+    pub r: f32,
+    pub t: f32,
+    pub b: f32,
+    pub px: f32,
+    pub py: f32,
+    pub pz: f32,
+}
+impl EyeProj {
+    const ZERO: EyeProj = EyeProj {
+        valid: false,
+        l: 0.0,
+        r: 0.0,
+        t: 0.0,
+        b: 0.0,
+        px: 0.0,
+        py: 0.0,
+        pz: 0.0,
+    };
+}
+static STEREO_PROJ: Mutex<[EyeProj; 2]> = Mutex::new([EyeProj::ZERO; 2]);
+
+/// The latest per-eye projection/pose the SDK wrote into the frame descriptor (or `valid=false`).
+pub fn stereo_projection() -> [EyeProj; 2] {
+    *STEREO_PROJ.lock().expect("stereo proj mutex")
+}
+
 /// Per-eye source GL textures + size, published each frame from `XrealHeadTracker::process`.
 /// When both are non-zero these are offscreen SubViewport textures (real stereo); when both are
 /// zero but the size is set, the frame tick blits Godot's default framebuffer into both eyes
@@ -1041,6 +1074,36 @@ pub fn run_frame_tick() {
     };
     let pass_count = read_u32(0x580);
     let tex_ids = [read_u32(0x00), read_u32(0xfc)];
+
+    // Each render pass's renderParams[0] carries the SDK's per-eye projection (half-angle tangents
+    // at base+0x28..0x34) and eye pose position (deviceAnchorToEyePose at base+0x08..0x10).
+    // renderPasses[0] starts at desc+0x00, renderPasses[1] at desc+0xfc.
+    let read_f32 = |offset: usize| -> f32 {
+        f32::from_ne_bytes(desc[offset..offset + 4].try_into().expect("desc f32 slice"))
+    };
+    {
+        let mut proj = STEREO_PROJ.lock().expect("stereo proj mutex");
+        for (k, base) in [0usize, 0xfc].into_iter().enumerate() {
+            proj[k] = EyeProj {
+                valid: pass_count as usize > k,
+                px: read_f32(base + 0x08),
+                py: read_f32(base + 0x0c),
+                pz: read_f32(base + 0x10),
+                l: read_f32(base + 0x28),
+                r: read_f32(base + 0x2c),
+                t: read_f32(base + 0x30),
+                b: read_f32(base + 0x34),
+            };
+        }
+        if n < 3 {
+            godot::global::godot_print!(
+                "[xreal] eye proj L: l={:.4} r={:.4} t={:.4} b={:.4} pos=({:.4},{:.4},{:.4}) | \
+                 R: l={:.4} r={:.4} t={:.4} b={:.4} pos=({:.4},{:.4},{:.4})",
+                proj[0].l, proj[0].r, proj[0].t, proj[0].b, proj[0].px, proj[0].py, proj[0].pz,
+                proj[1].l, proj[1].r, proj[1].t, proj[1].b, proj[1].px, proj[1].py, proj[1].pz,
+            );
+        }
+    }
 
     // Blit Godot's rendered viewport into each acquired eye texture. Until the viewport texture is
     // published (`GODOT_SRC_TEX == 0`), fall back to an animated per-eye test pattern so we can
