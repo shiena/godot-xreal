@@ -176,16 +176,28 @@ static XR_TEXTURES: Mutex<Vec<XrTexture>> = Mutex::new(Vec::new());
 static XR_TEXTURE_NEXT_ID: AtomicU32 = AtomicU32::new(1);
 static XR_QUERY_LOG: AtomicU32 = AtomicU32::new(0);
 
-/// The GL texture name + size of Godot's main viewport color, published each frame from
-/// `XrealHeadTracker::process` so the frame tick can blit real scene content into the eye
-/// textures. `gl` = 0 means "not available yet" → the frame tick falls back to the test pattern.
-static GODOT_SRC_TEX: AtomicU32 = AtomicU32::new(0);
+/// Per-eye source GL textures + size, published each frame from `XrealHeadTracker::process`.
+/// When both are non-zero these are offscreen SubViewport textures (real stereo); when both are
+/// zero but the size is set, the frame tick blits Godot's default framebuffer into both eyes
+/// (mono fallback); when nothing is set it draws the test pattern.
+static GODOT_EYE_TEX_L: AtomicU32 = AtomicU32::new(0);
+static GODOT_EYE_TEX_R: AtomicU32 = AtomicU32::new(0);
 static GODOT_SRC_W: AtomicI32 = AtomicI32::new(0);
 static GODOT_SRC_H: AtomicI32 = AtomicI32::new(0);
 
-/// Publish Godot's rendered viewport as the blit source for the glasses (see `GODOT_SRC_TEX`).
-pub fn set_godot_source_texture(gl_tex: u32, width: i32, height: i32) {
-    GODOT_SRC_TEX.store(gl_tex, Ordering::Relaxed);
+/// Publish per-eye offscreen SubViewport textures for stereo blit.
+pub fn set_godot_eye_sources(left: u32, right: u32, width: i32, height: i32) {
+    GODOT_EYE_TEX_L.store(left, Ordering::Relaxed);
+    GODOT_EYE_TEX_R.store(right, Ordering::Relaxed);
+    GODOT_SRC_W.store(width, Ordering::Relaxed);
+    GODOT_SRC_H.store(height, Ordering::Relaxed);
+}
+
+/// Mono fallback: publish just the window size (no offscreen textures) so the frame tick blits
+/// the default framebuffer into both eyes.
+pub fn set_godot_source_size(width: i32, height: i32) {
+    GODOT_EYE_TEX_L.store(0, Ordering::Relaxed);
+    GODOT_EYE_TEX_R.store(0, Ordering::Relaxed);
     GODOT_SRC_W.store(width, Ordering::Relaxed);
     GODOT_SRC_H.store(height, Ordering::Relaxed);
 }
@@ -1033,10 +1045,13 @@ pub fn run_frame_tick() {
     // Blit Godot's rendered viewport into each acquired eye texture. Until the viewport texture is
     // published (`GODOT_SRC_TEX == 0`), fall back to an animated per-eye test pattern so we can
     // still tell the compositor path is alive.
-    let src_tex = GODOT_SRC_TEX.load(Ordering::Relaxed);
+    let eye_src = [
+        GODOT_EYE_TEX_L.load(Ordering::Relaxed),
+        GODOT_EYE_TEX_R.load(Ordering::Relaxed),
+    ];
     let src_w = GODOT_SRC_W.load(Ordering::Relaxed);
     let src_h = GODOT_SRC_H.load(Ordering::Relaxed);
-    let have_src = src_w > 0 && src_h > 0;
+    let have_size = src_w > 0 && src_h > 0;
     let phase = (n % 180) as f32 / 180.0;
     let mut filled = 0u32;
     for (eye, &tex_id) in tex_ids.iter().enumerate().take(pass_count.max(1) as usize) {
@@ -1044,11 +1059,12 @@ pub fn run_frame_tick() {
             continue;
         }
         if let Some((gl_tex, dw, dh)) = xr_texture_for(tex_id) {
-            if src_tex != 0 {
-                // Offscreen viewport texture (e.g. a SubViewport) is available.
-                crate::gl::blit_texture(src_tex, src_w, src_h, gl_tex, dw, dh);
-            } else if have_src {
-                // Root viewport renders direct-to-screen: read the default framebuffer.
+            let src = eye_src[eye.min(1)];
+            if src != 0 && have_size {
+                // Real stereo: this eye's offscreen SubViewport texture.
+                crate::gl::blit_texture(src, src_w, src_h, gl_tex, dw, dh);
+            } else if have_size {
+                // Mono fallback: Godot's default framebuffer into both eyes.
                 crate::gl::blit_default_framebuffer(gl_tex, src_w, src_h, dw, dh);
             } else {
                 let (r, g, b) = if eye == 0 {
@@ -1077,10 +1093,12 @@ pub fn run_frame_tick() {
         godot::global::godot_print!(
             "[xreal] frame_tick #{n} tid={}: populate={pop_status} passes={pass_count} \
              tex0={} tex1={} filled={filled} submit={submit_status:?} \
-             src_gl={src_tex} src={src_w}x{src_h} blit={have_src}",
+             eye_l={} eye_r={} src={src_w}x{src_h}",
             current_tid(),
             tex_ids[0],
-            tex_ids[1]
+            tex_ids[1],
+            eye_src[0],
+            eye_src[1]
         );
     }
 }

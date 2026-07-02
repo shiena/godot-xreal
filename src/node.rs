@@ -6,10 +6,26 @@
 //! the (mirrored) device screen. On desktop/editor the native libraries are
 //! absent, so the node stays at identity and logs a single warning.
 
-use godot::classes::{INode3D, Node3D, RenderingServer};
+use godot::classes::sub_viewport::UpdateMode;
+use godot::classes::{Camera3D, INode3D, Node3D, RenderingServer, SubViewport};
 use godot::prelude::*;
 
 use crate::session;
+
+/// Per-eye render size (matches the XREAL swapchain buffers created via CreateTexture).
+const EYE_W: i32 = 1968;
+const EYE_H: i32 = 1134;
+/// Vertical FOV (deg) ≈ XREAL One Pro per-eye (~46° horizontal at 1968×1134 aspect).
+const EYE_FOV: f32 = 27.4;
+/// Half the interpupillary distance (m) — each eye camera is offset ±this along head-local X.
+const HALF_IPD: f32 = 0.0315;
+
+/// Two offscreen SubViewports (left/right), each with a Camera3D, rendering the main world from
+/// per-eye viewpoints. Their textures are blitted into the XREAL eye swapchain buffers.
+struct StereoRig {
+    viewports: [Gd<SubViewport>; 2],
+    cameras: [Gd<Camera3D>; 2],
+}
 
 #[derive(GodotClass)]
 #[class(base = Node3D)]
@@ -21,6 +37,8 @@ pub struct XrealHeadTracker {
     frames: u64,
     /// Last raw/converted pose sample for on-device visual debugging.
     debug_pose: GString,
+    /// Lazily-created per-eye offscreen render rig (stereo).
+    stereo: Option<StereoRig>,
 }
 
 #[godot_api]
@@ -31,6 +49,7 @@ impl INode3D for XrealHeadTracker {
             tracking: false,
             frames: 0,
             debug_pose: GString::new(),
+            stereo: None,
         }
     }
 
@@ -60,21 +79,8 @@ impl INode3D for XrealHeadTracker {
             }
         }
 
-        // Publish Godot's rendered main-viewport color as the blit source for the glasses. On
-        // Android `process` runs on the GL thread, so the native handle is valid here; the frame
-        // tick blits it into the acquired eye textures.
-        if let Some(viewport) = self.base().get_viewport() {
-            if let Some(viewport_texture) = viewport.get_texture() {
-                let handle =
-                    RenderingServer::singleton().texture_get_native_handle(viewport_texture.get_rid());
-                let size = viewport.get_visible_rect().size;
-                crate::unity_plugin::set_godot_source_texture(
-                    handle as u32,
-                    size.x as i32,
-                    size.y as i32,
-                );
-            }
-        }
+        // Build the per-eye offscreen render rig once we're in the tree (has a World3D).
+        self.ensure_stereo();
 
         // Drive the XREAL swapchain on the rendering thread (EGL context required).
         // First call invokes GfxThreadStart (CreateSwapchainEx → GL textures → SetSwapChainBuffers);
@@ -118,6 +124,73 @@ impl INode3D for XrealHeadTracker {
                 }
             }
         }
+
+        // Point the eye cameras from the (now-updated) head transform, then publish their
+        // offscreen textures for the frame tick to blit into the XREAL eye buffers.
+        self.update_stereo();
+    }
+}
+
+impl XrealHeadTracker {
+    /// Create the two per-eye SubViewports + cameras once, sharing the main World3D so they render
+    /// the same scene. No-op until the node is in the tree (needs a World3D).
+    fn ensure_stereo(&mut self) {
+        if self.stereo.is_some() {
+            return;
+        }
+        let Some(world) = self.base().get_world_3d() else {
+            return;
+        };
+        let mut make_eye = || {
+            let mut sv = SubViewport::new_alloc();
+            sv.set_size(Vector2i::new(EYE_W, EYE_H));
+            sv.set_update_mode(UpdateMode::ALWAYS);
+            sv.set_world_3d(&world);
+            let mut cam = Camera3D::new_alloc();
+            cam.set_fov(EYE_FOV);
+            cam.set_near(0.05);
+            cam.set_far(1000.0);
+            cam.set_current(true);
+            sv.add_child(&cam);
+            (sv, cam)
+        };
+        let (svl, caml) = make_eye();
+        let (svr, camr) = make_eye();
+        self.base_mut().add_child(&svl);
+        self.base_mut().add_child(&svr);
+        self.stereo = Some(StereoRig {
+            viewports: [svl, svr],
+            cameras: [caml, camr],
+        });
+        godot_print!("[xreal] stereo rig created ({EYE_W}x{EYE_H} per eye)");
+    }
+
+    /// Aim the eye cameras from the head transform (±IPD) and publish their GL textures.
+    fn update_stereo(&mut self) {
+        let head = self.base().get_global_transform();
+        let Some(rig) = self.stereo.as_mut() else {
+            // Mono fallback: publish the window size so the frame tick blits the default framebuffer.
+            if let Some(viewport) = self.base().get_viewport() {
+                let size = viewport.get_visible_rect().size;
+                crate::unity_plugin::set_godot_source_size(size.x as i32, size.y as i32);
+            }
+            return;
+        };
+        for (i, cam) in rig.cameras.iter_mut().enumerate() {
+            let sign = if i == 0 { -1.0 } else { 1.0 };
+            let offset = Transform3D::new(Basis::IDENTITY, Vector3::new(sign * HALF_IPD, 0.0, 0.0));
+            cam.set_global_transform(head * offset);
+        }
+        let mut rs = RenderingServer::singleton();
+        // Use the actual render-target texture RID (viewport_get_texture on the viewport RID), not
+        // the ViewportTexture *resource* RID, whose native handle is 0.
+        let mut handle = |sv: &Gd<SubViewport>| -> u32 {
+            let tex_rid = rs.viewport_get_texture(sv.get_viewport_rid());
+            rs.texture_get_native_handle(tex_rid) as u32
+        };
+        let left = handle(&rig.viewports[0]);
+        let right = handle(&rig.viewports[1]);
+        crate::unity_plugin::set_godot_eye_sources(left, right, EYE_W, EYE_H);
     }
 }
 
