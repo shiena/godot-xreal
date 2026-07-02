@@ -39,6 +39,8 @@ pub struct XrealHeadTracker {
     debug_pose: GString,
     /// Lazily-created per-eye offscreen render rig (stereo).
     stereo: Option<StereoRig>,
+    /// Whether the `display_started` signal has been emitted (once, on first tracking).
+    display_signaled: bool,
 }
 
 #[godot_api]
@@ -50,6 +52,7 @@ impl INode3D for XrealHeadTracker {
             frames: 0,
             debug_pose: GString::new(),
             stereo: None,
+            display_signaled: false,
         }
     }
 
@@ -93,6 +96,10 @@ impl INode3D for XrealHeadTracker {
         match session.head_pose() {
             Some((pose, rotation)) => {
                 self.tracking = true;
+                if !self.display_signaled {
+                    self.display_signaled = true;
+                    self.signals().display_started().emit();
+                }
                 self.base_mut().set_quaternion(rotation);
                 let euler = rotation.get_euler() * (180.0 / std::f32::consts::PI);
                 // Rotation calibration log: raw NRSDK quaternion + resulting Godot Euler (deg).
@@ -214,6 +221,12 @@ impl XrealHeadTracker {
 
 #[godot_api]
 impl XrealHeadTracker {
+    /// Emitted once when the glasses display + head tracking first go live (the first frame a head
+    /// pose arrives). Connect it in GDScript and call `recenter()` to make the current head
+    /// direction "forward" at startup.
+    #[signal]
+    fn display_started();
+
     /// Whether native head tracking fed a pose on the last frame.
     #[func]
     fn is_tracking(&self) -> bool {
