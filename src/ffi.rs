@@ -40,15 +40,14 @@ impl NrPose {
     /// look-around is inverted on one axis, try the other variants (`(x,y,-z,-w)`,
     /// `(x,-y,z,-w)`, `(-x,y,-z,w)`).
     pub fn to_godot_quaternion(self) -> Quaternion {
-        let converted = Quaternion::new(-self.qx, -self.qy, self.qz, self.qw).normalized();
-        let mut euler = converted.get_euler();
-
-        // Device-confirmed empirical correction on XREAL One Pro: yaw matches after the
-        // handedness conversion, while pitch is inverted and doubled. Apply the correction
-        // in Godot's own YXZ Euler space so the visible tracker angle changes directly.
-        euler.x *= -0.5;
-
-        Quaternion::from_euler(euler).normalized()
+        // DEVICE-CONFIRMED field order: the 4 rotation floats are **w-first** (w, x, y, z), NOT
+        // (x, y, z, w). At rest the first float ≈ 1.0 (the scalar w) and the rest ≈ 0. So the
+        // struct slots map: w=qx, x=qy, y=qz, z=qw.
+        let (w, x, y, z) = (self.qx, self.qy, self.qz, self.qw);
+        // Unity/NRSDK left-handed Z-forward → Godot right-handed -Z-forward: flip the Z basis,
+        // (x, y, z, w) → (-x, -y, z, w). If an axis still reads inverted on device, flip that
+        // component's sign (the calibration log prints the raw quaternion + converted Euler).
+        Quaternion::new(-x, -y, z, w).normalized()
     }
 }
 
