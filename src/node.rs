@@ -94,27 +94,21 @@ impl INode3D for XrealHeadTracker {
             Some((pose, rotation)) => {
                 self.tracking = true;
                 self.base_mut().set_quaternion(rotation);
-                let old_rotation =
-                    Quaternion::new(-pose.qx, -pose.qy, pose.qz, pose.qw).normalized();
-                let old_euler = old_rotation.get_euler() * (180.0 / std::f32::consts::PI);
-                let new_euler = rotation.get_euler() * (180.0 / std::f32::consts::PI);
-                let debug_pose = format!(
-                    "POSE CONV X=-0.5\nNODE X {node_x:.1}\nNODE Y {node_y:.1}\nNODE Z {node_z:.1}\nOLD  X {old_x:.1} Y {old_y:.1} Z {old_z:.1}\nNEW  X {new_x:.1} Y {new_y:.1} Z {new_z:.1}\nQ {qx:.3} {qy:.3} {qz:.3} {qw:.3}",
-                    node_x = new_euler.x,
-                    node_y = new_euler.y,
-                    node_z = new_euler.z,
-                    old_x = old_euler.x,
-                    old_y = old_euler.y,
-                    old_z = old_euler.z,
-                    new_x = new_euler.x,
-                    new_y = new_euler.y,
-                    new_z = new_euler.z,
-                    qx = pose.qx,
-                    qy = pose.qy,
-                    qz = pose.qz,
-                    qw = pose.qw,
-                );
-                self.debug_pose = GString::from(&debug_pose);
+                let euler = rotation.get_euler() * (180.0 / std::f32::consts::PI);
+                // Rotation calibration log: raw NRSDK quaternion + resulting Godot Euler (deg).
+                // Move the head in a known way and match: pitch=X (nod up/down), yaw=Y (turn
+                // left/right), roll=Z (tilt ear-to-shoulder). Wrong sign/axis → adjust the flip in
+                // NrPose::to_godot_quaternion.
+                if self.frames % 30 == 0 {
+                    godot_print!(
+                        "[xreal] pose q(wxyz)=({:.3},{:.3},{:.3},{:.3}) euler_deg pitch/x={:.1} yaw/y={:.1} roll/z={:.1}",
+                        pose.qx, pose.qy, pose.qz, pose.qw, euler.x, euler.y, euler.z
+                    );
+                }
+                self.debug_pose = GString::from(&format!(
+                    "pitch {:.0}\nyaw {:.0}\nroll {:.0}\nq {:.2} {:.2} {:.2} {:.2}",
+                    euler.x, euler.y, euler.z, pose.qx, pose.qy, pose.qz, pose.qw
+                ));
             }
             None => {
                 self.tracking = false;
