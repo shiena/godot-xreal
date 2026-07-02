@@ -221,8 +221,7 @@ impl XrealHeadTracker {
                 // Half-angle tangents → asymmetric frustum. Godot's Camera3D.set_frustum(size,
                 // offset, near, far) maps to near-plane extents ±size/2 (vert) / ±size*aspect/2
                 // (horiz) shifted by offset; near-plane coord = tangent*near.
-                let size = (p.t - p.b) * NEAR;
-                let offset = Vector2::new((p.r + p.l) * 0.5 * NEAR, (p.t + p.b) * 0.5 * NEAR);
+                let (size, offset) = frustum_size_offset(p.l, p.r, p.t, p.b, NEAR);
                 cam.set_frustum(size, offset, NEAR, FAR);
             } else {
                 cam.set_fov(EYE_FOV);
@@ -279,5 +278,38 @@ impl XrealHeadTracker {
     #[func]
     fn debug_pose_text(&self) -> GString {
         self.debug_pose.clone()
+    }
+}
+
+/// Asymmetric projection from the SDK's per-eye half-angle tangents (l, r, t, b) into Godot's
+/// `Camera3D::set_frustum(size, offset, near, far)` parameters. `size` is the vertical near-plane
+/// extent and `offset` shifts the (otherwise centered) near-plane rectangle; a near-plane
+/// coordinate equals `tangent * near`. Kept as a free function so the calibrated mapping is unit
+/// tested (see the tests module) without needing a live Camera3D.
+fn frustum_size_offset(l: f32, r: f32, t: f32, b: f32, near: f32) -> (f32, Vector2) {
+    let size = (t - b) * near;
+    let offset = Vector2::new((r + l) * 0.5 * near, (t + b) * 0.5 * near);
+    (size, offset)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn symmetric_tangents_center_the_frustum() {
+        // Symmetric l/r and t/b → no offset; size is the full vertical extent at the near plane.
+        let (size, offset) = frustum_size_offset(-0.5, 0.5, 0.4, -0.4, 0.05);
+        assert!((size - 0.8 * 0.05).abs() < 1e-6, "size {size}");
+        assert!(offset.x.abs() < 1e-6 && offset.y.abs() < 1e-6, "offset {offset:?}");
+    }
+
+    #[test]
+    fn asymmetric_tangents_shift_the_frustum() {
+        // l=-0.6,r=0.4 → horizontal center at (r+l)/2=-0.1; t=0.5,b=-0.3 → vertical center at 0.1.
+        let (size, offset) = frustum_size_offset(-0.6, 0.4, 0.5, -0.3, 0.05);
+        assert!((size - 0.8 * 0.05).abs() < 1e-6, "size {size}");
+        assert!((offset.x - (-0.1 * 0.05)).abs() < 1e-6, "offset.x {}", offset.x);
+        assert!((offset.y - (0.1 * 0.05)).abs() < 1e-6, "offset.y {}", offset.y);
     }
 }
