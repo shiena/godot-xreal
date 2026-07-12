@@ -1,7 +1,9 @@
 # Glasses render position / head-lock investigation
 
 Status: **partially solved.** Recenter now works (app-side); the "peek-window" head-lock of the
-glasses layer is **still open** — narrowed to the XR frame-submission emulation, not a mode call.
+glasses layer is **still open**, but the **root cause is now identified by RE** (we drive the Godot
+cameras from the session-manager head-pose pipeline while the compositor reprojects with the *display*
+`InputManager` pose — two different tracking sources). Fix is scoped; pending on-device verification.
 
 The goal (user's model): the glasses display should be **head-locked** (the rendered rectangle
 always fills the FOV, in front of the eyes) and the **Godot camera acts as a peek window** into
@@ -59,17 +61,56 @@ sequence of on-device experiments:
   ⇒ Head-lock is **entirely** in the native per-frame pose/viewport submission (libil2cpp → libXREALXRPlugin
   → libnr_loader). No manifest, config file, or Java class controls it. Static Java analysis is exhausted.
 
-⇒ **Prime suspect (in our code): the all-zero `hints` buffer.** `run_frame_tick` calls
-`PopulateNextFrameDesc(context, user_data, hints=&[0u8; 0x80], desc)` with the **hints buffer zero-filled
-every frame**. In the real Unity path that input struct (the per-frame "render params": current tracking
-pose / reference-space transform / viewport scale / focus plane) carries the **current head pose** the frame
-should be anchored to. Feeding zeros plausibly makes the SDK anchor every frame at a *fixed* pose →
-world-anchored layer at session-start attitude, which is exactly the observed symptom. The blocker is the
-**hints/params struct layout is unknown** (it's the *input* to PopulateNextFrameDesc; our RE mapped the
-*output* `desc` only). Next: recover that layout (RE of how PopulateNextFrameDesc reads `hints`, or Frida-dump
-what Unity passes in LayeredClient), then feed the live head pose in. Secondary angle: render each eye from
-the pose the SDK writes into `desc` so the compositor reprojection delta is ~0, instead of from our
-independent `head_pose()` read.
+> Note: an earlier draft guessed the **all-zero `hints` buffer** was the culprit (that the per-frame
+> `UnityXRFrameSetupHints` carries the head pose). **RE disproved this** — `frame-submission-plan.md` and the
+> disassembly show `UnityXRFrameSetupHints` holds only viewport/zNear/zFar/scale, and `PopulateNextFrameDesc`
+> sources the pose from `InputManager`, not from `hints`. A zero-filled hints buffer is correct.
+
+⇒ **Root cause (RE-confirmed mechanism; pending on-device verification): we render from a different
+head-pose pipeline than the compositor reprojects with.** Disassembly of `DisplayManager::PopulateNextFrameDesc`
+@0x68c7c shows it fills each `renderParams` purely from `InputManager::GetEyeFov` (per-eye FOV tangents) and
+`InputManager::GetEyeXRPosFromHead` (eye-from-head offset) — and writes **no head world-orientation** into the
+descriptor. So the head orientation that composites/reprojects the glasses layer comes from
+**libXREALXRPlugin.so's own `InputManager` HMD pose**. Meanwhile our Godot eye cameras are driven by
+`XREALGetHeadPoseAtTime` from **libXREALNativeSessionManager.so** — a *different* library / tracking pipeline
+(the very split that made `RecenterGlasses` a no-op on our pose). The compositor reprojects the submitted
+buffer by *its* (InputManager) pose while our content was baked with the *session-manager* pose, so the two
+never cancel → the layer reads as world-anchored at the session-start attitude instead of a head-locked peek
+window. This also explains the earlier on-device experiments precisely: with the Godot camera at **identity**
+the content is head-locked (baked rotation 0, compositor still reprojects); with the **session-manager**
+rotation it is wrong (baked ≠ compositor); the predicted-correct case (baked == compositor) was never tried
+because we were reading the wrong library.
+
+**The fix (scoped):** `libXREALXRPlugin.so` exports `GetHeadPoseAtTime` @0x48cc8, a thin wrapper that
+tail-calls `InputManager::GetHeadPoseAtTime` @0x7f4a0 — i.e. **the exact pose the compositor uses** — and it
+is a dlsym-able exported `T` symbol in the **already-loaded** `plugin_lib`. Read the head pose from that
+export and drive the eye cameras from it, replacing the session-manager read. Caveat on its output ABI: it
+writes a **64-byte / 16-float block** (copied straight from `NativePerception::GetHeadPose`'s struct return),
+**not** the compact 7-float `NrPose`. The quaternion's offset within those 16 floats needs a one-shot on-device
+log to pin down (find the 4 floats that form a unit quaternion, exactly as `NrPose`'s w-first order was
+originally confirmed), then convert like `NrPose::to_godot_quaternion`. Bonus: `InputManager::RecenterHmd()`
+@0x7bbb0 (and the exported `RecenterGlasses`) act on **this** InputManager pose, so once the camera reads it,
+hardware recenter should finally take effect — superseding the app-side recenter workaround in `node.rs`.
+
+### Concrete implementation sketch
+
+1. `native.rs::load` — after `plugin_lib` is opened, `dlsym` `GetHeadPoseAtTime` into a new
+   `xp_get_head_pose_at_time: Option<fn(u64, *mut [f32; 16]) -> i32>` (own type; do **not** reuse
+   `FnGetHeadPoseAtTime`, which points at the 7-float `NrPose`). Keep the session-manager read as a fallback.
+2. Add `XrealNative::head_pose_display(&self, time_ns) -> Option<[f32; 16]>` and, for the first N frames,
+   `godot_print!` all 16 floats so we can identify the unit-quaternion quad + position on device.
+3. `session.rs` — add `head_pose_display()` that calls it at `hmd_time_nanos()` (the display clock), mirroring
+   the existing `head_pose()`.
+4. `node.rs::process` — switch the eye-camera source to `head_pose_display()`; once the layout is confirmed,
+   convert the quaternion (reuse/clone `to_godot_quaternion`'s handedness flip) and **drop the app-side
+   recenter** (call the SDK recenter instead). Verify on device: turning the head should now pan the
+   world-locked scene inside a face-locked window (peek window), and `RecenterGlasses`/MENU-long-press should
+   re-forward it.
+
+> ⚠️ Regression watch: the removed `get_head_rotation` #[func] SIGSEGV was traced to pulling `head_pose` into
+> an `XrealSystem` #[func] thunk (see `input-feature-glthread-crash`). This change touches the head-tracker
+> node's own `process()` path (not an `XrealSystem` #[func]), so it should be clear of that trap, but keep the
+> new dlsym/read out of any `XrealSystem` #[func] body.
 
 ## What a graphics profiler / debug tool can (and cannot) reveal here
 
