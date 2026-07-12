@@ -574,6 +574,34 @@ pub fn call_input_recenter() -> bool {
     true
 }
 
+/// Drive the per-frame HMD input update that Unity normally runs each frame. This calls
+/// `UpdateDeviceState(deviceId=0)` → `InputManager::UpdateHMDState` → **`DisplayManager::OnBeforeRender()`**
+/// (refreshes the render pose the glasses compositor reprojects against) + `NativePerception::GetHeadPose`.
+/// Without it, the compositor's render pose stays frozen at session start and our content world-anchors
+/// there instead of staying a head-locked peek window. Returns the callback's status (or -1 if absent).
+///
+/// The `UnityXRInputDeviceState*` out-arg is written via plain stores (no Unity allocator callbacks in
+/// `UpdateHMDState`), so a large zeroed scratch buffer is safe.
+pub fn call_input_update_hmd() -> i32 {
+    let provider = *INPUT_PROVIDER.lock().expect("input provider mutex");
+    let Some(provider) = provider else { return -1 };
+    if provider.update_device_state == 0 {
+        return -1;
+    }
+    // `$_9::__invoke(void*, void*, u32 deviceId, UnityXRInputUpdateType, UnityXRInputDeviceState*)`.
+    let update: extern "C" fn(*mut c_void, *mut c_void, u32, u32, *mut c_void) -> i32 =
+        unsafe { std::mem::transmute(provider.update_device_state) };
+    let mut buf = [0u8; 1024];
+    // deviceId 0 = HMD; updateType 0 = Dynamic.
+    update(
+        ptr::null_mut(),
+        ptr::null_mut(),
+        0,
+        0,
+        buf.as_mut_ptr() as *mut c_void,
+    )
+}
+
 extern "C" fn xr_set_device_connected(_context: *mut c_void, device_id: i32) -> i32 {
     godot::global::godot_print!("[xreal] Unity XR input device state set: {device_id}");
     0
@@ -1106,6 +1134,18 @@ pub fn run_render_thread_tick() {
 /// on the safe `SetBufferViewport + NativeRendering::SubmitFrame` path.
 pub fn run_frame_tick() {
     let n = FRAME_TICK_COUNT.fetch_add(1, Ordering::Relaxed);
+
+    // Drive the per-frame HMD input update (→ DisplayManager::OnBeforeRender) BEFORE populating the
+    // frame, so the render pose the compositor reprojects against is refreshed to the live head pose
+    // instead of freezing at session start (which world-anchors our render). Runs on the render
+    // thread — a different thread from XrealHeadTracker::process's session-manager pose read, so the
+    // two pose pipelines are not touched on the same thread in the same frame.
+    let hmd_update = call_input_update_hmd();
+    if n < 5 || n % 300 == 0 {
+        godot::global::godot_print!(
+            "[xreal] input UpdateDeviceState(HMD)->{hmd_update} (frame {n})"
+        );
+    }
 
     let provider = *GFX_THREAD_PROVIDER
         .lock()
