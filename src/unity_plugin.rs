@@ -318,6 +318,18 @@ static INPUT_LIFECYCLE: Mutex<Option<RegisteredLifecycle>> = Mutex::new(None);
 static MESH_LIFECYCLE: Mutex<Option<RegisteredLifecycle>> = Mutex::new(None);
 static GFX_THREAD_PROVIDER: Mutex<Option<RegisteredGfxThreadProvider>> = Mutex::new(None);
 static TEXTURE_PROVIDER: Mutex<Option<RegisteredTextureProvider>> = Mutex::new(None);
+/// The XREAL input provider callbacks (COPIED at registration — the struct the SDK hands
+/// `RegisterInputProvider` is transient and its memory is reused after the call, so we must copy the
+/// function addresses, which point into stable `libXREALXRPlugin.so` code). RE (SDK 3.1.0, device
+/// struct dump): `+0x20` = `$_9` → `InputManager::UpdateDeviceState` (the per-frame HMD update Unity
+/// normally drives), `+0x30` = `$_11` → `NativePerception::Recenter` (the real recenter that resets
+/// the perception origin the compositor reprojects against).
+#[derive(Clone, Copy)]
+struct RegisteredInputProvider {
+    recenter: usize,            // callback at struct +0x30
+    update_device_state: usize, // callback at struct +0x20
+}
+static INPUT_PROVIDER: Mutex<Option<RegisteredInputProvider>> = Mutex::new(None);
 static LIFECYCLE_STARTED: AtomicBool = AtomicBool::new(false);
 static GFX_THREAD_STARTED: AtomicBool = AtomicBool::new(false);
 static FRAME_TICK_COUNT: AtomicU64 = AtomicU64::new(0);
@@ -508,9 +520,58 @@ extern "C" fn xr_register_gfx_thread_provider(
     0
 }
 
-extern "C" fn xr_register_input_provider(_context: *mut c_void, _callbacks: *const c_void) -> i32 {
-    godot::global::godot_print!("[xreal] Unity XR input provider callbacks registered");
+extern "C" fn xr_register_input_provider(context: *mut c_void, callbacks: *const c_void) -> i32 {
+    if !callbacks.is_null() {
+        // Dump the provider struct's first 10 pointer words so we can find the per-frame tick
+        // callback (a function inside libXREALXRPlugin.so that wraps InputManager::UpdateHMDState /
+        // UpdateEyeData). We only READ + store here — no call — so this is crash-safe.
+        let words: [usize; 10] = unsafe { *(callbacks as *const [usize; 10]) };
+        let dump: Vec<String> = words
+            .iter()
+            .enumerate()
+            .map(|(i, w)| format!("[+{:#04x}]={:#018x}", i * 8, w))
+            .collect();
+        godot::global::godot_print!(
+            "[xreal] input provider @ {callbacks:?} ctx={context:?} struct: {}",
+            dump.join(" ")
+        );
+        // Copy the callback CODE addresses now (the struct itself is transient — words[6] = +0x30
+        // recenter, words[4] = +0x20 update-device-state).
+        *INPUT_PROVIDER.lock().expect("input provider mutex") = Some(RegisteredInputProvider {
+            recenter: words[6],
+            update_device_state: words[4],
+        });
+        let _ = context;
+    }
+    godot::global::godot_print!("[xreal] Unity XR input provider callbacks registered (stored)");
     0
+}
+
+/// Invoke the XREAL input provider's **recenter** callback (`HandleRecenter`), which the SDK wires to
+/// `NativePerception::Recenter()` — the real recenter that resets the *perception tracking origin*
+/// the glasses compositor reprojects against (unlike `RecenterGlasses`, which is a no-op on our pose).
+///
+/// RE (SDK 3.1.0, device-dumped struct): the provider callbacks live at
+/// `RegisterInputProvider(callbacks)`; the recenter lambda `$_11::__invoke(void*, void*)` sits at
+/// struct offset **+0x30** and ignores both args. Returns `true` if the callback was invoked.
+pub fn call_input_recenter() -> bool {
+    let provider = *INPUT_PROVIDER.lock().expect("input provider mutex");
+    let Some(provider) = provider else {
+        godot::global::godot_print!("[xreal] call_input_recenter: no input provider stored");
+        return false;
+    };
+    if provider.recenter == 0 {
+        godot::global::godot_print!("[xreal] call_input_recenter: recenter callback is null");
+        return false;
+    }
+    // `$_11::__invoke(void*, void*) -> i32` → NativePerception::Recenter (both args ignored).
+    let recenter: extern "C" fn(*mut c_void, *mut c_void) -> i32 =
+        unsafe { std::mem::transmute(provider.recenter) };
+    let r = recenter(ptr::null_mut(), ptr::null_mut());
+    godot::global::godot_print!(
+        "[xreal] input recenter (NativePerception::Recenter) -> {r}"
+    );
+    true
 }
 
 extern "C" fn xr_set_device_connected(_context: *mut c_void, device_id: i32) -> i32 {

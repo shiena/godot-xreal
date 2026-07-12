@@ -358,12 +358,16 @@ impl XrealSession {
         native.head_pose_display(time_ns)
     }
 
-    /// Re-center the 3DoF view.
+    /// Re-center the view. Calls the SDK's input-provider recenter (`NativePerception::Recenter`,
+    /// which resets the perception origin the compositor reprojects against — the real fix for
+    /// "move the glasses render to current-forward"), plus the legacy `RecenterGlasses` (harmless
+    /// no-op on our pose, kept for completeness).
     pub fn recenter(&self) {
         self.native
             .lock()
             .expect("xreal native mutex")
             .recenter_glasses();
+        crate::unity_plugin::call_input_recenter();
     }
 
     /// Keep the glasses display on by bypassing the proximity (wear) sensor auto-off. Returns the
