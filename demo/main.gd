@@ -14,6 +14,11 @@ extends Node3D
 # the "gray screen" on device.
 const RIG_SCENE := "res://addons/godot_xreal/xreal_rig.tscn"
 
+# XrealHeadTracker key/action constants, mirrored locally so this script parses even
+# when the GDExtension is absent (desktop editor).
+const XREAL_KEY_MENU := 4
+const XREAL_ACTION_LONG_PRESS := 3
+
 var _tracker: Node3D
 var _system: Object
 var _status: Label
@@ -73,6 +78,11 @@ func _spawn_rig() -> void:
 		if _tracker.has_signal(&"glasses_connected"):
 			_tracker.glasses_connected.connect(_on_glasses_connected)
 			_tracker.glasses_disconnected.connect(_on_glasses_disconnected)
+		# Glasses hardware inputs (One Pro: physical keys + wear sensor).
+		if _tracker.has_signal(&"key_event"):
+			_tracker.key_event.connect(_on_key_event)
+			_tracker.wearing_changed.connect(_on_wearing_changed)
+			_tracker.glasses_event.connect(_on_glasses_event)
 	else:
 		# Fallback so the scene is still visible (and the panel explains why).
 		var camera := Camera3D.new()
@@ -114,6 +124,21 @@ func _on_glasses_connected() -> void:
 
 func _on_glasses_disconnected() -> void:
 	print("[demo] glasses disconnected")
+
+func _on_key_event(key: int, action: int) -> void:
+	print("[demo] key event: key=%d action=%d" % [key, action])
+	# Long-press the MENU key to recenter (current head direction becomes "forward"),
+	# replacing the on-screen button for a glasses-only workflow.
+	if key == XREAL_KEY_MENU and action == XREAL_ACTION_LONG_PRESS:
+		_on_recenter_pressed()
+		print("[demo] MENU long-press -> recenter")
+
+func _on_wearing_changed(wearing: bool) -> void:
+	print("[demo] wearing changed: %s" % ("put on" if wearing else "taken off"))
+
+func _on_glasses_event(action_type: int, para: int, para2: int, para3: float) -> void:
+	# Catch-all diagnostic: one line per native glasses event (Phase A verification).
+	print("[demo] glasses event: type=%d para=%d para2=%d para3=%f" % [action_type, para, para2, para3])
 
 func _process(_delta: float) -> void:
 	if _euler_label == null:

@@ -165,6 +165,45 @@ pub type FnQueryInt = unsafe extern "C" fn() -> i32;
 /// directly to try to kick perception without the full XR-subsystem host.
 pub type FnSwitchTrackingType = unsafe extern "C" fn(i32) -> bool;
 
+/// `GlassesEventData` from `XREALCallbackHandler.cs`, delivered **by value** to the
+/// callback registered with `SetGlassesEventCallback` (libXREALXRPlugin.so export,
+/// C# `[DllImport] SetGlassesEventCallback(XREALGlassesEventCallback)`).
+///
+/// 16 bytes `{i32, u32, u32, f32}` — on AArch64 AAPCS a ≤16-byte composite is passed in
+/// x0/x1, which Rust's `extern "C"` handles for a `#[repr(C)]` struct.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct GlassesEventData {
+    /// `XREALActionType` (see the `ACTION_TYPE_*` constants below).
+    pub action_type: i32,
+    pub para: u32,
+    pub para2: u32,
+    pub para3: f32,
+}
+
+// `XREALActionType` values dispatched in `node.rs` (full enum in `XREALCallbackHandler.cs`).
+pub const ACTION_TYPE_CLICK: i32 = 1;
+pub const ACTION_TYPE_DOUBLE_CLICK: i32 = 2;
+pub const ACTION_TYPE_LONG_PRESS: i32 = 3;
+pub const ACTION_TYPE_INCREASE_BRIGHTNESS: i32 = 6;
+pub const ACTION_TYPE_DECREASE_BRIGHTNESS: i32 = 7;
+pub const ACTION_TYPE_INCREASE_VOLUME: i32 = 8;
+pub const ACTION_TYPE_DECREASE_VOLUME: i32 = 9;
+pub const ACTION_TYPE_NEXT_EC_LEVEL: i32 = 12;
+pub const ACTION_TYPE_KEY_STATE: i32 = 2023;
+pub const ACTION_TYPE_PROXIMITY_WEARING_STATE: i32 = 2024;
+
+// `XREALWearingStatus` values (para of ACTION_TYPE_PROXIMITY_WEARING_STATE).
+pub const WEARING_STATUS_PUT_ON: u32 = 1;
+pub const WEARING_STATUS_TAKE_OFF: u32 = 2;
+
+/// The callback passed to `SetGlassesEventCallback`. Invoked from an SDK-owned thread —
+/// implementations must not touch Godot objects; queue and drain on the main thread.
+pub type FnGlassesEventCallback = extern "C" fn(GlassesEventData);
+
+/// `void SetGlassesEventCallback(XREALGlassesEventCallback cb)` (libXREALXRPlugin.so).
+pub type FnSetGlassesEventCallback = unsafe extern "C" fn(FnGlassesEventCallback);
+
 /// `int ControlSetDisplayBypassPsensorFlag(int flag)` (libXREALXRPlugin.so).
 /// RE-confirmed by disassembly: the C wrapper tail-calls
 /// `NativeGlasses::ControlSetDisplayBypassPsensorFlag(int)` once `NativeGlasses` is ready

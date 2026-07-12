@@ -15,8 +15,9 @@ The Unity SDK is a thin C# wrapper over Android `.so` libraries. Those libraries
 engine-agnostic C ABI (`libXREALNativeSessionManager.so` → `XREALGetHeadPoseAtTime`, …;
 `libXREALXRPlugin.so` → 274 exports incl. an OpenXR-style compositor layer API). So instead of
 translating C#, this extension `dlopen`s the libraries and feeds Godot directly. The obfuscated
-lower NRSDK proc table (`libnr_api.so` / `NRGetProcAddr`) is avoided. Details:
-[`docs/reverse-engineering.md`](docs/reverse-engineering.md).
+lower NRSDK proc table (`libnr_api.so` / `NRGetProcAddr`) is avoided. ABI derivation:
+[`docs/reverse-engineering.md`](docs/reverse-engineering.md); the RE'd functions and their
+GDScript surface: [`docs/native-api-reference.md`](docs/native-api-reference.md).
 
 ## Platform
 
@@ -46,10 +47,24 @@ XrealHeadTracker (Node3D)   # rotation driven by native head pose
 |---|---|---|
 | `XrealHeadTracker` (Node3D) | `is_tracking() -> bool` | A native pose was applied on the last frame. |
 | | `recenter()` | Reset the 3DoF forward direction (`RecenterGlasses`). |
+| | `debug_pose_text() -> String` | Raw pose readout for on-screen debugging. |
+| | signal `display_started()` | Glasses display + head tracking first went live. |
+| | signal `glasses_connected()` / `glasses_disconnected()` | USB hot-plug events. |
+| | signal `key_event(key, action)` | Physical key click/double/long (`KEY_*`, `ACTION_*` constants). |
+| | signal `key_state_changed(key, state)` | Raw key down/up (`KEY_STATE_*` constants). |
+| | signal `wearing_changed(wearing)` | Proximity (wear) sensor put-on / take-off. |
+| | signal `brightness_changed(level)` / `volume_changed(level)` / `ec_level_changed(level)` | Glasses-side state changes. |
+| | signal `glasses_event(action_type, para, para2, para3)` | Catch-all for every raw glasses hardware event. |
 | `XrealSystem` (RefCounted) | `is_available() -> bool` | Native libraries loaded (false on desktop). |
 | | `is_session_started() -> bool` | A native session is running. |
 | | `get_plugin_version() -> String` | XREAL plugin version. |
 | | `get_device_type() -> int` | `XREALDeviceType` enum value. |
+| | `get_tracking_state() / get_tracking_reason() / get_tracking_type() -> int` | XR-plugin tracking enums (`-1` when unavailable). |
+| | `switch_tracking_type(type) -> bool` | Switch tracking mode (`TRACKING_6DOF/3DOF/0DOF/0DOF_STAB` constants). |
+| | `set_display_bypass_psensor(bypass) -> int` | Keep the display on while the glasses are not worn (SDK status). |
+| | `get_hmd_time_nanos() -> int` | Native HMD clock (ns, `0` when down). |
+| | `get_head_rotation() -> Quaternion` | Latest head rotation without a tracker node. |
+| | `get_diagnostics() -> String` | One-line perception-pipeline diagnostic. |
 
 ## Layout
 

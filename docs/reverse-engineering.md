@@ -5,6 +5,10 @@ recovered from the Unity package `com.xreal.xr` v3.1.0 (`Runtime/Plugins/Android
 + `Runtime/Scripts/*.cs`). No official C headers exist, so signatures are recovered from
 the C# `[DllImport]` declarations and binary symbol tables.
 
+> For a task-oriented view — which RE'd functions are callable, their confirmed signatures,
+> and how each surfaces in GDScript (or why it stays internal) — see
+> [`native-api-reference.md`](native-api-reference.md). This file is the low-level derivation.
+
 ## Library layering
 
 | Library | Role | Use from Godot |
@@ -38,6 +42,8 @@ From `libXREALXRPlugin.so` (recenter + future display):
 
 ```
 RecenterGlasses                                          [used]
+SetGlassesEventCallback                                  [used — glasses keys/wear/brightness
+                                                          events; C# ABI, see docs/input-plan.md]
 CreateSession / IsSessionStarted / ResumeSession / PauseSession / DestroySession
 InitUserDefinedSettings / GetPluginVersion / JNI_OnLoad
 GetHeadPoseAtTime / GetTrackingState / GetTrackingReason / GetHMDTimeNanos

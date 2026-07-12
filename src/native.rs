@@ -15,7 +15,8 @@ use std::ffi::c_void;
 use crate::ffi::{
     FnControlSetI32,
     FnCreateFrame, FnCreateSession, FnGetDeviceType, FnGetFrameMetaData, FnGetHeadPoseAtTime,
-    FnGetPluginVersion, FnHmdTimeNanos, FnInitUserDefinedSettings, FnIsSessionStarted, FnLoadApi,
+    FnGetPluginVersion, FnGlassesEventCallback, FnHmdTimeNanos, FnInitUserDefinedSettings,
+    FnIsSessionStarted, FnLoadApi, FnSetGlassesEventCallback,
     FnNrBufferSpecCreate, FnNrBufferSpecSetI32, FnNrBufferSpecSetSize, FnNrBufferSpecSetU32,
     FnNrBufferSpecSetU64, FnNrBufferViewportGetSwapchain, FnNrFrameAcquireBuffers,
     FnNrFrameCompose, FnNrFrameCreate, FnNrFrameGetBufferViewport, FnNrFrameGetViewportCount,
@@ -82,6 +83,7 @@ pub struct XrealNative {
     resume_session: Option<FnVoid>,
     recenter_glasses: Option<FnVoid>,
     set_display_bypass_psensor: Option<FnControlSetI32>,
+    set_glasses_event_callback: Option<FnSetGlassesEventCallback>,
     #[allow(dead_code)]
     initialize_rendering: Option<FnVoid>,
     #[allow(dead_code)]
@@ -1042,6 +1044,9 @@ impl XrealNative {
                         .ok()
                         .map(|s| *s)
                 });
+            let set_glasses_event_callback: Option<FnSetGlassesEventCallback> = plugin_lib
+                .as_ref()
+                .and_then(|l| l.get(b"SetGlassesEventCallback\0").ok().map(|s| *s));
             let initialize_rendering: Option<FnVoid> = plugin_lib
                 .as_ref()
                 .and_then(|l| l.get(b"InitializeRendering\0").ok().map(|s| *s));
@@ -1115,6 +1120,7 @@ impl XrealNative {
                 get_tracking_type,
                 switch_tracking_type,
                 set_display_bypass_psensor,
+                set_glasses_event_callback,
                 unity_plugin_load,
                 init_user_defined_settings,
                 create_session,
@@ -1271,6 +1277,20 @@ impl XrealNative {
     pub fn set_display_bypass_psensor(&self, bypass: bool) -> Option<i32> {
         self.set_display_bypass_psensor
             .map(|f| unsafe { f(bypass as i32) })
+    }
+
+    /// Register the process-wide glasses hardware event callback (keys, wear sensor,
+    /// brightness/volume/EC changes…). The callback is invoked on an SDK-owned thread with
+    /// a 16-byte `GlassesEventData` by value (ABI from the Unity C# `[DllImport]`
+    /// `SetGlassesEventCallback`). Returns `false` if the symbol is unavailable.
+    pub fn set_glasses_event_callback(&self, callback: FnGlassesEventCallback) -> bool {
+        match self.set_glasses_event_callback {
+            Some(f) => {
+                unsafe { f(callback) };
+                true
+            }
+            None => false,
+        }
     }
 
     /// PopulateNextFrameDesc → CreateFrame → SubmitCurrentFrame probe via the DisplayManager path.
