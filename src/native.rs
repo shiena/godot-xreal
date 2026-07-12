@@ -83,6 +83,7 @@ pub struct XrealNative {
     resume_session: Option<FnVoid>,
     recenter_glasses: Option<FnVoid>,
     set_display_bypass_psensor: Option<FnControlSetI32>,
+    set_glasses_space_mode: Option<FnControlSetI32>,
     set_glasses_event_callback: Option<FnSetGlassesEventCallback>,
     #[allow(dead_code)]
     initialize_rendering: Option<FnVoid>,
@@ -1044,6 +1045,9 @@ impl XrealNative {
                         .ok()
                         .map(|s| *s)
                 });
+            let set_glasses_space_mode: Option<FnControlSetI32> = plugin_lib
+                .as_ref()
+                .and_then(|l| l.get(b"SetGlassesSpaceMode\0").ok().map(|s| *s));
             let set_glasses_event_callback: Option<FnSetGlassesEventCallback> = plugin_lib
                 .as_ref()
                 .and_then(|l| l.get(b"SetGlassesEventCallback\0").ok().map(|s| *s));
@@ -1120,6 +1124,7 @@ impl XrealNative {
                 get_tracking_type,
                 switch_tracking_type,
                 set_display_bypass_psensor,
+                set_glasses_space_mode,
                 set_glasses_event_callback,
                 unity_plugin_load,
                 init_user_defined_settings,
@@ -1277,6 +1282,14 @@ impl XrealNative {
     pub fn set_display_bypass_psensor(&self, bypass: bool) -> Option<i32> {
         self.set_display_bypass_psensor
             .map(|f| unsafe { f(bypass as i32) })
+    }
+
+    /// `SetGlassesSpaceMode(NRGlassesSpaceMode)` (libXREALXRPlugin.so) — how the glasses' X1
+    /// chip anchors the virtual screen in space (follow / world-anchor / …). RE / unverified
+    /// enum values; exposed so the mode can be probed at runtime from GDScript. The C wrapper
+    /// safely returns 0 until NativeGlasses is ready. `None` when the symbol is absent.
+    pub fn set_glasses_space_mode(&self, mode: i32) -> Option<i32> {
+        self.set_glasses_space_mode.map(|f| unsafe { f(mode) })
     }
 
     /// Register the process-wide glasses hardware event callback (keys, wear sensor,

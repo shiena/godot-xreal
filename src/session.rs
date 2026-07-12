@@ -366,6 +366,16 @@ impl XrealSession {
             .set_display_bypass_psensor(bypass)
     }
 
+    /// Set the glasses spatial display mode (`NRGlassesSpaceMode`; RE / unverified values).
+    pub fn set_glasses_space_mode(&self, mode: i32) -> Option<i32> {
+        self.native
+            .lock()
+            .expect("xreal native mutex")
+            .set_glasses_space_mode(mode)
+    }
+
+    ///
+
     /// XR-plugin tracking-state enum value, or `None` if the export is absent.
     pub fn tracking_state(&self) -> Option<i32> {
         self.native.lock().expect("xreal native mutex").tracking_state()

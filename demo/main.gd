@@ -16,6 +16,7 @@ const RIG_SCENE := "res://addons/godot_xreal/xreal_rig.tscn"
 
 # XrealHeadTracker key/action constants, mirrored locally so this script parses even
 # when the GDExtension is absent (desktop editor).
+const XREAL_KEY_MULTI := 1
 const XREAL_KEY_MENU := 4
 const XREAL_ACTION_LONG_PRESS := 3
 
@@ -23,6 +24,7 @@ var _tracker: Node3D
 var _system: Object
 var _status: Label
 var _euler_label: Label
+var _wear_prompt: Label
 var _extension_loaded := false
 
 func _ready() -> void:
@@ -107,6 +109,24 @@ func _setup_ui() -> void:
 	_euler_label.add_theme_constant_override(&"shadow_offset_y", 4)
 	$UI.add_child(_euler_label)
 
+	# "Put on the glasses" prompt. The forward reference is set by recenter, so if the app
+	# starts while the glasses sit tilted on a desk the view ends up off-centre. Shown until
+	# the wear sensor reports the glasses are on (then _on_wearing_changed recenters). Added
+	# after _euler_label so it draws on top while visible.
+	_wear_prompt = Label.new()
+	_wear_prompt.name = "WearPrompt"
+	_wear_prompt.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_wear_prompt.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_wear_prompt.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_wear_prompt.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_wear_prompt.add_theme_font_size_override(&"font_size", 110)
+	_wear_prompt.add_theme_color_override(&"font_color", Color(1.0, 0.85, 0.2))
+	_wear_prompt.add_theme_color_override(&"font_shadow_color", Color.BLACK)
+	_wear_prompt.add_theme_constant_override(&"shadow_offset_x", 4)
+	_wear_prompt.add_theme_constant_override(&"shadow_offset_y", 4)
+	_wear_prompt.text = "グラスを装着して\n正面を見てください\n\nPut on the glasses\nand look forward"
+	$UI.add_child(_wear_prompt)
+
 func _on_recenter_pressed() -> void:
 	if _tracker and _tracker.has_method(&"recenter"):
 		_tracker.recenter()
@@ -132,9 +152,20 @@ func _on_key_event(key: int, action: int) -> void:
 	if key == XREAL_KEY_MENU and action == XREAL_ACTION_LONG_PRESS:
 		_on_recenter_pressed()
 		print("[demo] MENU long-press -> recenter")
+	# Long-press the MULTI key to quit the app (glasses-only exit).
+	elif key == XREAL_KEY_MULTI and action == XREAL_ACTION_LONG_PRESS:
+		print("[demo] MULTI long-press -> quit")
+		get_tree().quit()
 
 func _on_wearing_changed(wearing: bool) -> void:
 	print("[demo] wearing changed: %s" % ("put on" if wearing else "taken off"))
+	if _wear_prompt:
+		_wear_prompt.visible = not wearing
+	if wearing:
+		# Recenter the instant the glasses are actually worn (and the wearer is looking
+		# forward), so "forward" isn't captured while they sit tilted on a desk.
+		_on_recenter_pressed()
+		print("[demo] put on -> recenter")
 
 func _on_glasses_event(action_type: int, para: int, para2: int, para3: float) -> void:
 	# Catch-all diagnostic: one line per native glasses event (Phase A verification).

@@ -150,6 +150,17 @@ impl XrealSystem {
             .unwrap_or(-1) as i64
     }
 
+    /// Set the glasses spatial display mode (`SetGlassesSpaceMode`, One Pro X1 chip).
+    /// `mode` is the `NRGlassesSpaceMode` enum (RE / unverified — probe 0/1/2/… on device to
+    /// find follow vs world-anchor). Returns the SDK status, or `-1` when unavailable. Call
+    /// after `is_session_started()` is true (the SDK no-ops until NativeGlasses is ready).
+    #[func]
+    fn set_glasses_space_mode(&self, mode: i64) -> i64 {
+        session::shared()
+            .and_then(|s| s.set_glasses_space_mode(mode as i32))
+            .unwrap_or(-1) as i64
+    }
+
     /// Current HMD clock in nanoseconds (`0` while the perception pipe is down).
     #[func]
     fn get_hmd_time_nanos(&self) -> i64 {

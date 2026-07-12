@@ -45,6 +45,14 @@ pub struct XrealHeadTracker {
     /// re-emits `glasses_connected` / `glasses_disconnected` on the Godot main thread.
     last_connect_count: u32,
     last_disconnect_count: u32,
+    /// App-side recenter reference. The SDK's `RecenterGlasses` (libXREALXRPlugin.so, display
+    /// subsystem) does NOT reset the pose we read via `XREALGetHeadPoseAtTime` (session-manager
+    /// subsystem) — device-confirmed: the pose quaternion is unchanged after calling it. So
+    /// recentering is done here: `recenter()` captures the current raw rotation and `process()`
+    /// applies `reference.inverse() * raw`, making "wherever you look at recenter" the forward.
+    recenter_reference: Quaternion,
+    /// The raw (uncorrected) rotation from the last pose sample; captured by `recenter()`.
+    last_raw_rotation: Quaternion,
 }
 
 #[godot_api]
@@ -59,6 +67,8 @@ impl INode3D for XrealHeadTracker {
             display_signaled: false,
             last_connect_count: 0,
             last_disconnect_count: 0,
+            recenter_reference: Quaternion::default(),
+            last_raw_rotation: Quaternion::default(),
         }
     }
 
@@ -112,8 +122,13 @@ impl INode3D for XrealHeadTracker {
                     self.display_signaled = true;
                     self.signals().display_started().emit();
                 }
-                self.base_mut().set_quaternion(rotation);
-                let euler = rotation.get_euler() * (180.0 / std::f32::consts::PI);
+                // Apply the app-side recenter reference (see the field docs: the SDK's
+                // RecenterGlasses does not affect this pose source).
+                self.last_raw_rotation = rotation;
+                let corrected =
+                    (self.recenter_reference.inverse() * rotation).normalized();
+                self.base_mut().set_quaternion(corrected);
+                let euler = corrected.get_euler() * (180.0 / std::f32::consts::PI);
                 // Rotation calibration log: raw NRSDK quaternion + resulting Godot Euler (deg).
                 // Move the head in a known way and match: pitch=X (nod up/down), yaw=Y (turn
                 // left/right), roll=Z (tilt ear-to-shoulder). Wrong sign/axis → adjust the flip in
@@ -378,6 +393,17 @@ impl XrealHeadTracker {
     /// Re-center the 3DoF view so the current head direction becomes "forward".
     #[func]
     fn recenter(&mut self) {
+        // App-side recenter: the current head direction becomes "forward" (identity). The
+        // reference is the raw rotation of the latest pose sample, so this also cancels any
+        // pitch offset picked up while the glasses sat on a desk during session start.
+        self.recenter_reference = self.last_raw_rotation;
+        let e = self.last_raw_rotation.get_euler() * (180.0 / std::f32::consts::PI);
+        godot_print!(
+            "[xreal] recenter: reference euler=({:.1},{:.1},{:.1})",
+            e.x, e.y, e.z
+        );
+        // Still forward to the SDK's display-side recenter — harmless, and it may matter for
+        // the compositor path even though it does not reset our pose source.
         if let Some(session) = session::shared() {
             session.recenter();
         }

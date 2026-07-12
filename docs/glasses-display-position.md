@@ -1,0 +1,82 @@
+# Glasses render position / head-lock investigation
+
+Status: **partially solved.** Recenter now works (app-side); the "peek-window" head-lock of the
+glasses layer is **still open** — narrowed to the XR frame-submission emulation, not a mode call.
+
+The goal (user's model): the glasses display should be **head-locked** (the rendered rectangle
+always fills the FOV, in front of the eyes) and the **Godot camera acts as a peek window** into
+world-locked 3D. Two symptoms were reported: (1) render appeared higher than centre, (2) content
+did not track head movement the way a peek window should.
+
+## What was wrong, and what fixed it
+
+### Symptom 1 — "render higher than centre" → FIXED (app-side recenter)
+
+Root cause: **the SDK's `RecenterGlasses` (libXREALXRPlugin.so, display subsystem) does NOT reset
+the pose we read via `XREALGetHeadPoseAtTime` (libXREALNativeSessionManager.so, session-manager
+subsystem).** Device-confirmed: the pose quaternion is unchanged before/after calling it. So the
+tracking origin stayed frozen at "session-start attitude"; if the app started with the glasses on a
+desk (tilted), the view was off-centre and no `recenter()` fixed it (only a full restart did).
+
+Fix (`node.rs`): app-side recenter. `recenter()` captures the current raw pose rotation as
+`recenter_reference`; `process()` applies `recenter_reference.inverse() * raw` before
+`set_quaternion`. This makes "wherever you look at recenter" the forward direction and cancels the
+desk-tilt offset. Verified on device: `[xreal] recenter: reference euler=(…)` logs, and the Godot
+camera visibly recenters. Also wired to the wear sensor: `_on_wearing_changed(true)` recenters the
+instant the glasses are put on (see `demo/main.gd` + the "put on the glasses" prompt).
+
+### Symptom 2 — peek-window head-lock → STILL OPEN
+
+The glasses **display layer is world-anchored to the session-start direction** (turn your head and
+the rendered rectangle stays put), while the correct behaviour is head-locked. Established by a
+sequence of on-device experiments:
+
+- **Godot camera DOES get the head rotation.** Diagnostic log of the eye camera's rendered
+  transform showed `cam0 euler == head euler` every frame — Godot-side tracking is correct.
+- **Removing the head rotation from the Godot eye cameras changed nothing** — the content still
+  responded to head movement and the rectangle stayed anchored. ⇒ the head tracking / anchoring is
+  done by the **XREAL compositor**, not our Godot cameras. Our camera rotation was *redundant* and,
+  combined with the compositor, produced the "overshoot" (≈2× motion) the user first saw.
+- **Reference-app comparison (decisive).** The user's real Unity build `com.kadinche.layeredclient.xreal`
+  ("LayeredClient (XREAL)") is correctly head-locked. Its NRSDK display init logged **byte-identical**
+  to ours: `frame buffer mode:1 / frame submit mode:1 / single_buffer:1 / Time warp is off /
+  predict_ms:20`, and it too logs `Faield to get display roi` (so that error is normal, not our bug).
+  The only structural difference: LayeredClient uses the **real Unity XR display provider** via
+  `ai.nreal.activitylife.NRXRActivity → UnityPlayerActivity`, whereas we drive libXREALXRPlugin.so
+  through our **emulated** `IUnityXRDisplay` in `src/unity_plugin.rs`.
+
+⇒ The head-lock difference lives in the **per-frame frame/layer submission**, which is not logged.
+Next-session direction: make our emulated submission match Unity's — i.e. the buffer-viewport /
+swapchain reference-space transform, and/or render each eye from the pose the SDK hands us in
+`UnityXRNextFrameDesc` (so the compositor's reprojection delta is ~0) instead of from our own
+independent `head_pose()` read.
+
+## Dead ends (ruled out on device — do not retry)
+
+- **`SetGlassesSpaceMode(0..3)`** — newly RE'd + wired (native→session→`XrealSystem.set_glasses_space_mode`).
+  All four values return `ret=0` (accepted) but produce **no visual change**. Does not control the
+  layer anchoring for our XR path.
+- **XREAL follow-mode / lock-mode toggle** (firmware `ACTION_TYPE_TRIGGER_SWITCH_SPACE_MODE`, MULTI
+  click) — user tried both; neither head-locks our render.
+- **A missing NRSDK mode/config call** — ruled out: the display init params are identical to the
+  reference app's (see above).
+- **Display ROI failure** (`Faield to get display roi`) — a red herring; the reference app logs it too.
+- **Godot eye-camera rotation** — confirmed correct and *not* the cause (removing it changed nothing).
+
+## Candidate SDK controls not yet probed (if resuming the mode angle)
+
+`ControlSet2D3DMode`, `SetGlassesSceneMode`, `SetDpWorkingMode`, `ControlSetDisplayDefaultStartMode`
+(all `libXREALXRPlugin.so` exports). Lower priority than the frame-submission angle, since the
+reference-app config already matches ours.
+
+## Tooling notes for on-device iteration
+
+- Build/export with **Godot 4.7** only (template match). `cargo ndk -t arm64-v8a -o ./jniLibs build
+  --release`; `ANDROID_NDK_HOME=…\ndk\27.2.12479018`.
+- Use **scrcpy's adb (v37)** — `…\scoop\apps\scrcpy\4.0\adb.exe` — not platform-tools v35; mixing
+  versions kills the adb server and drops the Wi-Fi connection mid-iteration.
+- The Godot export **hangs after writing the APK**. Detect completion by the output APK's size being
+  stable AND a valid ZIP EOCD (`50 4B 05 06`) before installing — killing Godot mid-write corrupts
+  the APK (`INSTALL_PARSE_FAILED_NOT_APK`).
+- The glasses display is `FLAG_SECURE`, so `screencap` of it returns nothing; diagnose via logcat
+  (`[xreal] …`) and the reference app, not screenshots.
