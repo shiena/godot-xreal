@@ -1,9 +1,11 @@
 # Glasses render position / head-lock investigation
 
-Status: **partially solved.** Recenter now works (app-side); the "peek-window" head-lock of the
-glasses layer is **still open**, but the **root cause is now identified by RE** (we drive the Godot
-cameras from the session-manager head-pose pipeline while the compositor reprojects with the *display*
-`InputManager` pose — two different tracking sources). Fix is scoped; pending on-device verification.
+Status: **fix implemented; pending a wearer to confirm the visual result.** Root cause identified by RE
+(we drove the Godot cameras from the session-manager head-pose pipeline while the compositor reprojects
+with the *display* `InputManager` pose — two different tracking sources) and the eye cameras are now driven
+from the display pose. It builds, installs, and **runs stably on device** (4/4 launches, no crash); the
+display pose is read correctly (see "Implemented" below). What still needs the glasses **worn**: confirming
+the render is now a head-locked peek window, and calibrating the rotation axis signs against head motion.
 
 The goal (user's model): the glasses display should be **head-locked** (the rendered rectangle
 always fills the FOV, in front of the eyes) and the **Godot camera acts as a peek window** into
@@ -111,6 +113,33 @@ hardware recenter should finally take effect — superseding the app-side recent
 > an `XrealSystem` #[func] thunk (see `input-feature-glthread-crash`). This change touches the head-tracker
 > node's own `process()` path (not an `XrealSystem` #[func]), so it should be clear of that trap, but keep the
 > new dlsym/read out of any `XrealSystem` #[func] body.
+
+### Implemented — device findings (verified as far as an app-launch allows)
+
+Wired exactly as the sketch (ffi `FnGetHeadPoseDisplay`; `native.rs` dlsym `GetHeadPoseAtTime` from
+`plugin_lib` + `head_pose_display`; `session.rs` `head_pose_display`; `node.rs` drives the eye cameras from it,
+with the session-manager path kept as a fallback). Two things were pinned down on device:
+
+- **The 16-float block is a 4×4 row-major transform, NOT a quaternion** (device raw log): the upper-left 3×3 is
+  the head rotation (each row a unit vector, so `norms(0,4,8)=1.000`), the last **row** (floats 12,13,14) is the
+  small position (~2 cm), and the homogeneous column (floats 3,7,11)=0 with float 15 = 1. So `display_rotation`
+  validates that structure and extracts the quaternion from the 3×3 (Shepperd), then applies the same NRSDK→Godot
+  handedness flip as `NrPose::to_godot_quaternion`. Reads unit-norm and stable on device (e.g. desk-tilt euler
+  ≈ pitch −16°, roll −17°, matching the raw matrix's `m01/m10` and `m12/m21` terms). The exact axis **signs**
+  still need a wearer moving their head to confirm (nod=pitch/X, turn=yaw/Y, tilt=roll/Z) — adjust the flip if
+  one axis reads inverted.
+
+- **New crash rule (device-confirmed): never query BOTH `head_pose()` (session-manager) and
+  `head_pose_display()` (XR-plugin) in the same frame.** Doing so deterministically re-triggers the
+  `SIGSEGV 0x3f800000` GLThread crash (a build that added a per-frame session-manager read *for comparison*
+  crashed 3/3 launches; removing it → 4/4 clean). Same fault addr / render-thread signature as the
+  `get_head_rotation` case, so it belongs to the same fragile head-pose codegen/runtime interaction. The two
+  reads are now **strictly mutually exclusive** in `process()`: the session-manager fallback runs only when the
+  display export is entirely absent (`head_pose_display() == None`), never merely when its matrix is unusable
+  for a frame. On this device the export is always present, so only the display pose is ever read at runtime.
+
+Still **app-side recenter** is left on the (unused-on-device) session-manager fallback path; on the display path
+we drive the raw compositor pose and delegate recenter to the SDK — to be validated/finished with the glasses on.
 
 ## What a graphics profiler / debug tool can (and cannot) reveal here
 

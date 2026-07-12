@@ -348,6 +348,16 @@ impl XrealSession {
             .then(|| (pose, pose.to_godot_quaternion()))
     }
 
+    /// The raw 16-float head pose from the **display** InputManager (libXREALXRPlugin.so) — the
+    /// exact source the compositor reprojects the glasses layer with. Layout is decoded by the
+    /// caller; used to drive the eye cameras onto the compositor's pose (peek window). Uses the
+    /// display HMD clock (same as [`head_pose`]).
+    pub fn head_pose_display(&self) -> Option<[f32; 16]> {
+        let native = self.native.lock().expect("xreal native mutex");
+        let time_ns = native.hmd_time_nanos()?;
+        native.head_pose_display(time_ns)
+    }
+
     /// Re-center the 3DoF view.
     pub fn recenter(&self) {
         self.native

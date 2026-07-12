@@ -15,6 +15,7 @@ use std::ffi::c_void;
 use crate::ffi::{
     FnControlSetI32,
     FnCreateFrame, FnCreateSession, FnGetDeviceType, FnGetFrameMetaData, FnGetHeadPoseAtTime,
+    FnGetHeadPoseDisplay,
     FnGetPluginVersion, FnGlassesEventCallback, FnHmdTimeNanos, FnInitUserDefinedSettings,
     FnIsSessionStarted, FnLoadApi, FnSetGlassesEventCallback,
     FnNrBufferSpecCreate, FnNrBufferSpecSetI32, FnNrBufferSpecSetSize, FnNrBufferSpecSetU32,
@@ -70,6 +71,11 @@ pub struct XrealNative {
     // session (`CreateSession`/`ResumeSession` → "NRGlasses RUN!"). We only use its HMD
     // clock export here: its pose export writes a larger Unity-facing block, not NrPose.
     xp_hmd_time_nanos: Option<FnHmdTimeNanos>,
+    /// Head pose from the **display** InputManager (libXREALXRPlugin.so `GetHeadPoseAtTime`).
+    /// This is the pose the compositor reprojects the glasses layer with, so aligning the Godot
+    /// eye cameras to it should make the render a head-locked peek window. Writes a 64-byte /
+    /// 16-float block (from `NativePerception::GetHeadPose`), not the 7-float `NrPose`.
+    xp_get_head_pose: Option<FnGetHeadPoseDisplay>,
     xp_is_session_started: Option<FnIsSessionStarted>,
     get_tracking_state: Option<FnQueryInt>,
     get_tracking_reason: Option<FnQueryInt>,
@@ -1007,6 +1013,12 @@ impl XrealNative {
             let xp_hmd_time_nanos: Option<FnHmdTimeNanos> = plugin_lib
                 .as_ref()
                 .and_then(|l| l.get(b"GetHMDTimeNanos\0").ok().map(|s| *s));
+            // The XR plugin's own head-pose export (@0x48cc8 → InputManager::GetHeadPoseAtTime):
+            // the compositor's pose source. Note it shares the name `GetHeadPoseAtTime` with the
+            // session-manager export but writes a 16-float block, so it needs its own fn type.
+            let xp_get_head_pose: Option<FnGetHeadPoseDisplay> = plugin_lib
+                .as_ref()
+                .and_then(|l| l.get(b"GetHeadPoseAtTime\0").ok().map(|s| *s));
             let xp_is_session_started: Option<FnIsSessionStarted> = plugin_lib
                 .as_ref()
                 .and_then(|l| l.get(b"IsSessionStarted\0").ok().map(|s| *s));
@@ -1118,6 +1130,7 @@ impl XrealNative {
                 load_api,
                 is_session_started,
                 xp_hmd_time_nanos,
+                xp_get_head_pose,
                 xp_is_session_started,
                 get_tracking_state,
                 get_tracking_reason,
@@ -1229,6 +1242,17 @@ impl XrealNative {
         let status = unsafe { (self.get_head_pose_at_time)(time_ns, out as *mut NrPose) };
         // RE: native exports across XREAL libraries use both NRResult-style 0 and bool-style 1.
         matches!(status, 0 | 1)
+    }
+
+    /// Fetch the **display** subsystem head pose (libXREALXRPlugin.so `GetHeadPoseAtTime`) as the
+    /// raw 16-float block it writes — the pose the compositor reprojects with. `None` when the
+    /// export is absent or the query fails. The 16-float layout (quaternion offset/order vs 4×4
+    /// matrix) is decoded caller-side after an on-device pin-down; see `docs/glasses-display-position.md`.
+    pub fn head_pose_display(&self, time_ns: u64) -> Option<[f32; 16]> {
+        let f = self.xp_get_head_pose?;
+        let mut raw = [0.0_f32; 16];
+        let status = unsafe { f(time_ns, &mut raw) };
+        matches!(status, 0 | 1).then_some(raw)
     }
 
     /// Diagnostic: the XR-plugin tracking state / reason enums (`None` if unavailable).

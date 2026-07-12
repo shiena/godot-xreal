@@ -110,6 +110,18 @@ pub type FnHmdTimeNanos = unsafe extern "C" fn(*mut u64) -> i32;
 /// libXREALXRPlugin.so export of the same name writes a larger Unity-facing pose block.
 pub type FnGetHeadPoseAtTime = unsafe extern "C" fn(u64, *mut NrPose) -> i32;
 
+/// `int GetHeadPoseAtTime(uint64_t time_ns, float out[16])` in **libXREALXRPlugin.so**.
+///
+/// Distinct from the session-manager `XREALGetHeadPoseAtTime`: this exported wrapper
+/// (@0x48cc8) tail-calls `InputManager::GetHeadPoseAtTime` @0x7f4a0, which copies a
+/// **64-byte / 16-float** block straight from `NativePerception::GetHeadPose`'s struct
+/// return — i.e. the *display* subsystem's HMD pose, the exact source the compositor
+/// reprojects the glasses layer with (so driving the eye cameras from it should yield a
+/// head-locked peek window). Returns 1 on success. The internal layout of the 16 floats
+/// (quaternion offset/order, or a 4×4 matrix) is pinned by an on-device log before we
+/// convert it; see `docs/glasses-display-position.md`.
+pub type FnGetHeadPoseDisplay = unsafe extern "C" fn(u64, *mut [f32; 16]) -> i32;
+
 /// `void XREALLoadAPI(void)` — wires the session-manager perception delegate; must run
 /// before pose queries. (Return value, if any, is ignored.)
 pub type FnLoadApi = unsafe extern "C" fn();
