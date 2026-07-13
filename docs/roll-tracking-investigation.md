@@ -43,3 +43,24 @@ still has `z = 0`, the display path is roll-stabilized by design and roll needs 
 
 (Blocked on hardware: needs the glasses connected + a head-tilt while watching the
 `[xreal] pose q(wxyz)=…` calibration log.)
+
+## Result (2026-07-13, on device) — option 1 FAILED
+
+Made the tracking mode selectable at startup (`debug.xreal.tracking_type`, see
+`session.rs::tracking_mode()`); confirmed **MODE_3DOF (1)** active in the log
+(`tracking_type = 1`, `native session created … tracking_type=Some(1)`), Multipass.
+
+Captured a deliberate head-**roll** (ear-to-shoulder) sweep. The compact `NrPose` behaves
+**identically to 6DoF**: the 4th quaternion float (**z / roll) stays exactly `0.000`** through the
+whole sweep, while the roll leaks into **x (pitch)** — e.g. at the tilt extreme
+`q(wxyz)=(0.634,-0.750,0.189,0.000)` → `pitch/x=71.9°`. So **MODE_3DOF is also horizon-stabilized**;
+roll is not recoverable from `XREALGetHeadPoseAtTime` in either tracking mode.
+
+⇒ Pursue **option 2**: the XR-plugin display pose we already bind as
+`XrealNative::head_pose_display` (the 16-float block from `NativePerception::GetHeadPose`, the SAME
+pose source the compositor reprojects the layer against — it visibly *does* carry roll on the
+glasses). Drive the Godot eye cameras from that pose (full orientation incl. roll) so the app render
+and the compositor reprojection share one pose → a correct peek window on all three axes. Blocker:
+the 16-float layout (quaternion offset/order vs 4×4 matrix) must be pinned down first, and only ONE
+head-pose pipeline may be queried per frame/thread (the `0x3f800000` GLThread rule) — so this
+replaces, not augments, the `head_pose()` read in `node.rs`.
