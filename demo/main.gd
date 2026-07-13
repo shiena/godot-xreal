@@ -41,6 +41,13 @@ func _ready() -> void:
 		if stereo_mode >= 0 and _system.has_method(&"set_stereo_rendering_mode"):
 			_system.set_stereo_rendering_mode(stereo_mode)
 			print("[demo] stereo_rendering_mode set to %d (from ProjectSettings)" % stereo_mode)
+		# Head-tracking mode from the project setting `xreal/tracking_type`
+		# (0 = 6DoF [recommended], 1 = 3DoF, 2 = 0DoF). Same rules as above -- read once at
+		# bootstrap; absent (-1) falls back to the `debug.xreal.tracking_type` property / default.
+		var tracking_type := int(ProjectSettings.get_setting("xreal/tracking_type", -1))
+		if tracking_type >= 0 and _system.has_method(&"set_tracking_type"):
+			_system.set_tracking_type(tracking_type)
+			print("[demo] tracking_type set to %d (from ProjectSettings)" % tracking_type)
 	else:
 		push_error("[demo] godot_xreal GDExtension not loaded — XrealSystem/XrealHeadTracker missing. Build the Android .so (cargo ndk) and check the .gdextension paths.")
 	_build_environment()
