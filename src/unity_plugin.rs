@@ -132,16 +132,13 @@ struct IUnityXrDisplay {
         extern "C" fn(*const c_char, *const c_char, *const UnityXrLifecycleProvider) -> i32, // +0x00
     register_display_provider: extern "C" fn(*mut c_void, *const c_void) -> i32, // +0x08
     register_provider_for_graphics_thread: extern "C" fn(*mut c_void, *const c_void) -> i32, // +0x10
-    create_texture:
-        extern "C" fn(*mut c_void, *const UnityXrRenderTextureDesc, *mut u32) -> i32, // +0x18
-    query_texture_desc:
-        extern "C" fn(*mut c_void, u32, *mut UnityXrRenderTextureDesc) -> i32, // +0x20
-    destroy_texture: extern "C" fn(*mut c_void, u32) -> i32,        // +0x28
+    create_texture: extern "C" fn(*mut c_void, *const UnityXrRenderTextureDesc, *mut u32) -> i32, // +0x18
+    query_texture_desc: extern "C" fn(*mut c_void, u32, *mut UnityXrRenderTextureDesc) -> i32, // +0x20
+    destroy_texture: extern "C" fn(*mut c_void, u32) -> i32, // +0x28
     get_platform_data: extern "C" fn(*mut c_void, *mut *mut c_void) -> i32, // +0x30
     create_occlusion_mesh: extern "C" fn(*mut c_void, u32, u32, *mut u32) -> i32, // +0x38
     destroy_occlusion_mesh: extern "C" fn(*mut c_void, u32) -> i32, // +0x40
-    set_occlusion_mesh:
-        extern "C" fn(*mut c_void, u32, *mut c_void, u32, *mut u32, u32) -> i32, // +0x48
+    set_occlusion_mesh: extern "C" fn(*mut c_void, u32, *mut c_void, u32, *mut u32, u32) -> i32, // +0x48
 }
 
 /// `UnityXRRenderTextureDesc` (0x30 bytes). Field offsets confirmed from
@@ -150,16 +147,16 @@ struct IUnityXrDisplay {
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct UnityXrRenderTextureDesc {
-    color_format: u32, // +0x00
-    _pad0: u32,        // +0x04
-    color: u64,        // +0x08  native GL texture name
-    depth_format: u32, // +0x10
-    _pad1: u32,        // +0x14
-    depth: u64,        // +0x18
-    width: u32,        // +0x20
-    height: u32,       // +0x24
+    color_format: u32,         // +0x00
+    _pad0: u32,                // +0x04
+    color: u64,                // +0x08  native GL texture name
+    depth_format: u32,         // +0x10
+    _pad1: u32,                // +0x14
+    depth: u64,                // +0x18
+    width: u32,                // +0x20
+    height: u32,               // +0x24
     texture_array_length: u32, // +0x28
-    flags: u32,        // +0x2c
+    flags: u32,                // +0x2c
 }
 
 /// One engine-owned render texture handed to the SDK. `id` is the `UnityXRRenderTextureId` we
@@ -571,9 +568,7 @@ pub fn call_input_recenter() -> bool {
     let recenter: extern "C" fn(*mut c_void, *mut c_void) -> i32 =
         unsafe { std::mem::transmute(provider.recenter) };
     let r = recenter(ptr::null_mut(), ptr::null_mut());
-    godot::global::godot_print!(
-        "[xreal] input recenter (NativePerception::Recenter) -> {r}"
-    );
+    godot::global::godot_print!("[xreal] input recenter (NativePerception::Recenter) -> {r}");
     true
 }
 
@@ -621,9 +616,7 @@ extern "C" fn xr_register_texture_provider(context: *mut c_void) -> i32 {
     // XREAL calls this to pass its internal texture-provider object (context).
     // `DisplayManager::QueryTextureDesc` references `DisplayManager+0x8` and `+0x38` which
     // the SDK populates internally during NativeRendering::Start — we just log here.
-    godot::global::godot_print!(
-        "[xreal] RegisterTextureProvider: context={context:?}"
-    );
+    godot::global::godot_print!("[xreal] RegisterTextureProvider: context={context:?}");
     if !context.is_null() {
         // Try to read the first pointer from context to diagnose the vtable layout.
         let vtable_ptr = unsafe { *(context as *const usize) };
@@ -694,7 +687,9 @@ extern "C" fn xr_create_texture(
         match crate::gl::alloc_texture(width, height, srgb) {
             Some(t) => t,
             None => {
-                godot::global::godot_warn!("[xreal] CreateTexture {width}x{height} failed (GL alloc)");
+                godot::global::godot_warn!(
+                    "[xreal] CreateTexture {width}x{height} failed (GL alloc)"
+                );
                 return 1;
             }
         }
@@ -702,7 +697,13 @@ extern "C" fn xr_create_texture(
     let id = XR_TEXTURE_NEXT_ID.fetch_add(1, Ordering::Relaxed);
     let count = {
         let mut textures = XR_TEXTURES.lock().expect("xr textures mutex");
-        textures.push(XrTexture { id, gl_id, width, height, layers });
+        textures.push(XrTexture {
+            id,
+            gl_id,
+            width,
+            height,
+            layers,
+        });
         textures.len()
     };
     unsafe { *out_id = id };
@@ -1054,14 +1055,8 @@ pub fn populate_registered_display_frame_desc_once() -> Option<(i32, usize, u8, 
         read_u32(0x580),
         read_u32(0x584)
     );
-    godot::global::godot_print!(
-        "[xreal] desc nonzero u32s: {}",
-        nonzero_words.join(", ")
-    );
-    godot::global::godot_print!(
-        "[xreal] desc overlay region: {}",
-        overlay_region.join(", ")
-    );
+    godot::global::godot_print!("[xreal] desc nonzero u32s: {}", nonzero_words.join(", "));
+    godot::global::godot_print!("[xreal] desc overlay region: {}", overlay_region.join(", "));
     Some((status, nonzero, desc[0], desc[0x580]))
 }
 
@@ -1084,7 +1079,9 @@ pub fn populate_registered_display_frame_desc_with_ptr(desc: *mut c_void) -> i32
         return -1;
     };
     let Some(callback) = provider.populate_next_frame_desc else {
-        godot::global::godot_print!("[xreal] populate_with_ptr: PopulateNextFrameDesc not registered");
+        godot::global::godot_print!(
+            "[xreal] populate_with_ptr: PopulateNextFrameDesc not registered"
+        );
         return -2;
     };
     let hints = [0_u8; 0x80];
@@ -1096,9 +1093,7 @@ pub fn populate_registered_display_frame_desc_with_ptr(desc: *mut c_void) -> i32
             desc,
         )
     };
-    godot::global::godot_print!(
-        "[xreal] PopulateNextFrameDesc(desc={desc:?}): status={status}"
-    );
+    godot::global::godot_print!("[xreal] PopulateNextFrameDesc(desc={desc:?}): status={status}");
     status
 }
 
@@ -1229,8 +1224,20 @@ pub fn run_frame_tick() {
             godot::global::godot_print!(
                 "[xreal] eye proj L: l={:.4} r={:.4} t={:.4} b={:.4} pos=({:.4},{:.4},{:.4}) | \
                  R: l={:.4} r={:.4} t={:.4} b={:.4} pos=({:.4},{:.4},{:.4})",
-                proj[0].l, proj[0].r, proj[0].t, proj[0].b, proj[0].px, proj[0].py, proj[0].pz,
-                proj[1].l, proj[1].r, proj[1].t, proj[1].b, proj[1].px, proj[1].py, proj[1].pz,
+                proj[0].l,
+                proj[0].r,
+                proj[0].t,
+                proj[0].b,
+                proj[0].px,
+                proj[0].py,
+                proj[0].pz,
+                proj[1].l,
+                proj[1].r,
+                proj[1].t,
+                proj[1].b,
+                proj[1].px,
+                proj[1].py,
+                proj[1].pz,
             );
         }
     }

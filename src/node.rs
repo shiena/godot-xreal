@@ -174,8 +174,7 @@ impl INode3D for XrealHeadTracker {
                     // Session-manager fallback (display export absent): app-side recenter, since the
                     // SDK's RecenterGlasses does not affect this pose source.
                     self.last_raw_rotation = rotation;
-                    let corrected =
-                        (self.recenter_reference.inverse() * rotation).normalized();
+                    let corrected = (self.recenter_reference.inverse() * rotation).normalized();
                     self.base_mut().set_quaternion(corrected);
                     let euler = corrected.get_euler() * (180.0 / std::f32::consts::PI);
                     if self.frames % 30 == 0 {
@@ -278,13 +277,18 @@ impl XrealHeadTracker {
             // per physical key press / wear change / brightness step; low volume).
             godot_print!(
                 "[xreal] glasses event: type={} para={} para2={} para3={}",
-                ev.action_type, ev.para, ev.para2, ev.para3
+                ev.action_type,
+                ev.para,
+                ev.para2,
+                ev.para3
             );
             match ev.action_type {
                 f::ACTION_TYPE_CLICK | f::ACTION_TYPE_DOUBLE_CLICK | f::ACTION_TYPE_LONG_PRESS => {
                     // para = XREALKeyType, action_type = XREALClickType (same numbering as
                     // the ACTION_CLICK/DOUBLE_CLICK/LONG_PRESS constants).
-                    self.signals().key_event().emit(ev.para as i64, ev.action_type as i64);
+                    self.signals()
+                        .key_event()
+                        .emit(ev.para as i64, ev.action_type as i64);
                 }
                 f::ACTION_TYPE_KEY_STATE => {
                     self.signals()
@@ -293,7 +297,8 @@ impl XrealHeadTracker {
                 }
                 f::ACTION_TYPE_PROXIMITY_WEARING_STATE => {
                     // Mirror the Unity handler: only PUT_ON / TAKE_OFF are forwarded.
-                    if ev.para == f::WEARING_STATUS_PUT_ON || ev.para == f::WEARING_STATUS_TAKE_OFF {
+                    if ev.para == f::WEARING_STATUS_PUT_ON || ev.para == f::WEARING_STATUS_TAKE_OFF
+                    {
                         self.signals()
                             .wearing_changed()
                             .emit(ev.para == f::WEARING_STATUS_PUT_ON);
@@ -377,7 +382,9 @@ impl XrealHeadTracker {
             } else {
                 HALF_IPD
             };
-            cam.set_global_transform(head * Transform3D::new(Basis::IDENTITY, Vector3::new(eye_x, 0.0, 0.0)));
+            cam.set_global_transform(
+                head * Transform3D::new(Basis::IDENTITY, Vector3::new(eye_x, 0.0, 0.0)),
+            );
 
             if p.valid && (p.r - p.l) > 1e-4 && (p.t - p.b) > 1e-4 {
                 // Half-angle tangents → asymmetric frustum. Godot's Camera3D.set_frustum(size,
@@ -494,7 +501,9 @@ impl XrealHeadTracker {
         let e = self.last_raw_rotation.get_euler() * (180.0 / std::f32::consts::PI);
         godot_print!(
             "[xreal] recenter: reference euler=({:.1},{:.1},{:.1})",
-            e.x, e.y, e.z
+            e.x,
+            e.y,
+            e.z
         );
         // Still forward to the SDK's display-side recenter — harmless, and it may matter for
         // the compositor path even though it does not reset our pose source.
@@ -530,7 +539,10 @@ mod tests {
         // Symmetric l/r and t/b → no offset; size is the full vertical extent at the near plane.
         let (size, offset) = frustum_size_offset(-0.5, 0.5, 0.4, -0.4, 0.05);
         assert!((size - 0.8 * 0.05).abs() < 1e-6, "size {size}");
-        assert!(offset.x.abs() < 1e-6 && offset.y.abs() < 1e-6, "offset {offset:?}");
+        assert!(
+            offset.x.abs() < 1e-6 && offset.y.abs() < 1e-6,
+            "offset {offset:?}"
+        );
     }
 
     #[test]
@@ -538,7 +550,15 @@ mod tests {
         // l=-0.6,r=0.4 → horizontal center at (r+l)/2=-0.1; t=0.5,b=-0.3 → vertical center at 0.1.
         let (size, offset) = frustum_size_offset(-0.6, 0.4, 0.5, -0.3, 0.05);
         assert!((size - 0.8 * 0.05).abs() < 1e-6, "size {size}");
-        assert!((offset.x - (-0.1 * 0.05)).abs() < 1e-6, "offset.x {}", offset.x);
-        assert!((offset.y - (0.1 * 0.05)).abs() < 1e-6, "offset.y {}", offset.y);
+        assert!(
+            (offset.x - (-0.1 * 0.05)).abs() < 1e-6,
+            "offset.x {}",
+            offset.x
+        );
+        assert!(
+            (offset.y - (0.1 * 0.05)).abs() < 1e-6,
+            "offset.y {}",
+            offset.y
+        );
     }
 }

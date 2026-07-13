@@ -243,7 +243,8 @@ pub struct NrGraphicContext {
     pub _pad: [u8; 4],
     pub context: *mut c_void,
 }
-pub type FnNrRenderingSetGraphicContext = unsafe extern "C" fn(NrHandle, *const NrGraphicContext) -> NrResult;
+pub type FnNrRenderingSetGraphicContext =
+    unsafe extern "C" fn(NrHandle, *const NrGraphicContext) -> NrResult;
 pub type FnNrRenderingSetU64 = unsafe extern "C" fn(NrHandle, u64) -> NrResult;
 // NRRenderingAcquireFrame: uses NRRendering vtable (0x4904f0) not NRFrame vtable (0x490580).
 pub type FnNrRenderingAcquireFrame = unsafe extern "C" fn(NrHandle, *mut NrHandle) -> NrResult;
@@ -277,16 +278,14 @@ pub type FnNrFrameSetBufferViewport =
 // 3-arg variant: (rendering, frame, viewport) — no index parameter
 pub type FnNrFrameSetBufferViewport3 =
     unsafe extern "C" fn(NrHandle, NrHandle, NrHandle) -> NrResult;
-pub type FnNrFrameGetViewportCount =
-    unsafe extern "C" fn(NrHandle, NrHandle, *mut u32) -> NrResult;
+pub type FnNrFrameGetViewportCount = unsafe extern "C" fn(NrHandle, NrHandle, *mut u32) -> NrResult;
 pub type FnNrFrameGetBufferViewport =
     unsafe extern "C" fn(NrHandle, NrHandle, u32, *mut NrHandle) -> NrResult;
 pub type FnNrBufferViewportGetSwapchain =
     unsafe extern "C" fn(NrHandle, NrHandle, *mut NrHandle) -> NrResult;
 pub type FnNrFrameNoArgs = unsafe extern "C" fn(NrHandle, NrHandle) -> NrResult;
 // NRFrameCompose takes (rendering, frame, ..., ..., flags) — 5 args; pass 0s for unknown ones.
-pub type FnNrFrameCompose =
-    unsafe extern "C" fn(NrHandle, NrHandle, u64, u64, u32) -> NrResult;
+pub type FnNrFrameCompose = unsafe extern "C" fn(NrHandle, NrHandle, u64, u64, u32) -> NrResult;
 pub type FnNrFrameAcquireBuffers =
     unsafe extern "C" fn(NrHandle, NrHandle, *mut NrHandle, *mut u32) -> NrResult;
 pub type FnNrFrameSetColorTextures =
@@ -315,14 +314,40 @@ mod tests {
     /// different flip breaks this.
     #[test]
     fn field_order_is_w_first_with_z_flip() {
-        let pose = NrPose { qx: 0.1, qy: 0.2, qz: 0.3, qw: 0.4, ..Default::default() };
+        let pose = NrPose {
+            qx: 0.1,
+            qy: 0.2,
+            qz: 0.3,
+            qw: 0.4,
+            ..Default::default()
+        };
         let q = pose.to_godot_quaternion();
         // (w, x, y, z) = (qx, qy, qz, qw) = (0.1, 0.2, 0.3, 0.4) -> Godot (-0.2, -0.3, 0.4, 0.1).
         let expected = Quaternion::new(-0.2, -0.3, 0.4, 0.1).normalized();
-        assert!((q.x - expected.x).abs() < 1e-5, "x: {} vs {}", q.x, expected.x);
-        assert!((q.y - expected.y).abs() < 1e-5, "y: {} vs {}", q.y, expected.y);
-        assert!((q.z - expected.z).abs() < 1e-5, "z: {} vs {}", q.z, expected.z);
-        assert!((q.w - expected.w).abs() < 1e-5, "w: {} vs {}", q.w, expected.w);
+        assert!(
+            (q.x - expected.x).abs() < 1e-5,
+            "x: {} vs {}",
+            q.x,
+            expected.x
+        );
+        assert!(
+            (q.y - expected.y).abs() < 1e-5,
+            "y: {} vs {}",
+            q.y,
+            expected.y
+        );
+        assert!(
+            (q.z - expected.z).abs() < 1e-5,
+            "z: {} vs {}",
+            q.z,
+            expected.z
+        );
+        assert!(
+            (q.w - expected.w).abs() < 1e-5,
+            "w: {} vs {}",
+            q.w,
+            expected.w
+        );
     }
 
     /// At rest the first float is the scalar w (~1), so the pose must be (near) identity — NOT the
@@ -330,9 +355,18 @@ mod tests {
     /// bug the w-first fix corrected.
     #[test]
     fn rest_pose_is_identity_not_180() {
-        let pose = NrPose { qx: 1.0, qy: 0.0, qz: 0.0, qw: 0.0, ..Default::default() };
+        let pose = NrPose {
+            qx: 1.0,
+            qy: 0.0,
+            qz: 0.0,
+            qw: 0.0,
+            ..Default::default()
+        };
         let (x, y, z) = euler_deg(pose);
-        assert!(x.abs() < 0.5 && y.abs() < 0.5 && z.abs() < 0.5, "expected identity, got ({x},{y},{z})");
+        assert!(
+            x.abs() < 0.5 && y.abs() < 0.5 && z.abs() < 0.5,
+            "expected identity, got ({x},{y},{z})"
+        );
     }
 
     /// Each NRSDK rotation axis (encoded w-first) maps to the matching Godot Euler axis.
@@ -341,13 +375,34 @@ mod tests {
         // 30-degree rotation about each NRSDK axis: (w=cos15, <axis>=sin15).
         let (c, s) = (15f32.to_radians().cos(), 15f32.to_radians().sin());
         // NRSDK pitch = about x (float index 1 = qy) -> Godot Euler dominated by X.
-        let (x, y, z) = euler_deg(NrPose { qx: c, qy: s, ..Default::default() });
-        assert!(x.abs() > 25.0 && y.abs() < 2.0 && z.abs() < 2.0, "pitch -> ({x},{y},{z})");
+        let (x, y, z) = euler_deg(NrPose {
+            qx: c,
+            qy: s,
+            ..Default::default()
+        });
+        assert!(
+            x.abs() > 25.0 && y.abs() < 2.0 && z.abs() < 2.0,
+            "pitch -> ({x},{y},{z})"
+        );
         // NRSDK yaw = about y (float index 2 = qz) -> Godot Euler dominated by Y.
-        let (x, y, z) = euler_deg(NrPose { qx: c, qz: s, ..Default::default() });
-        assert!(y.abs() > 25.0 && x.abs() < 2.0 && z.abs() < 2.0, "yaw -> ({x},{y},{z})");
+        let (x, y, z) = euler_deg(NrPose {
+            qx: c,
+            qz: s,
+            ..Default::default()
+        });
+        assert!(
+            y.abs() > 25.0 && x.abs() < 2.0 && z.abs() < 2.0,
+            "yaw -> ({x},{y},{z})"
+        );
         // NRSDK roll = about z (float index 3 = qw) -> Godot Euler dominated by Z.
-        let (x, y, z) = euler_deg(NrPose { qx: c, qw: s, ..Default::default() });
-        assert!(z.abs() > 25.0 && x.abs() < 2.0 && y.abs() < 2.0, "roll -> ({x},{y},{z})");
+        let (x, y, z) = euler_deg(NrPose {
+            qx: c,
+            qw: s,
+            ..Default::default()
+        });
+        assert!(
+            z.abs() > 25.0 && x.abs() < 2.0 && y.abs() < 2.0,
+            "roll -> ({x},{y},{z})"
+        );
     }
 }

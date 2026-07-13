@@ -13,24 +13,21 @@ use libloading::Library;
 use std::ffi::c_void;
 
 use crate::ffi::{
-    FnControlSetI32,
-    FnCreateFrame, FnCreateSession, FnGetDeviceType, FnGetFrameMetaData, FnGetHeadPoseAtTime,
-    FnGetHeadPoseDisplay,
-    FnGetPluginVersion, FnGlassesEventCallback, FnHmdTimeNanos, FnInitUserDefinedSettings,
-    FnIsSessionStarted, FnLoadApi, FnSetGlassesEventCallback,
-    FnNrBufferSpecCreate, FnNrBufferSpecSetI32, FnNrBufferSpecSetSize, FnNrBufferSpecSetU32,
-    FnNrBufferSpecSetU64, FnNrBufferViewportGetSwapchain, FnNrFrameAcquireBuffers,
-    FnNrFrameCompose, FnNrFrameCreate, FnNrFrameGetBufferViewport, FnNrFrameGetViewportCount,
-    FnNrFrameNoArgs, FnNrFrameSendMetaData, FnNrFrameSetBufferViewport,
-    FnNrFrameSetBufferViewport3, FnNrFrameSetColorTextures, FnNrHandleDestroy,
-    FnNrRenderingAcquireFrame, FnNrRenderingCreate, FnNrRenderingSetU64,
-    NrGraphicContext,
-    FnNrRenderingGetI32, FnNrRenderingOneHandle, FnNrRenderingSetGraphicContext,
-    FnNrRenderingSetI32, FnNrSwapchainCreate, FnNrSwapchainCreateAndroidSurface,
+    FnControlSetI32, FnCreateFrame, FnCreateSession, FnGetDeviceType, FnGetFrameMetaData,
+    FnGetHeadPoseAtTime, FnGetHeadPoseDisplay, FnGetPluginVersion, FnGlassesEventCallback,
+    FnHmdTimeNanos, FnInitUserDefinedSettings, FnIsSessionStarted, FnLoadApi, FnNrBufferSpecCreate,
+    FnNrBufferSpecSetI32, FnNrBufferSpecSetSize, FnNrBufferSpecSetU32, FnNrBufferSpecSetU64,
+    FnNrBufferViewportGetSwapchain, FnNrFrameAcquireBuffers, FnNrFrameCompose, FnNrFrameCreate,
+    FnNrFrameGetBufferViewport, FnNrFrameGetViewportCount, FnNrFrameNoArgs, FnNrFrameSendMetaData,
+    FnNrFrameSetBufferViewport, FnNrFrameSetBufferViewport3, FnNrFrameSetColorTextures,
+    FnNrHandleDestroy, FnNrRenderingAcquireFrame, FnNrRenderingCreate, FnNrRenderingGetI32,
+    FnNrRenderingOneHandle, FnNrRenderingSetGraphicContext, FnNrRenderingSetI32,
+    FnNrRenderingSetU64, FnNrSwapchainCreate, FnNrSwapchainCreateAndroidSurface,
     FnNrSwapchainGetRecommendBufferCount, FnNrSwapchainSetBuffers, FnNrViewportCreate,
     FnNrViewportSetF32x2, FnNrViewportSetI32, FnNrViewportSetNearFar, FnNrViewportSetPtr,
-    FnNrViewportSetU32, FnNrViewportSetU64, FnQueryInt, FnSwitchTrackingType, FnUnityPluginLoad,
-    FnVoid, NrHandle, NrPose, UserDefinedSettings,
+    FnNrViewportSetU32, FnNrViewportSetU64, FnQueryInt, FnSetGlassesEventCallback,
+    FnSwitchTrackingType, FnUnityPluginLoad, FnVoid, NrGraphicContext, NrHandle, NrPose,
+    UserDefinedSettings,
 };
 
 const SESSION_LIB: &str = "libXREALNativeSessionManager.so";
@@ -237,7 +234,8 @@ const EGL_GL_TEXTURE_2D_KHR: u32 = 0x30B1;
 const EGL_NATIVE_BUFFER_ANDROID: u32 = 0x3140;
 
 // AHardwareBuffer_allocate(const AHardwareBuffer_Desc*, AHardwareBuffer**)
-type FnAHardwareBufferAllocate = unsafe extern "C" fn(*const AHardwareBufferDesc, *mut *mut c_void) -> i32;
+type FnAHardwareBufferAllocate =
+    unsafe extern "C" fn(*const AHardwareBufferDesc, *mut *mut c_void) -> i32;
 type FnAHardwareBufferRelease = unsafe extern "C" fn(*mut c_void);
 // glEGLImageTargetTexture2DOES(target, image) from GL_OES_EGL_image
 type FnGlEglImageTargetTexture2DOES = unsafe extern "C" fn(u32, *mut c_void);
@@ -284,7 +282,8 @@ impl GlTextureApi {
 
             macro_rules! sym {
                 ($lib:ident, $name:literal, $ty:ty) => {
-                    *$lib.get::<$ty>(concat!($name, "\0").as_bytes())
+                    *$lib
+                        .get::<$ty>(concat!($name, "\0").as_bytes())
                         .map_err(|e| format!("dlsym {}: {e}", $name))?
                 };
             }
@@ -324,8 +323,16 @@ impl GlTextureApi {
                 tex_parameteri: sym!(lib, "glTexParameteri", FnGlTexParameteri),
                 tex_image_2d: sym!(lib, "glTexImage2D", FnGlTexImage2D),
                 get_error: sym!(lib, "glGetError", FnGlGetError),
-                egl_get_current_context: sym!(egl_lib, "eglGetCurrentContext", FnEglGetCurrentContext),
-                egl_get_current_display: sym!(egl_lib, "eglGetCurrentDisplay", FnEglGetCurrentDisplay),
+                egl_get_current_context: sym!(
+                    egl_lib,
+                    "eglGetCurrentContext",
+                    FnEglGetCurrentContext
+                ),
+                egl_get_current_display: sym!(
+                    egl_lib,
+                    "eglGetCurrentDisplay",
+                    FnEglGetCurrentDisplay
+                ),
                 egl_create_image_khr: sym!(egl_lib, "eglCreateImageKHR", FnEglCreateImageKHR),
                 egl_destroy_image_khr: sym!(egl_lib, "eglDestroyImageKHR", FnEglDestroyImageKHR),
                 ahb_allocate,
@@ -379,8 +386,11 @@ impl GlTextureApi {
         width: u32,
         height: u32,
     ) -> Result<(Vec<*mut c_void>, Vec<u32>), String> {
-        let allocate = self.ahb_allocate.ok_or("AHardwareBuffer_allocate not available")?;
-        let gl_img_target = self.gl_egl_image_target_texture
+        let allocate = self
+            .ahb_allocate
+            .ok_or("AHardwareBuffer_allocate not available")?;
+        let gl_img_target = self
+            .gl_egl_image_target_texture
             .ok_or("glEGLImageTargetTexture2DOES not available")?;
 
         const AHARDWAREBUFFER_FORMAT_R8G8B8A8_UNORM: u32 = 1;
@@ -412,7 +422,9 @@ impl GlTextureApi {
                 if alloc_s != 0 || ahb.is_null() {
                     // Clean up already allocated
                     if let Some(release) = self.ahb_release {
-                        for &a in &ahbs { release(a); }
+                        for &a in &ahbs {
+                            release(a);
+                        }
                     }
                     return Err(format!("AHardwareBuffer_allocate -> {alloc_s}"));
                 }
@@ -423,12 +435,16 @@ impl GlTextureApi {
                 let egl_client_buf = if let Some(get_buf) = self.egl_get_native_client_buffer {
                     get_buf(ahb)
                 } else {
-                    ahb  // Fallback: try passing AHB pointer directly (may fail)
+                    ahb // Fallback: try passing AHB pointer directly (may fail)
                 };
                 if egl_client_buf.is_null() {
-                    if let Some(release) = self.ahb_release { release(ahb); }
                     if let Some(release) = self.ahb_release {
-                        for &a in &ahbs { release(a); }
+                        release(ahb);
+                    }
+                    if let Some(release) = self.ahb_release {
+                        for &a in &ahbs {
+                            release(a);
+                        }
                     }
                     return Err("eglGetNativeClientBufferANDROID returned null".into());
                 }
@@ -443,9 +459,13 @@ impl GlTextureApi {
                 );
                 if egl_image.is_null() {
                     let egl_err = self.egl_get_error.map(|f| unsafe { f() }).unwrap_or(0);
-                    if let Some(release) = self.ahb_release { release(ahb); }
                     if let Some(release) = self.ahb_release {
-                        for &a in &ahbs { release(a); }
+                        release(ahb);
+                    }
+                    if let Some(release) = self.ahb_release {
+                        for &a in &ahbs {
+                            release(a);
+                        }
                     }
                     return Err(format!(
                         "eglCreateImageKHR(EGL_NATIVE_BUFFER_ANDROID) returned null, eglErr={egl_err:#x}"
@@ -576,10 +596,7 @@ impl NrRenderingApi {
 
             Ok(Self {
                 rendering_create: sym!("NRRenderingCreate", FnNrRenderingCreate),
-                rendering_acquire_frame: sym!(
-                    "NRRenderingAcquireFrame",
-                    FnNrRenderingAcquireFrame
-                ),
+                rendering_acquire_frame: sym!("NRRenderingAcquireFrame", FnNrRenderingAcquireFrame),
                 rendering_start: sym!("NRRenderingStart", FnNrRenderingOneHandle),
                 rendering_stop: sym!("NRRenderingStop", FnNrRenderingOneHandle),
                 rendering_destroy: sym!("NRRenderingDestroy", FnNrRenderingOneHandle),
@@ -768,9 +785,7 @@ impl NrRenderingApi {
         // Without this flag, calling NRSwapchainCreateAndroidSurface aborts with an assertion.
         let set_flags_status =
             unsafe { (self.buffer_spec_set_create_flags)(rendering, buffer_spec, 1) };
-        godot::global::godot_print!(
-            "[xreal] NRBufferSpecSetCreateFlags(1) -> {set_flags_status}"
-        );
+        godot::global::godot_print!("[xreal] NRBufferSpecSetCreateFlags(1) -> {set_flags_status}");
 
         let mut swapchain: NrHandle = 0;
         let create_swapchain_status =
@@ -943,9 +958,8 @@ impl NrRenderingApi {
         // viewport indices are 1-based (target_component: 1=left, 2=right)
         for (index, viewport) in viewports.iter().enumerate() {
             let vp_idx = (index + 1) as u32;
-            let set_viewport_status = unsafe {
-                (self.frame_set_buffer_viewport)(rendering, frame, vp_idx, *viewport)
-            };
+            let set_viewport_status =
+                unsafe { (self.frame_set_buffer_viewport)(rendering, frame, vp_idx, *viewport) };
             if set_viewport_status != 0 {
                 let _ = unsafe { (self.frame_destroy)(rendering, frame) };
                 return Err(-4200 - set_viewport_status);
@@ -1050,9 +1064,8 @@ impl XrealNative {
             let recenter_glasses: Option<FnVoid> = plugin_lib
                 .as_ref()
                 .and_then(|l| l.get(b"RecenterGlasses\0").ok().map(|s| *s));
-            let set_display_bypass_psensor: Option<FnControlSetI32> = plugin_lib
-                .as_ref()
-                .and_then(|l| {
+            let set_display_bypass_psensor: Option<FnControlSetI32> =
+                plugin_lib.as_ref().and_then(|l| {
                     l.get(b"ControlSetDisplayBypassPsensorFlag\0")
                         .ok()
                         .map(|s| *s)
@@ -1357,9 +1370,7 @@ impl XrealNative {
             crate::unity_plugin::populate_registered_display_frame_desc_with_ptr(desc);
 
         let gate_byte = unsafe { *(desc as *const u8).add(0x10) };
-        let read_u64_at = |off: usize| -> u64 {
-            unsafe { *(desc as *const u64).byte_add(off) }
-        };
+        let read_u64_at = |off: usize| -> u64 { unsafe { *(desc as *const u64).byte_add(off) } };
         godot::global::godot_print!(
             "[xreal] DisplayManager desc gate_byte(+0x10): before={gate_byte_before:#04x} \
              after={gate_byte:#04x} (populate_status={populate_status})"
@@ -1369,9 +1380,16 @@ impl XrealNative {
             "[xreal] desc fields: +0x08={:#018x} +0x18={:#018x} +0x24={:#018x} +0x28={:#018x} \
              +0x30={:#018x} +0x38={:#018x} +0x3f0={:#018x} +0x410={:#018x} +0x450={:#018x} \
              +0x580={:#018x}",
-            read_u64_at(0x08), read_u64_at(0x18), read_u64_at(0x24), read_u64_at(0x28),
-            read_u64_at(0x30), read_u64_at(0x38), read_u64_at(0x3f0), read_u64_at(0x410),
-            read_u64_at(0x450), read_u64_at(0x580)
+            read_u64_at(0x08),
+            read_u64_at(0x18),
+            read_u64_at(0x24),
+            read_u64_at(0x28),
+            read_u64_at(0x30),
+            read_u64_at(0x38),
+            read_u64_at(0x3f0),
+            read_u64_at(0x410),
+            read_u64_at(0x450),
+            read_u64_at(0x580)
         );
 
         // DO NOT call CreateFrame() or SubmitCurrentFrame() here:
@@ -1508,8 +1526,7 @@ impl XrealNative {
             _pad: [0; 4],
             context: egl_ctx,
         };
-        let gc_status =
-            unsafe { (api.rendering_init_set_graphic_context)(rendering, &nr_gfx_ctx) };
+        let gc_status = unsafe { (api.rendering_init_set_graphic_context)(rendering, &nr_gfx_ctx) };
         godot::global::godot_print!(
             "[xreal] NRRenderingInitSetGraphicContext(type=5, egl={egl_ctx:?}) -> {gc_status}"
         );
@@ -1588,7 +1605,11 @@ impl XrealNative {
                                 "[xreal] AHB SetBuffers rejected (s={set_s}), trying raw GL IDs"
                             );
                             if let Some(release) = gl.ahb_release {
-                                for &a in &ahbs { unsafe { release(a); } }
+                                for &a in &ahbs {
+                                    unsafe {
+                                        release(a);
+                                    }
+                                }
                             }
                         }
                         Err(e) => {
@@ -1600,12 +1621,15 @@ impl XrealNative {
 
                     // Fallback: raw GL textures (Compose=22 = cross-process invalid, but
                     // confirms the frame submission path works end-to-end).
-                    let textures = match gl.create_rgba_textures(probe.recommend_count, 1968, 1134) {
+                    let textures = match gl.create_rgba_textures(probe.recommend_count, 1968, 1134)
+                    {
                         Ok(t) => t,
                         Err(e) => break 'tp Err(e as i32),
                     };
-                    let mut raw_ids: Vec<*mut c_void> =
-                        textures.iter().map(|&id| id as usize as *mut c_void).collect();
+                    let mut raw_ids: Vec<*mut c_void> = textures
+                        .iter()
+                        .map(|&id| id as usize as *mut c_void)
+                        .collect();
                     let set_status =
                         api.set_swapchain_buffers(rendering, probe.swapchain, &mut raw_ids);
                     godot::global::godot_print!(
@@ -1672,13 +1696,11 @@ impl XrealNative {
         let mut vp_statuses = [99i32; 4];
         for (i, &vp) in self.nr_viewport_handles.iter().enumerate().take(2) {
             // 1-based index (Unity uses vp_idx=1 for left, vp_idx=2 for right)
-            vp_statuses[i] = unsafe {
-                (api.frame_set_buffer_viewport)(rendering, frame, (i + 1) as u32, vp)
-            };
+            vp_statuses[i] =
+                unsafe { (api.frame_set_buffer_viewport)(rendering, frame, (i + 1) as u32, vp) };
         }
 
-        static FRAME_CTR: std::sync::atomic::AtomicU32 =
-            std::sync::atomic::AtomicU32::new(0);
+        static FRAME_CTR: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
         let n = FRAME_CTR.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
         // Diagnostic: check how many viewports the frame now has.
