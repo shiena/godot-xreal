@@ -6,8 +6,10 @@ English | [日本語](README_ja.md)
 that drives [XREAL](https://www.xreal.com/) glasses. It is a port of the Unity `com.xreal.xr` SDK
 that reuses the SDK's **native** libraries instead of its Unity C# layer.
 
-> **Status: early skeleton.** The current milestone is **3DoF (head rotation) on screen**. The
-> stereo display/compositor path is not done yet. See [`docs/port-plan.md`](docs/port-plan.md).
+> **⚠️ Unofficial & experimental.** This is an independent community project — **not affiliated with,
+> endorsed by, or supported by XREAL**. "XREAL" and the SDK are the property of their respective
+> owners; the native libraries are **not** bundled (see [Vendoring](#vendoring-the-xreal-runtime-libraries-required)).
+> It works by reverse-engineering the vendored SDK's C ABI for interop — use at your own risk.
 
 ## Why a native port (not a C# translation)
 
@@ -24,6 +26,25 @@ GDScript surface: [`docs/native-api-reference.md`](docs/native-api-reference.md)
 XREAL's native libraries ship for **Android arm64 only**, so this targets a **Godot Android app**
 running on an XREAL-compatible host (phone / Beam) with glasses on USB-C. On desktop the extension
 still loads (for scene editing) but head tracking is inert.
+
+## Supported features
+
+Verified on XREAL One Pro. Everything below is community-reverse-engineered interop, not an official API.
+
+| Feature | Status | Notes |
+|---|---|---|
+| **Head tracking** (orientation: pitch / yaw / roll) | ✅ | From the XR-plugin display pose; drives the eye cameras. |
+| **Tracking mode** 6DoF / 3DoF / 0DoF | ✅ | Selectable (`xreal/tracking_type` / `XrealSystem.set_tracking_type` / `debug.xreal.tracking_type`). |
+| **Stereo glasses display** — head-locked peek window | ✅ | World-locked 3D through the glasses. **Multipass** (both eyes). |
+| **Multiview** stereo | 🚧 WIP | Registers + head-locks, but the right eye is currently black. |
+| **Recenter** | ✅ | Resets the forward direction (SDK `NativePerception::Recenter`). |
+| **RGB camera** as a Godot `CameraFeed` | ✅ | Full-colour, shown in-scene on a head-locked quad. **Requires 3DoF** (it shares the camera with 6DoF SLAM). |
+| **Glasses input** — physical keys (MENU/MULTI: click/double/long) | ✅ | Godot signals (`key_event`, `key_state_changed`). |
+| **Wear sensor / brightness / volume / electrochromic / USB hot-plug** | ✅ | Signals (`wearing_changed`, `brightness_changed`, `glasses_connected`, …). |
+| **Diagnostics** — session / tracking state, HMD clock, plugin version | ✅ | Via `XrealSystem`. |
+
+Not implemented: 6DoF position for the app camera, hand/image/plane tracking, spatial anchors, meshing,
+audio/photo capture, the NRSDK's higher-level perception features.
 
 ## Vendoring the XREAL runtime libraries (required)
 
