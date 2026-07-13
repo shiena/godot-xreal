@@ -78,7 +78,8 @@ pub extern "system" fn Java_com_godot_game_XrealBridge_nativeRegisterActivity<'l
 /// signals. Counters — not flags — so a fast disconnect→reconnect is never coalesced away.
 /// Defined for every target so the node can poll unconditionally (they stay 0 on desktop).
 static GLASSES_CONNECT_COUNT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
-static GLASSES_DISCONNECT_COUNT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+static GLASSES_DISCONNECT_COUNT: std::sync::atomic::AtomicU32 =
+    std::sync::atomic::AtomicU32::new(0);
 
 /// Monotonic count of glasses-connected events observed so far.
 pub fn glasses_connect_count() -> u32 {

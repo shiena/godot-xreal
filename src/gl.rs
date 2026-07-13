@@ -30,8 +30,7 @@ type FnGenFramebuffers = unsafe extern "C" fn(i32, *mut u32);
 type FnBindFramebuffer = unsafe extern "C" fn(u32, u32);
 type FnFramebufferTexture2D = unsafe extern "C" fn(u32, u32, u32, u32, i32);
 type FnCheckFramebufferStatus = unsafe extern "C" fn(u32) -> u32;
-type FnBlitFramebuffer =
-    unsafe extern "C" fn(i32, i32, i32, i32, i32, i32, i32, i32, u32, u32);
+type FnBlitFramebuffer = unsafe extern "C" fn(i32, i32, i32, i32, i32, i32, i32, i32, u32, u32);
 type FnClearColor = unsafe extern "C" fn(f32, f32, f32, f32);
 type FnClear = unsafe extern "C" fn(u32);
 type FnTexImage3D =
@@ -91,8 +90,7 @@ impl Gl {
             let lib = Library::new(GLES_LIB).map_err(|e| format!("dlopen {GLES_LIB}: {e}"))?;
             macro_rules! sym {
                 ($name:literal, $ty:ty) => {
-                    *lib
-                        .get::<$ty>(concat!($name, "\0").as_bytes())
+                    *lib.get::<$ty>(concat!($name, "\0").as_bytes())
                         .map_err(|e| format!("dlsym {}: {e}", $name))?
                 };
             }
@@ -262,19 +260,46 @@ pub fn blit_texture_to_layer(
         let read_fbo = scratch_fbo(g, 1);
         let draw_fbo = scratch_fbo(g, 0);
         (g.bind_framebuffer)(GL_READ_FRAMEBUFFER, read_fbo);
-        (g.framebuffer_texture_2d)(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, src, 0);
+        (g.framebuffer_texture_2d)(
+            GL_READ_FRAMEBUFFER,
+            GL_COLOR_ATTACHMENT0,
+            GL_TEXTURE_2D,
+            src,
+            0,
+        );
         (g.bind_framebuffer)(GL_DRAW_FRAMEBUFFER, draw_fbo);
-        (g.framebuffer_texture_layer)(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, dst_array, 0, layer);
+        (g.framebuffer_texture_layer)(
+            GL_DRAW_FRAMEBUFFER,
+            GL_COLOR_ATTACHMENT0,
+            dst_array,
+            0,
+            layer,
+        );
 
         let read_ok = (g.check_framebuffer_status)(GL_READ_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
         let draw_ok = (g.check_framebuffer_status)(GL_DRAW_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
         if read_ok && draw_ok {
             (g.blit_framebuffer)(
-                0, 0, src_w, src_h, 0, 0, dst_w, dst_h, GL_COLOR_BUFFER_BIT, GL_LINEAR as u32,
+                0,
+                0,
+                src_w,
+                src_h,
+                0,
+                0,
+                dst_w,
+                dst_h,
+                GL_COLOR_BUFFER_BIT,
+                GL_LINEAR as u32,
             );
         }
 
-        (g.framebuffer_texture_2d)(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
+        (g.framebuffer_texture_2d)(
+            GL_READ_FRAMEBUFFER,
+            GL_COLOR_ATTACHMENT0,
+            GL_TEXTURE_2D,
+            0,
+            0,
+        );
         (g.framebuffer_texture_layer)(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, 0, 0, 0);
         (g.bind_framebuffer)(GL_READ_FRAMEBUFFER, prev_read as u32);
         (g.bind_framebuffer)(GL_DRAW_FRAMEBUFFER, prev_draw as u32);
@@ -337,7 +362,13 @@ pub fn fill_texture(tex: u32, r: f32, g_: f32, b: f32) {
         }
         let gl_err = (g.get_error)();
         // Detach and restore the previous draw FBO.
-        (g.framebuffer_texture_2d)(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
+        (g.framebuffer_texture_2d)(
+            GL_DRAW_FRAMEBUFFER,
+            GL_COLOR_ATTACHMENT0,
+            GL_TEXTURE_2D,
+            0,
+            0,
+        );
         (g.bind_framebuffer)(GL_DRAW_FRAMEBUFFER, prev_draw_fbo as u32);
 
         if FILL_LOG_COUNT.fetch_add(1, Ordering::Relaxed) < 4 {
@@ -368,9 +399,21 @@ pub fn blit_texture(src: u32, src_w: i32, src_h: i32, dst: u32, dst_w: i32, dst_
         let read_fbo = scratch_fbo(g, 1);
         let draw_fbo = scratch_fbo(g, 0);
         (g.bind_framebuffer)(GL_READ_FRAMEBUFFER, read_fbo);
-        (g.framebuffer_texture_2d)(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, src, 0);
+        (g.framebuffer_texture_2d)(
+            GL_READ_FRAMEBUFFER,
+            GL_COLOR_ATTACHMENT0,
+            GL_TEXTURE_2D,
+            src,
+            0,
+        );
         (g.bind_framebuffer)(GL_DRAW_FRAMEBUFFER, draw_fbo);
-        (g.framebuffer_texture_2d)(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, dst, 0);
+        (g.framebuffer_texture_2d)(
+            GL_DRAW_FRAMEBUFFER,
+            GL_COLOR_ATTACHMENT0,
+            GL_TEXTURE_2D,
+            dst,
+            0,
+        );
 
         let read_ok = (g.check_framebuffer_status)(GL_READ_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
         let draw_ok = (g.check_framebuffer_status)(GL_DRAW_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
@@ -378,12 +421,33 @@ pub fn blit_texture(src: u32, src_w: i32, src_h: i32, dst: u32, dst_w: i32, dst_
             // Straight copy (no Y-flip): the SubViewport render target and the eye texture share
             // GL bottom-left origin, matching blit_default_framebuffer (flipping showed upside-down).
             (g.blit_framebuffer)(
-                0, 0, src_w, src_h, 0, 0, dst_w, dst_h, GL_COLOR_BUFFER_BIT, GL_LINEAR as u32,
+                0,
+                0,
+                src_w,
+                src_h,
+                0,
+                0,
+                dst_w,
+                dst_h,
+                GL_COLOR_BUFFER_BIT,
+                GL_LINEAR as u32,
             );
         }
 
-        (g.framebuffer_texture_2d)(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
-        (g.framebuffer_texture_2d)(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
+        (g.framebuffer_texture_2d)(
+            GL_READ_FRAMEBUFFER,
+            GL_COLOR_ATTACHMENT0,
+            GL_TEXTURE_2D,
+            0,
+            0,
+        );
+        (g.framebuffer_texture_2d)(
+            GL_DRAW_FRAMEBUFFER,
+            GL_COLOR_ATTACHMENT0,
+            GL_TEXTURE_2D,
+            0,
+            0,
+        );
         (g.bind_framebuffer)(GL_READ_FRAMEBUFFER, prev_read as u32);
         (g.bind_framebuffer)(GL_DRAW_FRAMEBUFFER, prev_draw as u32);
     }
@@ -406,17 +470,38 @@ pub fn blit_default_framebuffer(dst: u32, src_w: i32, src_h: i32, dst_w: i32, ds
         (g.bind_framebuffer)(GL_READ_FRAMEBUFFER, 0); // default framebuffer = window back buffer
         let draw_fbo = scratch_fbo(g, 0);
         (g.bind_framebuffer)(GL_DRAW_FRAMEBUFFER, draw_fbo);
-        (g.framebuffer_texture_2d)(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, dst, 0);
+        (g.framebuffer_texture_2d)(
+            GL_DRAW_FRAMEBUFFER,
+            GL_COLOR_ATTACHMENT0,
+            GL_TEXTURE_2D,
+            dst,
+            0,
+        );
 
         if (g.check_framebuffer_status)(GL_DRAW_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE {
             // Straight copy (no Y-flip): fbo 0 and the eye texture share GL bottom-left origin, so
             // flipping made it upside-down on the glasses.
             (g.blit_framebuffer)(
-                0, 0, src_w, src_h, 0, 0, dst_w, dst_h, GL_COLOR_BUFFER_BIT, GL_LINEAR as u32,
+                0,
+                0,
+                src_w,
+                src_h,
+                0,
+                0,
+                dst_w,
+                dst_h,
+                GL_COLOR_BUFFER_BIT,
+                GL_LINEAR as u32,
             );
         }
 
-        (g.framebuffer_texture_2d)(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
+        (g.framebuffer_texture_2d)(
+            GL_DRAW_FRAMEBUFFER,
+            GL_COLOR_ATTACHMENT0,
+            GL_TEXTURE_2D,
+            0,
+            0,
+        );
         (g.bind_framebuffer)(GL_READ_FRAMEBUFFER, prev_read as u32);
         (g.bind_framebuffer)(GL_DRAW_FRAMEBUFFER, prev_draw as u32);
     }

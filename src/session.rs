@@ -515,17 +515,26 @@ impl XrealSession {
 
     /// XR-plugin tracking-state enum value, or `None` if the export is absent.
     pub fn tracking_state(&self) -> Option<i32> {
-        self.native.lock().expect("xreal native mutex").tracking_state()
+        self.native
+            .lock()
+            .expect("xreal native mutex")
+            .tracking_state()
     }
 
     /// XR-plugin tracking-reason enum value, or `None` if the export is absent.
     pub fn tracking_reason(&self) -> Option<i32> {
-        self.native.lock().expect("xreal native mutex").tracking_reason()
+        self.native
+            .lock()
+            .expect("xreal native mutex")
+            .tracking_reason()
     }
 
     /// XR-plugin tracking-type enum value (`TrackingType`), or `None` if the export is absent.
     pub fn tracking_type(&self) -> Option<i32> {
-        self.native.lock().expect("xreal native mutex").tracking_type()
+        self.native
+            .lock()
+            .expect("xreal native mutex")
+            .tracking_type()
     }
 
     /// Switch the tracking mode at runtime (`TrackingType`: 0=6DoF, 1=3DoF, 2=0DoF,
@@ -540,7 +549,10 @@ impl XrealSession {
 
     /// Current HMD clock in nanoseconds, or `None` while the perception pipe is down.
     pub fn hmd_time_nanos(&self) -> Option<u64> {
-        self.native.lock().expect("xreal native mutex").hmd_time_nanos()
+        self.native
+            .lock()
+            .expect("xreal native mutex")
+            .hmd_time_nanos()
     }
 
     /// One-line diagnostic of the perception pipeline, logged (throttled) when no pose

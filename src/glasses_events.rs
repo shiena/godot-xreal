@@ -46,7 +46,12 @@ mod tests {
     static TEST_LOCK: Mutex<()> = Mutex::new(());
 
     fn event(action_type: i32, para: u32) -> GlassesEventData {
-        GlassesEventData { action_type, para, para2: 0, para3: 0.0 }
+        GlassesEventData {
+            action_type,
+            para,
+            para2: 0,
+            para3: 0.0,
+        }
     }
 
     #[test]

@@ -44,7 +44,7 @@ static INTERCEPT_COUNT: AtomicUsize = AtomicUsize::new(0);
 //     - stp xzr,xzr,[sp,#0x50] at 0x8e234      (return value slot zeroed)
 //   If the crash PC is 0x8e234 (before the zeroing instruction), we must zero [sp+0x50]
 //   ourselves from the signal handler before redirecting to the epilogue.
-const OFFSET_CRASH:    usize = 0x8e238; // ldr x8, [x20, #0x8] — actual faulting instruction
+const OFFSET_CRASH: usize = 0x8e238; // ldr x8, [x20, #0x8] — actual faulting instruction
 const OFFSET_CRASH_M4: usize = 0x8e234; // PC as reported by libsigchain (−4 offset)
 const OFFSET_EPILOGUE: usize = 0x8e3ec; // ldp x0,x1,[sp,#0x50]; … ret
 
@@ -68,13 +68,13 @@ core::arch::global_asm!(
     ".global null_safe_handle_action",
     ".type null_safe_handle_action, %function",
     "null_safe_handle_action:",
-    "ldr x0, [x0, #0x60]",     // replicate the replaced ldr: x0 = NativeGlasses*
-    "cbz x0, 1f",               // if null → 1f
-    "ret",                       // non-null: return to 0x849c0 (proceed normally)
+    "ldr x0, [x0, #0x60]", // replicate the replaced ldr: x0 = NativeGlasses*
+    "cbz x0, 1f",          // if null → 1f
+    "ret",                 // non-null: return to 0x849c0 (proceed normally)
     "1:",
-    "add x30, x30, #12",        // advance lr past: mov x19,x1 + bl GetActionData + mov x21,x0
-    "mov x21, xzr",             // x21 = 0 (null action data)
-    "ret",                       // return to 0x849cc
+    "add x30, x30, #12", // advance lr past: mov x19,x1 + bl GetActionData + mov x21,x0
+    "mov x21, xzr",      // x21 = 0 (null action data)
+    "ret",               // return to 0x849cc
     ".size null_safe_handle_action, . - null_safe_handle_action"
 );
 
@@ -94,8 +94,8 @@ pub fn patch_handle_action_callback(lib_base: usize) {
     let patch_addr = lib_base + 0x849bc; // ldr x0,[x0,#0x60] = load NativeGlasses*
 
     let wrapper_addr = null_safe_handle_action as usize;
-    let byte_offset  = wrapper_addr as i64 - patch_addr as i64;
-    let word_offset  = byte_offset >> 2;
+    let byte_offset = wrapper_addr as i64 - patch_addr as i64;
+    let word_offset = byte_offset >> 2;
     let page_size: usize = 4096;
 
     let bl_target: usize = if word_offset.abs() <= (1i64 << 25) {
@@ -105,9 +105,12 @@ pub fn patch_handle_action_callback(lib_base: usize) {
         let hint = ((patch_addr & !0xFF_FFFF).wrapping_sub(0x400_0000)) as *mut libc::c_void;
         unsafe {
             let page = libc::mmap(
-                hint, page_size,
+                hint,
+                page_size,
                 libc::PROT_READ | libc::PROT_WRITE | libc::PROT_EXEC,
-                libc::MAP_PRIVATE | libc::MAP_ANONYMOUS, -1, 0,
+                libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
+                -1,
+                0,
             );
             if page == libc::MAP_FAILED {
                 godot::global::godot_print!("[xreal] code_patch: mmap trampoline failed");
@@ -115,7 +118,7 @@ pub fn patch_handle_action_callback(lib_base: usize) {
             }
             // LDR X17, +8  (0x58000051) then BR X17 (0xD61F0220), then 8-byte literal
             let tram = page as *mut u32;
-            *tram        = 0x5800_0051u32; // LDR x17, #8
+            *tram = 0x5800_0051u32; // LDR x17, #8
             *tram.add(1) = 0xD61F_0220u32; // BR  x17
             *(tram.add(2) as *mut u64) = wrapper_addr as u64;
             let a = page as usize;
@@ -137,11 +140,15 @@ pub fn patch_handle_action_callback(lib_base: usize) {
         return;
     }
     let bl_insn: u32 = 0x9400_0000 | (bl_woff as u32 & 0x03FF_FFFF);
-    let page_addr    = (patch_addr & !(page_size - 1)) as *mut libc::c_void;
+    let page_addr = (patch_addr & !(page_size - 1)) as *mut libc::c_void;
 
     unsafe {
-        if libc::mprotect(page_addr, page_size,
-            libc::PROT_READ | libc::PROT_WRITE | libc::PROT_EXEC) != 0 {
+        if libc::mprotect(
+            page_addr,
+            page_size,
+            libc::PROT_READ | libc::PROT_WRITE | libc::PROT_EXEC,
+        ) != 0
+        {
             godot::global::godot_print!("[xreal] code_patch: mprotect(RWX) failed");
             return;
         }
@@ -286,7 +293,7 @@ unsafe extern "C" fn sigsegv_handler(
     }
 
     let fault_addr = (*info).si_addr() as usize;
-    let lib_base   = LIB_BASE.load(Ordering::SeqCst);
+    let lib_base = LIB_BASE.load(Ordering::SeqCst);
 
     // Only intercept the specific null+8 dereference from GetActionData.
     // Always write something to a file to confirm the handler was called at all.
@@ -321,8 +328,8 @@ unsafe extern "C" fn sigsegv_handler(
         //     +0x1b0 pc            (u64)  ← target
         const PC_OFFSET_IN_UCONTEXT: usize = 0x1b0;
         let pc_ptr = (ctx as *mut u8).add(PC_OFFSET_IN_UCONTEXT) as *mut u64;
-        let pc     = *pc_ptr as usize;
-        let tgt    = lib_base + OFFSET_CRASH;
+        let pc = *pc_ptr as usize;
+        let tgt = lib_base + OFFSET_CRASH;
 
         // Use async-signal-safe write() to log crash PC (godot_print! is not signal-safe).
         let pc_offset = pc.wrapping_sub(lib_base);
@@ -351,8 +358,8 @@ unsafe extern "C" fn sigsegv_handler(
                 const SP_OFFSET_IN_UCONTEXT: usize = 0x1a8;
                 let sp = *((ctx as *const u8).add(SP_OFFSET_IN_UCONTEXT) as *const u64) as usize;
                 let ret_slot = (sp + 0x50) as *mut u64;
-                *ret_slot                = 0;
-                *ret_slot.add(1)         = 0;
+                *ret_slot = 0;
+                *ret_slot.add(1) = 0;
             }
 
             // Redirect PC to the function's epilogue.
