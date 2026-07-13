@@ -201,6 +201,16 @@ func _setup_touch_controller() -> void:
 		_cursor.material_override = _cursor_mat
 		_cursor.position = Vector3(0.0, 0.0, -2.0)
 		_tracker.add_child(_cursor)
+
+	# The phone shows the controller, not a 3D preview, so stop the rig's host-preview camera: the
+	# root viewport no longer renders the world (one fewer full scene pass — the world was drawn 3×:
+	# host preview + two eyes). The glasses are unaffected; they render from the extension's own
+	# per-eye SubViewports. (Only when the controller is on; otherwise the preview stays for debugging.)
+	if _tracker:
+		var host_cam := _tracker.get_node_or_null(^"Camera3D") as Camera3D
+		if host_cam:
+			host_cam.current = false
+			print("[demo] host-preview camera disabled (root viewport renders the controller only)")
 	print("[demo] on-screen touch controller ready (phone screen)")
 
 func _on_tc_touchpad(value: Vector2) -> void:
