@@ -243,6 +243,14 @@ pub type FnGlassesEventCallback = extern "C" fn(GlassesEventData);
 /// `void SetGlassesEventCallback(XREALGlassesEventCallback cb)` (libXREALXRPlugin.so).
 pub type FnSetGlassesEventCallback = unsafe extern "C" fn(FnGlassesEventCallback);
 
+/// The callback passed to `SetNativeErrorCallback`: `void(XREALErrorCode code, const char* msg)`
+/// (`XREALCallbackHandler.cs`). `code` is the `XREALErrorCode` enum as an i32; `msg` is a UTF-8 C
+/// string (may be null). Invoked from an SDK-owned thread — no Godot calls; cache and poll.
+pub type FnNativeErrorCallback = extern "C" fn(i32, *const c_char);
+
+/// `void SetNativeErrorCallback(XREALErrorCallback cb)` (libXREALXRPlugin.so).
+pub type FnSetNativeErrorCallback = unsafe extern "C" fn(FnNativeErrorCallback);
+
 /// `int ControlSetDisplayBypassPsensorFlag(int flag)` (libXREALXRPlugin.so).
 /// RE-confirmed by disassembly: the C wrapper tail-calls
 /// `NativeGlasses::ControlSetDisplayBypassPsensorFlag(int)` once `NativeGlasses` is ready

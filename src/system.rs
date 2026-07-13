@@ -141,6 +141,21 @@ impl XrealSystem {
         crate::glasses_events::temperature_level() as i64
     }
 
+    /// Latest asynchronous native error reported by the plugin, as the `XREALErrorCode`
+    /// enum value (`0` Success / `1` Failure / … `-1` until one arrives). A cached poll —
+    /// no signal — mirroring the SDK's native-error notification. Pair with
+    /// `get_last_native_error_message()` for the accompanying text.
+    #[func]
+    fn get_last_native_error_code(&self) -> i64 {
+        crate::native_error::last_error_code() as i64
+    }
+
+    /// Message that accompanied the latest native error (empty string if none / not provided).
+    #[func]
+    fn get_last_native_error_message(&self) -> GString {
+        crate::native_error::last_error_message().as_str().into()
+    }
+
     /// Switch the tracking mode at runtime (`TRACKING_6DOF` / `TRACKING_3DOF` /
     /// `TRACKING_0DOF` / `TRACKING_0DOF_STAB`). Returns the SDK's bool result; `false`
     /// also when the session is not up yet.
