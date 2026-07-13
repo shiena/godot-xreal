@@ -46,6 +46,21 @@ pub fn stereo_mode_override() -> i32 {
     STEREO_MODE_OVERRIDE.load(Ordering::Relaxed)
 }
 
+/// Explicit head-tracking-mode override set from GDScript (`XrealSystem.set_tracking_type`).
+/// `-1` = unset (fall through to system property / default). Must be set **before** the session
+/// bootstraps (like [`STEREO_MODE_OVERRIDE`]).
+static TRACKING_MODE_OVERRIDE: AtomicI32 = AtomicI32::new(-1);
+
+/// Set the tracking-mode override from GDScript. See [`tracking_mode`].
+pub fn set_tracking_mode_override(mode: i32) {
+    TRACKING_MODE_OVERRIDE.store(mode, Ordering::Relaxed);
+}
+
+/// The current tracking-mode override (`-1` if unset).
+pub fn tracking_mode_override() -> i32 {
+    TRACKING_MODE_OVERRIDE.load(Ordering::Relaxed)
+}
+
 /// Stereo rendering mode for `InitUserDefinedSettings`, resolved **once at session bootstrap** from,
 /// in priority order:
 ///   1. the GDScript override (`XrealSystem.set_stereo_rendering_mode`, set before bootstrap — this
@@ -90,17 +105,30 @@ fn stereo_rendering_mode() -> i32 {
     DEFAULT
 }
 
-/// Head-tracking mode for `InitUserDefinedSettings`, resolved **once at session bootstrap** from the
-/// Android system property `debug.xreal.tracking_type` (`adb shell setprop debug.xreal.tracking_type 1`),
-/// else the default.
+/// Head-tracking mode for `InitUserDefinedSettings`, resolved **once at session bootstrap** from, in
+/// priority order:
+///   1. the GDScript override (`XrealSystem.set_tracking_type`, also how the ProjectSetting
+///      `xreal/tracking_type` is applied — read it in GDScript and pass it to the override before the
+///      XR rig starts, see `demo/main.gd`),
+///   2. the Android system property `debug.xreal.tracking_type`
+///      (`adb shell setprop debug.xreal.tracking_type 1`),
+///   3. the default.
 ///
-/// `0` = MODE_6DOF (SLAM position + horizon-stabilized orientation — the compact `NrPose` we read has
-/// **roll always 0**; a head tilt leaks into pitch, see `docs/roll-tracking-investigation.md`),
-/// `1` = MODE_3DOF (pure IMU orientation — expected to carry real roll), `2` = MODE_0DOF.
-/// Defaults to MODE_6DOF. Set before the XR rig starts; it is read once at `try_start`.
+/// `0` = MODE_6DOF (SLAM position + orientation — the DISP pose the eye cameras use carries full
+/// orientation incl. roll and has no drift; the recommended mode), `1` = MODE_3DOF (pure IMU, no
+/// position), `2` = MODE_0DOF. Defaults to MODE_6DOF. NOTE: the eye-camera rotation comes from the
+/// XR-plugin DISP pose (`node.rs`), not the compact session-manager `NrPose`, which is
+/// horizon-stabilized in every mode (`docs/roll-tracking-investigation.md`).
 fn tracking_mode() -> i32 {
     const DEFAULT: i32 = TrackingType::Mode6Dof as i32;
 
+    // 1) Explicit override (GDScript API — also carries a ProjectSetting value).
+    let ovr = TRACKING_MODE_OVERRIDE.load(Ordering::Relaxed);
+    if ovr >= 0 {
+        return ovr;
+    }
+
+    // 2) Android system property.
     #[cfg(target_os = "android")]
     {
         let mut buf = [0u8; 92]; // PROP_VALUE_MAX

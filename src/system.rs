@@ -179,6 +179,19 @@ impl XrealSystem {
         session::stereo_mode_override() as i64
     }
 
+    /// Select the head-tracking mode applied when the native session **bootstraps** (the startup
+    /// selector, parallel to `set_stereo_rendering_mode`): `0` = 6DoF (SLAM position + orientation,
+    /// no drift — the recommended mode), `1` = 3DoF (IMU orientation only, no position), `2` = 0DoF.
+    /// **Call before the session starts** (e.g. an autoload `_ready`, before the XR rig enters the
+    /// tree) — it is read once at `InitUserDefinedSettings`. Equivalent to the ProjectSetting
+    /// `xreal/tracking_type` or `adb shell setprop debug.xreal.tracking_type <n>`. Use
+    /// `get_tracking_type()` for the mode actually active on the running session, and
+    /// `switch_tracking_type()` to change it at runtime (SDK call; may be unavailable mid-session).
+    #[func]
+    fn set_tracking_type(&self, mode: i64) {
+        session::set_tracking_mode_override(mode as i32);
+    }
+
     /// Current HMD clock in nanoseconds (`0` while the perception pipe is down).
     #[func]
     fn get_hmd_time_nanos(&self) -> i64 {
