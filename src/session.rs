@@ -481,6 +481,35 @@ impl XrealSession {
         native.head_pose_display(time_ns)
     }
 
+    /// Whether the RGB-camera C ABI resolved (see `docs/camera-feed-plan.md`).
+    pub fn rgb_camera_available(&self) -> bool {
+        self.native
+            .lock()
+            .expect("xreal native mutex")
+            .rgb_camera_available()
+    }
+
+    /// Start RGB-camera capture in poll mode; returns the capture handle (or `None`).
+    pub fn rgb_camera_start(&self) -> Option<u64> {
+        self.native.lock().expect("xreal native mutex").rgb_camera_start()
+    }
+
+    /// Stop RGB-camera capture.
+    pub fn rgb_camera_stop(&self, handle: u64) -> bool {
+        self.native
+            .lock()
+            .expect("xreal native mutex")
+            .rgb_camera_stop(handle)
+    }
+
+    /// Poll the latest RGB-camera frame's Y plane as `(bytes, width, height)`.
+    pub fn rgb_camera_grab_y(&self) -> Option<(Vec<u8>, i32, i32)> {
+        self.native
+            .lock()
+            .expect("xreal native mutex")
+            .rgb_camera_grab_y()
+    }
+
     /// Re-center the view. Calls the SDK's input-provider recenter (`NativePerception::Recenter`,
     /// which resets the perception origin the compositor reprojects against — the real fix for
     /// "move the glasses render to current-forward"), plus the legacy `RecenterGlasses` (harmless

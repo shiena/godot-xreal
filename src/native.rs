@@ -29,6 +29,10 @@ use crate::ffi::{
     FnSwitchTrackingType, FnUnityPluginLoad, FnVoid, NrGraphicContext, NrHandle, NrPose,
     UserDefinedSettings,
 };
+use crate::ffi::{
+    FnDisposeRgbCameraDataHandle, FnStartRgbCameraCapture, FnStopRgbCameraCapture,
+    FnTryAcquireLatestImage, FnTryGetRgbCameraDataPlane, NrSize2i,
+};
 
 const SESSION_LIB: &str = "libXREALNativeSessionManager.so";
 const PLUGIN_LIB: &str = "libXREALXRPlugin.so";
@@ -78,6 +82,13 @@ pub struct XrealNative {
     get_tracking_reason: Option<FnQueryInt>,
     get_tracking_type: Option<FnQueryInt>,
     switch_tracking_type: Option<FnSwitchTrackingType>,
+
+    // RGB camera (libXREALXRPlugin.so, flat C ABI; see docs/camera-feed-plan.md). Poll path.
+    rgb_start_capture: Option<FnStartRgbCameraCapture>,
+    rgb_stop_capture: Option<FnStopRgbCameraCapture>,
+    rgb_try_acquire_latest: Option<FnTryAcquireLatestImage>,
+    rgb_get_data_plane: Option<FnTryGetRgbCameraDataPlane>,
+    rgb_dispose_handle: Option<FnDisposeRgbCameraDataHandle>,
 
     // Session / control (libXREALXRPlugin.so) — optional, used for full bootstrap.
     unity_plugin_load: Option<FnUnityPluginLoad>,
@@ -1049,6 +1060,23 @@ impl XrealNative {
                 .as_ref()
                 .and_then(|l| l.get(b"SwitchTrackingType\0").ok().map(|s| *s));
 
+            // RGB camera exports (libXREALXRPlugin.so). See docs/camera-feed-plan.md.
+            let rgb_start_capture: Option<FnStartRgbCameraCapture> = plugin_lib
+                .as_ref()
+                .and_then(|l| l.get(b"StartRGBCameraDataCapture\0").ok().map(|s| *s));
+            let rgb_stop_capture: Option<FnStopRgbCameraCapture> = plugin_lib
+                .as_ref()
+                .and_then(|l| l.get(b"StopRGBCameraDataCapture\0").ok().map(|s| *s));
+            let rgb_try_acquire_latest: Option<FnTryAcquireLatestImage> = plugin_lib
+                .as_ref()
+                .and_then(|l| l.get(b"TryAcquireLatestImage\0").ok().map(|s| *s));
+            let rgb_get_data_plane: Option<FnTryGetRgbCameraDataPlane> = plugin_lib
+                .as_ref()
+                .and_then(|l| l.get(b"TryGetRGBCameraDataPlane\0").ok().map(|s| *s));
+            let rgb_dispose_handle: Option<FnDisposeRgbCameraDataHandle> = plugin_lib
+                .as_ref()
+                .and_then(|l| l.get(b"DisposeRGBCameraDataHandle\0").ok().map(|s| *s));
+
             let unity_plugin_load: Option<FnUnityPluginLoad> = plugin_lib
                 .as_ref()
                 .and_then(|l| l.get(b"UnityPluginLoad\0").ok().map(|s| *s));
@@ -1149,6 +1177,11 @@ impl XrealNative {
                 get_tracking_reason,
                 get_tracking_type,
                 switch_tracking_type,
+                rgb_start_capture,
+                rgb_stop_capture,
+                rgb_try_acquire_latest,
+                rgb_get_data_plane,
+                rgb_dispose_handle,
                 set_display_bypass_psensor,
                 set_glasses_space_mode,
                 set_glasses_event_callback,
@@ -1286,6 +1319,62 @@ impl XrealNative {
         match self.switch_tracking_type {
             Some(f) => unsafe { f(tracking_type) },
             None => false,
+        }
+    }
+
+    /// Whether the RGB-camera C ABI is available (libXREALXRPlugin.so present + symbols resolved).
+    pub fn rgb_camera_available(&self) -> bool {
+        self.rgb_start_capture.is_some()
+            && self.rgb_try_acquire_latest.is_some()
+            && self.rgb_get_data_plane.is_some()
+    }
+
+    /// Start RGB-camera capture in **poll mode** (null callback). Returns the capture handle for
+    /// [`Self::rgb_camera_stop`], or `None` only if the export is unavailable. NOTE: in poll mode the
+    /// SDK returns a `0` handle (there is no callback registration to track), which is **not** a
+    /// failure — capture is enabled and [`Self::rgb_camera_grab_y`] then works; device-confirmed.
+    pub fn rgb_camera_start(&self) -> Option<u64> {
+        let f = self.rgb_start_capture?;
+        Some(unsafe { f(std::ptr::null_mut(), std::ptr::null_mut()) })
+    }
+
+    /// Stop RGB-camera capture (`false` if unavailable).
+    pub fn rgb_camera_stop(&self, handle: u64) -> bool {
+        match self.rgb_stop_capture {
+            Some(f) => unsafe { f(handle) },
+            None => false,
+        }
+    }
+
+    /// Poll the latest RGB-camera frame and copy its **Y plane** (full-res 8-bit luma) into a
+    /// freshly-allocated buffer. Returns `(bytes, width, height)`, or `None` if no fresh frame /
+    /// unavailable. The SDK frame handle is disposed before returning, so nothing is left pinned.
+    pub fn rgb_camera_grab_y(&self) -> Option<(Vec<u8>, i32, i32)> {
+        let acquire = self.rgb_try_acquire_latest?;
+        let get_plane = self.rgb_get_data_plane?;
+        unsafe {
+            let mut frame_handle: i32 = 0;
+            let mut resolution = NrSize2i::default();
+            let mut timestamp: u64 = 0;
+            if !acquire(&mut frame_handle, &mut resolution, &mut timestamp) {
+                return None;
+            }
+            // Best-effort dispose on every exit path once we hold a valid handle.
+            let dispose = self.rgb_dispose_handle;
+            let mut data_ptr: *mut c_void = std::ptr::null_mut();
+            let mut size = NrSize2i::default();
+            let ok = get_plane(frame_handle, 0, &mut data_ptr, &mut size);
+            let result = if ok && !data_ptr.is_null() && size.width > 0 && size.height > 0 {
+                let len = (size.width as usize) * (size.height as usize);
+                let bytes = std::slice::from_raw_parts(data_ptr as *const u8, len).to_vec();
+                Some((bytes, size.width, size.height))
+            } else {
+                None
+            };
+            if let Some(d) = dispose {
+                d(frame_handle);
+            }
+            result
         }
     }
 

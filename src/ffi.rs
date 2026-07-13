@@ -177,6 +177,33 @@ pub type FnQueryInt = unsafe extern "C" fn() -> i32;
 /// directly to try to kick perception without the full XR-subsystem host.
 pub type FnSwitchTrackingType = unsafe extern "C" fn(i32) -> bool;
 
+// --- RGB camera (libXREALXRPlugin.so, flat C ABI; see docs/camera-feed-plan.md) ---
+
+/// `NRSize2i` / Unity `Vector2Int` — plane or frame dimensions (RGB camera).
+#[repr(C)]
+#[derive(Clone, Copy, Default, Debug)]
+pub struct NrSize2i {
+    pub width: i32,
+    pub height: i32,
+}
+
+/// `StartRGBCameraDataCapture(callback, userData) -> callbackHandle`. Pass a **null** callback
+/// (first arg) to drive the camera in poll mode via [`FnTryAcquireLatestImage`]. Returns a handle
+/// for [`FnStopRgbCameraCapture`] (`0` on failure).
+pub type FnStartRgbCameraCapture = unsafe extern "C" fn(*mut c_void, *mut c_void) -> u64;
+/// `StopRGBCameraDataCapture(callbackHandle) -> bool`.
+pub type FnStopRgbCameraCapture = unsafe extern "C" fn(u64) -> bool;
+/// `TryAcquireLatestImage(&frameHandle, &resolution, &timeStamp) -> bool`. On success `frameHandle`
+/// must be released with [`FnDisposeRgbCameraDataHandle`].
+pub type FnTryAcquireLatestImage = unsafe extern "C" fn(*mut i32, *mut NrSize2i, *mut u64) -> bool;
+/// `TryGetRGBCameraDataPlane(frameHandle, planeIndex, &dataPtr, &size) -> bool`. Planes are I420:
+/// 0 = Y (full-res), 1 = V, 2 = U (half-res); each is tightly packed 8-bit (`size.width*size.height`
+/// bytes). The pointer is valid until the handle is disposed.
+pub type FnTryGetRgbCameraDataPlane =
+    unsafe extern "C" fn(i32, i32, *mut *mut c_void, *mut NrSize2i) -> bool;
+/// `DisposeRGBCameraDataHandle(frameHandle)` — free a frame acquired by [`FnTryAcquireLatestImage`].
+pub type FnDisposeRgbCameraDataHandle = unsafe extern "C" fn(i32);
+
 /// `GlassesEventData` from `XREALCallbackHandler.cs`, delivered **by value** to the
 /// callback registered with `SetGlassesEventCallback` (libXREALXRPlugin.so export,
 /// C# `[DllImport] SetGlassesEventCallback(XREALGlassesEventCallback)`).
