@@ -52,7 +52,7 @@ only *build* runs. `--all` / `-All` = build + export + install + run.
 | `-TrackingType <n>` | `--tracking <n>` | set `debug.xreal.tracking_type` before launch (0 = 6DoF, 1 = 3DoF, 2 = 0DoF) |
 | `-ReleaseApk` | `--release-apk` | export with the release keystore (default: debug keystore) |
 | `-CargoDebug` | `--cargo-debug` | cargo debug profile (default: release) |
-| `-Clippy` | `--clippy` | run `cargo clippy` before building (off by default) |
+| `-Checks` | `--checks` | run `cargo fmt --check` + `cargo clippy` before building (off by default) |
 | `-Device <ip:port>` | `--device <ip:port>` | override the Wi-Fi device (default `192.168.0.4:5555`) |
 
 Env overrides: `GODOT`, `ADB`, `XREAL_DEVICE`, `APK_OUT`, `EXPORT_PRESET`.

@@ -28,7 +28,7 @@ param(
     [switch]$All,
     [switch]$ReleaseApk,     # export a release-keystore APK (default: debug keystore)
     [switch]$CargoDebug,     # cargo debug profile (default: release)
-    [switch]$Clippy,         # run cargo clippy before building (off by default)
+    [switch]$Checks,         # run cargo fmt --check + clippy before building (off by default)
     [int]$StereoMode = -1,   # -1 = leave device prop; 0 = Multipass, 2 = Multiview
     [int]$TrackingType = -1, # -1 = leave device prop; 0 = 6DoF, 1 = 3DoF, 2 = 0DoF
     [string]$Device  = $(if ($env:XREAL_DEVICE) { $env:XREAL_DEVICE } else { '192.168.0.4:5555' }),
@@ -58,7 +58,9 @@ function Adbx { if ($Device) { & $Adb -s $Device @args } else { & $Adb @args } }
 
 # ---------------------------------------------------------------- Build (cargo ndk) ---
 if ($Build) {
-    if ($Clippy) {
+    if ($Checks) {
+        Say 'cargo fmt --check'
+        cargo fmt --check; if ($LASTEXITCODE -ne 0) { Die 'cargo fmt --check failed (run `cargo fmt`)' }
         Say 'cargo clippy --release'
         cargo clippy --release; if ($LASTEXITCODE -ne 0) { Die 'cargo clippy failed' }
     }

@@ -35,7 +35,7 @@ PKG="com.example.godotxreal"
 ACTIVITY="$PKG/com.godot.game.GodotAppLauncher"
 
 do_build=0; do_export=0; do_install=0; do_run=0; do_logcat=0
-release_apk=0; cargo_debug=0; run_clippy=0
+release_apk=0; cargo_debug=0; run_checks=0
 stereo=-1; tracking=-1
 
 while [ $# -gt 0 ]; do
@@ -48,7 +48,7 @@ while [ $# -gt 0 ]; do
         --logcat)      do_logcat=1 ;;
         --release-apk) release_apk=1 ;;
         --cargo-debug) cargo_debug=1 ;;
-        --clippy)      run_clippy=1 ;;
+        --checks)      run_checks=1 ;;
         --stereo)      stereo="$2"; shift ;;
         --tracking)    tracking="$2"; shift ;;
         --device)      DEVICE="$2"; shift ;;
@@ -69,7 +69,8 @@ profile=release; [ "$cargo_debug" -eq 1 ] && profile=debug
 
 # ---------------------------------------------------------------- build (cargo ndk) ---
 if [ "$do_build" -eq 1 ]; then
-    if [ "$run_clippy" -eq 1 ]; then
+    if [ "$run_checks" -eq 1 ]; then
+        say "cargo fmt --check"; cargo fmt --check || die "cargo fmt --check failed (run: cargo fmt)"
         say "cargo clippy --release"; cargo clippy --release || die "cargo clippy failed"
     fi
     say "cargo ndk -t arm64-v8a build ($profile)"
