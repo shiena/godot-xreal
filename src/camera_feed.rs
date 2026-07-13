@@ -18,6 +18,11 @@ use godot::classes::image::Format;
 use godot::classes::{CameraFeed, ICameraFeed, Image};
 use godot::prelude::*;
 
+/// Feed-image plumbing:
+/// - `poll_frame` grabs the XREAL frame as Y + interleaved CbCr and calls `set_ycbcr_images`, which
+///   populates the feed's `FEED_Y_IMAGE` (R8) + `FEED_CBCR_IMAGE` (RG8) textures and sets datatype
+///   `FEED_YCBCR_SEP`. A YCbCr→RGB shader (demo/xreal_ycbcr.gdshader) samples those two textures.
+
 use crate::session;
 
 #[derive(GodotClass)]
@@ -73,29 +78,29 @@ impl ICameraFeed for XrealCameraFeed {
 
 #[godot_api]
 impl XrealCameraFeed {
-    /// Poll the latest RGB-camera frame and push it into the feed (grayscale Y for the spike).
-    /// Returns `true` if a frame was pushed this call. Call once per frame from a driver.
+    /// Poll the latest RGB-camera frame and push it into the feed as **separate Y + CbCr** images
+    /// (`FEED_YCBCR_SEP`), for full-colour display via the YCbCr→RGB shader. Returns `true` if a
+    /// frame was pushed this call. Call once per frame from a driver.
     #[func]
     fn poll_frame(&mut self) -> bool {
         let Some(session) = session::shared() else {
             return false;
         };
-        let Some((y, w, h)) = session.rgb_camera_grab_y() else {
+        let Some((y, yw, yh, cbcr, cw, ch)) = session.rgb_camera_grab_yuv() else {
             return false;
         };
         self.frames += 1;
 
-        // Expand the 8-bit Y plane to grayscale RGB8 (r = g = b = luma).
-        let mut rgb = Vec::with_capacity(y.len() * 3);
-        for &l in &y {
-            rgb.extend_from_slice(&[l, l, l]);
-        }
-        let data = PackedByteArray::from(rgb.as_slice());
-        let Some(image) = Image::create_from_data(w, h, false, Format::RGB8, &data) else {
-            godot_warn!("[xreal] camera: Image::create_from_data failed ({w}x{h})");
+        let y_data = PackedByteArray::from(y.as_slice());
+        let cbcr_data = PackedByteArray::from(cbcr.as_slice());
+        // Y = single-channel R8 (luma); CbCr = two-channel RG8 (Cb in R, Cr in G).
+        let Some(y_img) = Image::create_from_data(yw, yh, false, Format::R8, &y_data) else {
             return false;
         };
-        self.base_mut().set_rgb_image(&image);
+        let Some(cbcr_img) = Image::create_from_data(cw, ch, false, Format::RG8, &cbcr_data) else {
+            return false;
+        };
+        self.base_mut().set_ycbcr_images(&y_img, &cbcr_img);
 
         if self.frames <= 5 || self.frames % 60 == 0 {
             // Mean luma over a coarse sample — proves the bytes are real image data, not zeros.
@@ -109,9 +114,8 @@ impl XrealCameraFeed {
             }
             let mean = if n > 0 { sum / n } else { 0 };
             godot_print!(
-                "[xreal] camera frame #{} {w}x{h} y_bytes={} mean_luma={mean}",
-                self.frames,
-                y.len()
+                "[xreal] camera frame #{} y={yw}x{yh} cbcr={cw}x{ch} mean_luma={mean}",
+                self.frames
             );
         }
         true

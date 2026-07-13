@@ -1378,6 +1378,54 @@ impl XrealNative {
         }
     }
 
+    /// Poll the latest RGB-camera frame and copy its planes as **Y** (full-res 8-bit) plus a
+    /// **CbCr** buffer interleaved from the chroma planes (I420: plane 1 = V/Cr, plane 2 = U/Cb, both
+    /// half-res). Returns `(y, y_w, y_h, cbcr, c_w, c_h)` where `cbcr` is `[Cb, Cr, Cb, Cr, …]`
+    /// (`Cb = U`, `Cr = V`) — the RG8 layout Godot's `set_ycbcr_images` + a YCbCr shader expect.
+    /// The frame handle is disposed before returning.
+    pub fn rgb_camera_grab_yuv(&self) -> Option<(Vec<u8>, i32, i32, Vec<u8>, i32, i32)> {
+        let acquire = self.rgb_try_acquire_latest?;
+        let get_plane = self.rgb_get_data_plane?;
+        let dispose = self.rgb_dispose_handle;
+
+        let mut frame_handle: i32 = 0;
+        let mut resolution = NrSize2i::default();
+        let mut timestamp: u64 = 0;
+        if !unsafe { acquire(&mut frame_handle, &mut resolution, &mut timestamp) } {
+            return None;
+        }
+        // Copy plane `idx` into an owned buffer. Plane pointers are valid until the handle is disposed.
+        let read_plane = |idx: i32| -> Option<(Vec<u8>, i32, i32)> {
+            let mut ptr: *mut c_void = std::ptr::null_mut();
+            let mut sz = NrSize2i::default();
+            let ok = unsafe { get_plane(frame_handle, idx, &mut ptr, &mut sz) };
+            if ok && !ptr.is_null() && sz.width > 0 && sz.height > 0 {
+                let len = (sz.width as usize) * (sz.height as usize);
+                let bytes = unsafe { std::slice::from_raw_parts(ptr as *const u8, len) }.to_vec();
+                Some((bytes, sz.width, sz.height))
+            } else {
+                None
+            }
+        };
+        let out = (|| {
+            let (y, yw, yh) = read_plane(0)?; // Y (full-res)
+            let (v, _, _) = read_plane(1)?; // plane 1 = V (Cr), half-res
+            let (u, uw, uh) = read_plane(2)?; // plane 2 = U (Cb), half-res
+            let n = (uw as usize) * (uh as usize);
+            let m = n.min(u.len()).min(v.len());
+            let mut cbcr = Vec::with_capacity(m * 2);
+            for i in 0..m {
+                cbcr.push(u[i]); // Cb = U
+                cbcr.push(v[i]); // Cr = V
+            }
+            Some((y, yw, yh, cbcr, uw, uh))
+        })();
+        if let Some(d) = dispose {
+            unsafe { d(frame_handle) };
+        }
+        out
+    }
+
     /// Diagnostic: raw HMD clock from each layer (SessionManager, XR-plugin), to see which
     /// one is actually delivering data.
     pub fn hmd_time_probe(&self) -> (Option<u64>, Option<u64>) {
