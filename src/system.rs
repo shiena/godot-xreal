@@ -161,6 +161,24 @@ impl XrealSystem {
             .unwrap_or(-1) as i64
     }
 
+    /// Select the stereo rendering mode applied when the native session bootstraps:
+    /// `0` = Multipass (per-eye 2D textures — renders; the glasses layer is world-anchored),
+    /// `2` = Multiview / Single-Pass-Instanced (matches LayeredClient; still WIP). **Call before the
+    /// session starts** (e.g. an autoload `_ready`, before the XR rig enters the tree) — it is read
+    /// once at `InitUserDefinedSettings`. Equivalent to the ProjectSetting
+    /// `xreal/stereo_rendering_mode` or `adb shell setprop debug.xreal.stereo_mode <n>`.
+    #[func]
+    fn set_stereo_rendering_mode(&self, mode: i64) {
+        session::set_stereo_mode_override(mode as i32);
+    }
+
+    /// The current stereo-mode override (`-1` if unset; the effective mode is resolved at bootstrap
+    /// from the override, the ProjectSetting, the system property, then the default).
+    #[func]
+    fn get_stereo_rendering_mode(&self) -> i64 {
+        session::stereo_mode_override() as i64
+    }
+
     /// Current HMD clock in nanoseconds (`0` while the perception pipe is down).
     #[func]
     fn get_hmd_time_nanos(&self) -> i64 {
