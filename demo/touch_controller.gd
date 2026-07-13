@@ -25,6 +25,11 @@ signal hand_selected(is_right: bool)
 ## Backdrop fill. Opaque by default so the phone shows only the controller (the glasses-bound
 ## 3D preview behind it is hidden); set a translucent alpha to let the 3D show through instead.
 @export var background_color := Color(0.05, 0.06, 0.09, 1.0)
+## The phone framebuffer is landscape but the phone is held in portrait, so rotate the UI 90° to read
+## upright (the app stays landscape so the glasses compositor is untouched). `rotate_cw` flips the
+## direction if it comes out upside down.
+@export var portrait := true
+@export var rotate_cw := false
 
 # Momentary buttons (name -> label). Add/remove/rename here to customize the controller.
 const _buttons := {
@@ -45,29 +50,58 @@ var _pressed := {}            # widget name -> bool (for highlight)
 var _pad_value := Vector2.ZERO
 
 func _ready() -> void:
-	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	# Node-level _input handles the multitouch; don't intercept GUI focus/mouse from other UI.
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
-	resized.connect(_layout)
+	if portrait:
+		# Rotate a portrait-shaped control 90° to fill the landscape framebuffer.
+		var vp := get_viewport().get_visible_rect().size
+		size = Vector2(vp.y, vp.x)  # portrait W x H
+		pivot_offset = Vector2.ZERO
+		if rotate_cw:
+			rotation = PI / 2.0
+			position = Vector2(vp.x, 0)
+		else:
+			rotation = -PI / 2.0
+			position = Vector2(0, vp.y)
+	else:
+		set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		resized.connect(_layout)
 	_layout()
+
+# Screen (viewport) position -> this control's local space, accounting for the rotation.
+func _to_local(screen_pos: Vector2) -> Vector2:
+	return get_global_transform_with_canvas().affine_inverse() * screen_pos
 
 func _layout() -> void:
 	var s := size
-	# Touchpad: a square on the left, vertically centered.
-	var pad := minf(s.x * 0.42, s.y * 0.72)
-	_pad_rect = Rect2(s.x * 0.05, (s.y - pad) * 0.5, pad, pad)
-	# Buttons: stacked on the right.
-	var bw := s.x * 0.24
-	var bx := s.x - bw - s.x * 0.05
-	var gap := s.y * 0.04
-	# Shrink button height to fit however many buttons are configured (caps at a comfortable size).
-	var bh := minf(s.y * 0.16, (s.y * 0.94 - gap * (_buttons.size() - 1)) / _buttons.size())
-	var total := bh * _buttons.size() + gap * (_buttons.size() - 1)
-	var by := (s.y - total) * 0.5
+	var n := _buttons.size()
 	_button_rects.clear()
-	for name in _buttons:
-		_button_rects[name] = Rect2(bx, by, bw, bh)
-		by += bh + gap
+	if s.y > s.x:
+		# Portrait: touchpad on top, buttons stacked below.
+		var pad := s.x * 0.9
+		_pad_rect = Rect2((s.x - pad) * 0.5, s.y * 0.04, pad, pad)
+		var gap := s.y * 0.018
+		var top := _pad_rect.end.y + s.y * 0.03
+		var bottom := s.y * 0.97
+		var bh := (bottom - top - gap * (n - 1)) / n
+		var bw := s.x * 0.82
+		var bx := (s.x - bw) * 0.5
+		var by := top
+		for name in _buttons:
+			_button_rects[name] = Rect2(bx, by, bw, bh)
+			by += bh + gap
+	else:
+		# Landscape: touchpad left, buttons stacked right.
+		var pad := minf(s.x * 0.42, s.y * 0.72)
+		_pad_rect = Rect2(s.x * 0.05, (s.y - pad) * 0.5, pad, pad)
+		var bw := s.x * 0.24
+		var bx := s.x - bw - s.x * 0.05
+		var gap := s.y * 0.04
+		var bh := minf(s.y * 0.16, (s.y * 0.94 - gap * (n - 1)) / n)
+		var by := (s.y - (bh * n + gap * (n - 1))) * 0.5
+		for name in _buttons:
+			_button_rects[name] = Rect2(bx, by, bw, bh)
+			by += bh + gap
 	queue_redraw()
 
 func _widget_at(pos: Vector2) -> String:
@@ -81,10 +115,11 @@ func _widget_at(pos: Vector2) -> String:
 func _input(event: InputEvent) -> void:
 	if event is InputEventScreenTouch:
 		if event.pressed:
-			var w := _widget_at(event.position)
+			var pos := _to_local(event.position)
+			var w := _widget_at(pos)
 			if w != "":
 				_finger_widget[event.index] = w
-				_press(w, event.position)
+				_press(w, pos)
 				get_viewport().set_input_as_handled()
 		elif _finger_widget.has(event.index):
 			_release(_finger_widget[event.index])
@@ -92,7 +127,7 @@ func _input(event: InputEvent) -> void:
 			get_viewport().set_input_as_handled()
 	elif event is InputEventScreenDrag:
 		if _finger_widget.get(event.index, "") == "touchpad":
-			_update_pad(event.position)
+			_update_pad(_to_local(event.position))
 			get_viewport().set_input_as_handled()
 
 func _press(widget: String, pos: Vector2) -> void:
@@ -141,7 +176,7 @@ func _vibrate(ms: int) -> void:
 
 func _draw() -> void:
 	var font := get_theme_default_font()
-	var font_size := int(maxf(24.0, size.y * 0.035))
+	var font_size := int(maxf(24.0, minf(size.x, size.y) * 0.045))
 
 	# Backdrop: opaque by default, so the phone shows only the controller and the 3D preview
 	# behind it is hidden (set a translucent background_color to let the 3D show through).
