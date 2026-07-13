@@ -741,3 +741,179 @@ libnr_loader's swapchain/GL import (a large, uncertain effort). **Practical outc
 working stereo path (both eyes + camera + tracking); Multiview is left-eye-only and blocked in the NR
 compositor.** The SDK-side fixes here are kept because they are individually correct and are
 prerequisites if the NR array path is ever solved.
+
+## Static RE follow-up (2026-07-13) — libnr_loader dispatches; GL import/compose lives in libnr_api
+
+Scope: `jniLibs/arm64-v8a/libnr_loader.so` and `libnr_api.so`, with NDK 27.2 LLVM tools.
+
+### 1. libnr_loader is not the GL compositor
+
+`libnr_loader.so` exports the public NR entry points, but its NR symbols are dispatch trampolines.
+There are no GL/EGL relocations in `libnr_loader.so` (`llvm-readelf -r` only shows libc/runtime
+entries matching `gl` as part of `GLOB_DAT`, not GLES/EGL symbols). Relevant trampoline offsets:
+
+- `NRBufferSpecSetMultiviewLayers @ libnr_loader.so+0x1f8680`: loads `*(0x490490)+0x38`, then `blr`.
+- `NRBufferViewportSetMultiviewLayer @ +0x1f8b9c`: loads `*(0x490598)+0x80`, then `blr`.
+- `NRFrameSetBufferViewport @ +0x1f93dc`: loads `*(0x490580)+0x70`, then `blr`.
+- `NRFrameCompose @ +0x1f9410`: loads `*(0x490580)+0x78`, then `blr`.
+- `NRSwapchainSetBuffers @ +0x1f9fa8`: loads `*(0x490508)+0x20`, then `blr`.
+
+So the import/sample question is in the backend resolved by the loader, not in the loader itself.
+The backend in this SDK is `libnr_api.so`.
+
+### 2. NRGetProcAddr mappings in libnr_api
+
+`libnr_api.so` is stripped, but `NRGetProcAddr` string dispatch maps public NR names to wrapper
+functions:
+
+- `NRSwapchainSetBuffers` string at `.rodata+0x636dc2` is compared at `libnr_api.so+0xc1acbc`;
+  the returned wrapper is `+0xc1b2dc`. That wrapper calls `+0xd1aad4`, which resolves the active
+  backend object and dispatches through `+0xc7cb10`. `+0xc7cb10` then branches through vtable slot
+  `backend+0x38`.
+- `NRFrameSetBufferViewport` string at `.rodata+0x3bc2d0` is compared at `+0xc18680`; the returned
+  wrapper is `+0xc199ac`. It calls `+0xd1d768`, then `+0xc7d868`, which dispatches through vtable
+  slot `backend+0x40`.
+- `NRBufferSpecSetMultiviewLayers` string at `.rodata+0x664771` is compared at `+0xc14eb0`; the
+  returned wrapper is `+0xc15898`. It calls `+0xd17b8c`, then `+0xc7bde0`, which dispatches through
+  vtable slot `backend+0x08`.
+- `NRBufferViewportSetMultiviewLayer` string at `.rodata+0x6a943e` is compared at `+0xc16124`; the
+  returned wrapper is `+0xc17868`. It calls `+0xd20bdc`, then `+0xc7d148`, which dispatches through
+  vtable slot `backend+0x60`.
+
+This confirms both multiview setters exist and are callable, but their public wrappers only forward
+state into the backend object. The actual GL behavior is in the backend methods and helper routines.
+
+### 3. GL/EGL helpers found in libnr_api
+
+`libnr_api.so` imports the GLES/EGL functions needed for the compositor path:
+`glBindTexture`, `glTexImage2D`, `glTexImage3D`, `glFramebufferTextureLayer`,
+`glGetUniformLocation`, `glUniform1i`, `eglCreateImageKHR`, `eglGetNativeClientBufferANDROID`, and
+`glEGLImageTargetTexture2DOES`.
+
+Important helper offsets:
+
+- `+0xebea88` validates a caller-provided GL texture name as a **2D texture**. If its texture id
+  argument is non-zero and an object flag at `object+0x30` is set, it does:
+  - `+0xebeb74`: `w0 = 0x0de1` (`GL_TEXTURE_2D`)
+  - `+0xebeb78`: `w1 = submitted_gl_name`
+  - `+0xebeb84`: `glBindTexture(GL_TEXTURE_2D, submitted_gl_name)`
+  - `+0xebeb88..+0xebebac`: `glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, WIDTH/HEIGHT, ...)`
+  - `+0xebebb0..+0xebebb8`: `glBindTexture(GL_TEXTURE_2D, 0)`
+
+  There is no `GL_TEXTURE_2D_ARRAY` bind/query in this caller-provided texture validation block.
+
+- `+0xec1500` creates NR-owned GL textures. The array branch at `+0xec1608..+0xec16a0` binds
+  `GL_TEXTURE_2D_ARRAY` (`0x8c1a`) and allocates it with `glTexImage3D` at `+0xec1694`.
+  The 2D branch at `+0xec16f4..+0xec17d4` binds `GL_TEXTURE_2D` and allocates with
+  `glTexStorage2D` or `glTexImage2D`.
+
+- `+0xec7d7c..+0xec7e18` imports an Android native buffer through EGLImage:
+  `eglGetNativeClientBufferANDROID`, then `eglCreateImageKHR(..., target=0x3140
+  EGL_NATIVE_BUFFER_ANDROID, ...)`, then `glEGLImageTargetTexture2DOES(target, image)`.
+  This path is for AHardwareBuffer/native-buffer import. It is not an `EGL_GL_TEXTURE_2D_ARRAY`
+  or per-layer `EGL_GL_TEXTURE_*` import of a client GL texture name.
+
+- `+0xec4d2c` binds a texture according to an internal texture kind:
+  - kind `0`: `glBindTexture(GL_TEXTURE_2D, tex)` at `+0xec4d8c..+0xec4d9c`
+  - kind `1`: `glBindTexture(GL_TEXTURE_2D_ARRAY, tex)` at `+0xec4d80..+0xec4d9c`
+  - kind `2`: caller `+0xec858c..+0xec85a8` first runs `+0xec4d2c`, then additionally binds
+    `GL_TEXTURE_EXTERNAL_OES` (`0x8d65`).
+
+### 4. Array sampling shader exists, but it is not proof that client GL arrays are imported
+
+`libnr_api.so` contains a real array sampling shader:
+
+- `.rodata+0x6395df`: `precision lowp sampler2DArray;`
+- `.rodata+0x6395ff`: `uniform sampler2DArray srcTex;`
+- `.rodata+0x63961f`: `uniform int tex_layer_index;`
+- `.rodata+0x639676`: `texture(srcTex, vec3(vTexcoord0, tex_layer_index))`
+
+Program setup around `+0xec3f34..+0xec4158` calls `glGetUniformLocation` (`+0xec404c`) and then
+`glUseProgram` + `glUniform1i` in a loop at `+0xec411c..+0xec4154`. Draw state setup at
+`+0xec1f98..+0xec1fd8` binds both a `GL_TEXTURE_2D` slot (`object+0x24`) and a
+`GL_TEXTURE_2D_ARRAY` slot (`object+0x28`).
+
+Therefore NR can sample array layers in at least one internal path. The failing case is narrower:
+Unity-provider/client-provided swapchain buffers that are just GL names are validated/imported as
+2D textures, while the array-sampling path expects an internal texture object whose array slot is
+populated.
+
+### 5. Why the observed right eye becomes fixed gray
+
+The device symptom is decisive: blitting the left SubViewport into both layers still leaves the right
+half at the fixed mean `0.2503`. That excludes our layer-1 contents and the libXREALXRPlugin viewport
+setup. The static evidence above explains the remaining failure:
+
+1. `libXREALXRPlugin.so` passes one client GL name for a `GL_TEXTURE_2D_ARRAY` swapchain buffer.
+2. The public NR calls do record multiview state (`NRBufferSpecSetMultiviewLayers`,
+   `NRBufferViewportSetMultiviewLayer`), but the backend wrapper forwards it through vtable calls; no
+   public-side code changes the GL import target.
+3. The client-GL-name validation/helper path in `libnr_api.so` binds submitted names as
+   `GL_TEXTURE_2D` at `+0xebeb84` and queries only 2D width/height. No client GL-name import path
+   found here binds `GL_TEXTURE_2D_ARRAY`, imports an array texture through EGL, or creates per-layer
+   texture views.
+4. The array sampling shader can draw from NR-owned array textures (`object+0x28`), but for this
+   client swapchain that array slot is not populated with our submitted GL texture array. Viewport 0
+   still resolves through the existing 2D/left path; viewport 1 samples a fallback/cleared compositor
+   resource, which matches the stable gray buffer.
+
+So the right-eye gray is not a bad `multiviewLayer` field and not stale layer-1 pixels. It is the NR
+backend not importing a caller-provided `GL_TEXTURE_2D_ARRAY` name as an array texture for the
+right-eye viewport.
+
+### 6. Concrete lever / verdict
+
+No missing call in our current Unity-provider emulation is visible from this analysis:
+
+- `NRBufferViewportSetMultiviewLayer` exists and is already reached through the SDK viewport setup.
+- `NRBufferSpecSetMultiviewLayers(2)` exists and is reached through the SDK buffer-spec setup.
+- `NRSwapchainSetBuffers` accepts a vector of submitted buffer handles, but the visible GL helper for
+  client GL names treats them as `GL_TEXTURE_2D`, not `GL_TEXTURE_2D_ARRAY`.
+
+Minimal practical fix from our side is therefore **not** another descriptor flag or another
+multiview setter. The viable options are:
+
+1. **Use Multipass**: two separate `GL_TEXTURE_2D` swapchain buffers/textures, one per eye. This
+   matches the client GL-name import path (`GL_TEXTURE_2D`) and is the only path proven compatible
+   with this SDK from our side.
+2. **Experimental, if revisiting Multiview**: expose two 2D views of the array layers with
+   `glTextureView` if GLES extension support exists, and make the SDK/NR see two 2D client texture
+   names instead of one array name. This no longer uses the single client `GL_TEXTURE_2D_ARRAY`
+   import path, and may require forcing the overlay back toward two swapchains/viewports rather than
+   true SPI. This is unverified.
+3. **Patch libnr_api backend**: the patch would need to redirect the client GL-name import/validation
+   path from `GL_TEXTURE_2D` (`+0xebeb84`) to an array-aware path and ensure the compositor object
+   stores the submitted name in its array slot (`object+0x28`) with `tex_layer_index` set from
+   `BufferViewport.multiviewLayer`. This is higher risk than the existing `libXREALXRPlugin.so`
+   branch patches because it crosses backend object layout/vtable code.
+
+Verdict for this SDK version: **client-provided `GL_TEXTURE_2D_ARRAY` layer 1 is not achievable from
+our current Unity-provider emulation without patching `libnr_api.so` internals. Multipass remains the
+minimal working stereo path.**
+
+Device note: `adb devices` sees `192.168.0.4:5555`, but no new screencap verification was run for
+this section because the task was constrained to analysis only and no source behavior was changed.
+
+## Final conclusion (2026-07-13) — Multiview shelved; Multipass is the answer
+
+Two independent reasons close this out:
+
+1. **NR backend blocker (codex, above).** `libnr_api.so` imports a client-submitted swapchain GL name
+   only as `GL_TEXTURE_2D` (`+0xebeb84`); it has no path to import a client `GL_TEXTURE_2D_ARRAY` as an
+   array (no array bind, no per-layer EGLImage). So the right-eye (layer-1) viewport samples a cleared
+   compositor resource → fixed gray. Not fixable from our side without patching libnr_api internals
+   (high risk, backend vtable/object layout).
+
+2. **No benefit for our architecture.** Our stereo rig renders TWO Godot SubViewports (left/right eye
+   cameras) every frame in BOTH modes, then blits them into either two 2D textures (Multipass) or the
+   two layers of one array texture (Multiview). The single-pass-instanced win only exists if the ENGINE
+   draws both eyes in one pass via view instancing — Godot's SubViewport rig does not. So Multiview
+   would give us **zero** GPU/CPU saving even if the NR array path worked; it is purely a different
+   texture hand-off to the compositor.
+
+⇒ **Multipass is the working AND correct stereo path for this port** (both eyes + camera + tracking,
+same cost as Multiview here). The SDK-side Multiview fixes (descriptor read, two-viewport patch,
+QueryTextureDesc array metadata) are kept as correct emulation, but Multiview stays left-eye-only and
+is not recommended. Revisiting it would require either patching libnr_api, or switching the Godot rig
+to true engine multiview rendering AND still solving the NR client-array import — not worthwhile for a
+mode with no benefit here.
