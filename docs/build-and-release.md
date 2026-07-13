@@ -77,24 +77,38 @@ around, which makes the log look like an old `libgodot_xreal.so` is still runnin
 
 ### Vendor the XREAL runtime libraries (once)
 
-The extension `dlopen`s `libXREALNativeSessionManager.so` / `libXREALXRPlugin.so` /
-`libVulkanSupport.so` at startup, so they must be packed into the APK. Copy them out of the Unity
-package:
+The XREAL native libraries are **not** in this repo. Get them from the **XREAL SDK for Unity** — the
+`com.xreal.xr` package, distributed as a tgz (`com.xreal.xr.tar.gz`) — and place **8 `.so` into
+`jniLibs/arm64-v8a/`**. `godot_xreal.gdextension` lists all 8 under `[dependencies] android.arm64`, so
+Godot's Android export packs them next to the extension. The extension `dlopen`s them at startup.
 
-```powershell
-pwsh tools/vendor_xreal_libs.ps1 -XrealPackage "C:\path\to\com.xreal.xr\package"
-#   -> jniLibs/arm64-v8a/libXREALNativeSessionManager.so
-#   -> jniLibs/arm64-v8a/libXREALXRPlugin.so
-#   -> jniLibs/arm64-v8a/libVulkanSupport.so
-```
+1. Extract `com.xreal.xr.tar.gz` → a `package/` directory.
 
-`godot_xreal.gdextension` already lists these under `[dependencies] android.arm64`, so Godot's
-Android export packs them next to the extension.
+2. **3 core libs** live loose at `package/Runtime/Plugins/Android/arm64-v8a/`; the script copies them:
 
-> **Not yet wired:** the XREAL `.aar` Java/JNI layer (`GlassesDisplay`, activity lifecycle,
-> `nr_*` perception backends). Phase 1 (head pose) may run on an already-initialised XREAL host;
-> session bootstrap + display (Phase 2) require these `.aar`s to be added as a Godot Android
-> plugin. See `docs/port-plan.md`.
+   ```powershell
+   pwsh tools/vendor_xreal_libs.ps1 -XrealPackage "C:\path\to\package"
+   #   -> jniLibs/arm64-v8a/libXREALNativeSessionManager.so
+   #   -> jniLibs/arm64-v8a/libXREALXRPlugin.so
+   #   -> jniLibs/arm64-v8a/libVulkanSupport.so
+   ```
+
+3. **5 NR libs** live inside the package's `.aar` files (each `.aar` is a zip; extract
+   `jni/arm64-v8a/<lib>` into `jniLibs/arm64-v8a/`):
+
+   | .aar (`package/Runtime/Plugins/Android/`) | libraries |
+   |---|---|
+   | `nr_api.aar`    | `libnr_api.so`, `libnr_plugin_6dof.so`, `libnr_rgb_camera.so` |
+   | `nr_loader.aar` | `libnr_loader.so` |
+   | `nr_common.aar` | `libnr_libusb.so` (also holds many QNN/SNPE libs — those are **not** needed) |
+
+   e.g. `unzip -j path/to/nr_api.aar 'jni/arm64-v8a/libnr_api.so' -d jniLibs/arm64-v8a/` (repeat per lib).
+
+`scripts/build.ps1` / `scripts/build.sh` verify all 8 before an export and stop with these exact
+instructions if any is missing (no download/extract is automated).
+
+> The XREAL `.aar` files also carry a Java/JNI layer (`GlassesDisplay`, activity lifecycle) added as a
+> Godot Android plugin — see `docs/port-plan.md`. Only the 8 native `.so` above go into `jniLibs/`.
 
 ## Lint
 

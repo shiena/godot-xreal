@@ -65,7 +65,42 @@ die() { echo -e "\033[31m$*\033[0m" >&2; exit 1; }
 # adb, optionally targeting a specific device (-s) when XREAL_DEVICE is set.
 adbx() { if [ -n "$DEVICE" ]; then "$ADB" -s "$DEVICE" "$@"; else "$ADB" "$@"; fi; }
 
+# The XREAL runtime libraries the APK must bundle (see godot_xreal.gdextension [dependencies]).
+# They are NOT in this repo — you vendor them from the XREAL SDK for Unity (see README / the guide
+# printed below). This checks jniLibs before an export and stops with instructions if any is missing;
+# it never downloads or extracts anything.
+REQUIRED_LIBS=(libXREALNativeSessionManager.so libXREALXRPlugin.so libVulkanSupport.so \
+               libnr_api.so libnr_libusb.so libnr_loader.so libnr_plugin_6dof.so libnr_rgb_camera.so)
+require_vendored_libs() {
+    local dir="$repo_root/jniLibs/arm64-v8a" missing=()
+    local l; for l in "${REQUIRED_LIBS[@]}"; do [ -f "$dir/$l" ] || missing+=("$l"); done
+    [ ${#missing[@]} -eq 0 ] && return 0
+    {
+        echo -e "\033[31mMissing XREAL runtime libraries in jniLibs/arm64-v8a:\033[0m"
+        printf '  - %s\n' "${missing[@]}"
+        cat <<'GUIDE'
+
+These ship with the XREAL SDK for Unity (com.xreal.xr) and are NOT included in this repo.
+Vendor them once (no download/extract is automated):
+  1. Obtain the XREAL SDK for Unity package `com.xreal.xr.tar.gz` and extract it (-> a `package/` dir).
+  2. Copy the 3 core libs from package/Runtime/Plugins/Android/arm64-v8a/ into jniLibs/arm64-v8a/,
+     e.g.  pwsh tools/vendor_xreal_libs.ps1 -XrealPackage <...>/package
+       libXREALNativeSessionManager.so, libXREALXRPlugin.so, libVulkanSupport.so
+  3. Extract the 5 NR libs from the package's .aar (each .aar is a zip; take jni/arm64-v8a/<lib>)
+     into jniLibs/arm64-v8a/:
+       nr_api.aar    -> libnr_api.so, libnr_plugin_6dof.so, libnr_rgb_camera.so
+       nr_loader.aar -> libnr_loader.so
+       nr_common.aar -> libnr_libusb.so
+See the README "Vendoring the XREAL runtime libraries" section and docs/build-and-release.md.
+GUIDE
+    } >&2
+    exit 1
+}
+
 profile=release; [ "$cargo_debug" -eq 1 ] && profile=debug
+
+# Fail fast (before a long build) if an export is requested but the XREAL runtime libs aren't vendored.
+[ "$do_export" -eq 1 ] && require_vendored_libs
 
 # ---------------------------------------------------------------- build (cargo ndk) ---
 if [ "$do_build" -eq 1 ]; then

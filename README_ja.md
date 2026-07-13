@@ -24,6 +24,24 @@ XREAL のネイティブは **Android arm64 のみ** のため、対応端末（
 **Godot Android アプリ** が対象です。デスクトップでも拡張はロードされ（シーン編集用）、その場合
 ヘッドトラッキングは無効になります。
 
+## XREAL ランタイムライブラリの vendoring（必須）
+
+XREAL のネイティブライブラリは本リポジトリに **含まれません**（XREAL の規約に従うため）。**XREAL SDK
+for Unity**（`com.xreal.xr` パッケージ。tgz `com.xreal.xr.tar.gz` で提供）から入手し、APK を
+エクスポートする前に **8 個の `.so` を `jniLibs/arm64-v8a/` に配置**してください（`jniLibs/` は git 管理外）:
+
+1. `com.xreal.xr.tar.gz` を展開 → `package/` ディレクトリ。
+2. **コア 3 個**（`package/Runtime/Plugins/Android/arm64-v8a/` からコピー、または
+   `pwsh tools/vendor_xreal_libs.ps1 -XrealPackage <…>/package`）:
+   `libXREALNativeSessionManager.so` / `libXREALXRPlugin.so` / `libVulkanSupport.so`。
+3. **NR 系 5 個**（各 `.aar` は zip。中の `jni/arm64-v8a/<lib>` を取り出す）:
+   - `nr_api.aar` → `libnr_api.so` / `libnr_plugin_6dof.so` / `libnr_rgb_camera.so`
+   - `nr_loader.aar` → `libnr_loader.so`
+   - `nr_common.aar` → `libnr_libusb.so`
+
+`scripts/build.ps1` / `scripts/build.sh` はエクスポート前にこれらを確認し、欠けていれば同じ入手手順を
+表示して終了します。詳細: [`docs/build-and-release.md`](docs/build-and-release.md)。
+
 ## 使い方（MVP）
 
 1. 拡張をビルドし XREAL ライブラリを vendoring（[`docs/build-and-release.md`](docs/build-and-release.md)）。
@@ -55,6 +73,7 @@ src/
   node.rs       XrealHeadTracker（Node3D）= 3DoF MVP ノード
 demo/           最小 Godot シーン
 jniLibs/        vendoring した XREAL .so（git 管理外）+ ビルド成果物
+scripts/        build.ps1 / build.sh — build→export→install→run パイプライン
 tools/          vendor_xreal_libs.ps1
 docs/           移植計画 + リバースエンジニアリングメモ
 ```

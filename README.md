@@ -25,6 +25,25 @@ XREAL's native libraries ship for **Android arm64 only**, so this targets a **Go
 running on an XREAL-compatible host (phone / Beam) with glasses on USB-C. On desktop the extension
 still loads (for scene editing) but head tracking is inert.
 
+## Vendoring the XREAL runtime libraries (required)
+
+The XREAL native libraries are **not** included in this repo (they remain under XREAL's terms). You
+obtain them from the **XREAL SDK for Unity** — the `com.xreal.xr` package, shipped as a tgz
+(`com.xreal.xr.tar.gz`) — and place these **8 `.so` into `jniLibs/arm64-v8a/`** before exporting the
+APK (`jniLibs/` is git-ignored):
+
+1. Extract `com.xreal.xr.tar.gz` → a `package/` directory.
+2. **3 core libs** from `package/Runtime/Plugins/Android/arm64-v8a/` — copy them, or run
+   `pwsh tools/vendor_xreal_libs.ps1 -XrealPackage <…>/package`:
+   `libXREALNativeSessionManager.so`, `libXREALXRPlugin.so`, `libVulkanSupport.so`.
+3. **5 NR libs** from the package's `.aar` files (an `.aar` is a zip; take `jni/arm64-v8a/<lib>`):
+   - `nr_api.aar` → `libnr_api.so`, `libnr_plugin_6dof.so`, `libnr_rgb_camera.so`
+   - `nr_loader.aar` → `libnr_loader.so`
+   - `nr_common.aar` → `libnr_libusb.so`
+
+`scripts/build.ps1` / `scripts/build.sh` verify these before an export and print this same guide if any
+are missing. Details: [`docs/build-and-release.md`](docs/build-and-release.md).
+
 ## Usage (MVP)
 
 1. Build the extension and vendor the XREAL libraries — see
@@ -80,6 +99,7 @@ src/
   system.rs     XrealSystem (RefCounted) — read-only SDK info
 demo/           demo scene (main.tscn + main.gd) with a status UI
 jniLibs/        vendored XREAL .so (git-ignored) + built libgodot_xreal.so
+scripts/        build.ps1 / build.sh — build -> export -> install -> run pipeline
 tools/          vendor_xreal_libs.ps1
 docs/           port plan + reverse-engineering notes
 ```
