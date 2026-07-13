@@ -26,9 +26,11 @@ var _status: Label
 var _euler_label: Label
 var _wear_prompt: Label
 var _extension_loaded := false
-# XREAL RGB camera as a Godot CameraFeed (spike — see docs/camera-feed-plan.md).
+# XREAL RGB camera as a Godot CameraFeed (see docs/camera-feed-plan.md), shown on a head-locked
+# quad in front of the eye cameras via a YCbCr→RGB shader.
 var _cam_feed: Object
-var _cam_preview: TextureRect
+var _cam_panel: MeshInstance3D
+const CAM_SHADER := "res://demo/xreal_ycbcr.gdshader"
 
 func _ready() -> void:
 	_try_register_android_bridge()
@@ -164,33 +166,38 @@ func _setup_camera_feed() -> void:
 	# if you enable CameraServer.monitoring_feeds, are the HOST device's cameras — routed by id/class).
 	_cam_feed.set_name("XREAL Glasses RGB")
 	CameraServer.add_feed(_cam_feed)
-	_cam_feed.set_active(true)  # -> activate_feed() starts capture; active=true enables set_rgb_image
+	_cam_feed.set_active(true)  # -> activate_feed() starts capture; active=true enables set_ycbcr_images
 
-	# Corner preview: a CameraTexture bound to THIS feed by id (this is the routing) + which_feed for
-	# the RGB image our feed publishes. A plain TextureRect is enough for RGB (no YCbCr shader needed).
-	var tex := CameraTexture.new()
-	tex.camera_feed_id = _cam_feed.get_id()
-	tex.which_feed = CameraServer.FEED_RGBA_IMAGE
-	_cam_preview = TextureRect.new()
-	_cam_preview.name = "CameraPreview"
-	_cam_preview.texture = tex
-	_cam_preview.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	_cam_preview.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT
-	_cam_preview.flip_v = true  # the Y plane is top-down vs Godot's texture V; flip for an upright view
-	_cam_preview.position = Vector2(32, 32)
-	_cam_preview.size = Vector2(512, 288)
-	$UI.add_child(_cam_preview)
+	# Two CameraTextures bound to THIS feed by id (this is the routing): the Y and CbCr planes the
+	# feed publishes via set_ycbcr_images. The shader converts YCbCr → RGB.
+	var y_tex := CameraTexture.new()
+	y_tex.camera_feed_id = _cam_feed.get_id()
+	y_tex.which_feed = CameraServer.FEED_Y_IMAGE
+	var cbcr_tex := CameraTexture.new()
+	cbcr_tex.camera_feed_id = _cam_feed.get_id()
+	cbcr_tex.which_feed = CameraServer.FEED_CBCR_IMAGE
 
-	var cap := Label.new()
-	cap.text = "XREAL CAM"
-	cap.position = Vector2(32, 8)
-	cap.add_theme_font_size_override(&"font_size", 28)
-	cap.add_theme_color_override(&"font_color", Color(0.4, 1.0, 0.6))
-	cap.add_theme_color_override(&"font_shadow_color", Color.BLACK)
-	cap.add_theme_constant_override(&"shadow_offset_x", 2)
-	cap.add_theme_constant_override(&"shadow_offset_y", 2)
-	$UI.add_child(cap)
-	print("[demo] XrealCameraFeed registered (id=%d, name=%s)" % [_cam_feed.get_id(), _cam_feed.get_name()])
+	var mat := ShaderMaterial.new()
+	mat.shader = load(CAM_SHADER)
+	mat.set_shader_parameter(&"y_texture", y_tex)
+	mat.set_shader_parameter(&"cbcr_texture", cbcr_tex)
+	mat.set_shader_parameter(&"color_range", 1)  # Android RGB camera is video range
+	mat.set_shader_parameter(&"flip_v", true)
+
+	# A head-locked quad (16:9) in front of the eye cameras. Parented under the tracker (the head
+	# node), so it stays in front as you look around; rendered by the eye SubViewports (shared world).
+	var quad := QuadMesh.new()
+	quad.size = Vector2(1.6, 0.9)
+	_cam_panel = MeshInstance3D.new()
+	_cam_panel.name = "XrealCameraPanel"
+	_cam_panel.mesh = quad
+	_cam_panel.material_override = mat
+	_cam_panel.position = Vector3(0.0, 0.0, -2.0)  # 2 m in front (Godot cameras look down -Z)
+	if _tracker:
+		_tracker.add_child(_cam_panel)
+	else:
+		add_child(_cam_panel)
+	print("[demo] XrealCameraFeed registered (id=%d, name=%s) — 3D panel added" % [_cam_feed.get_id(), _cam_feed.get_name()])
 
 func _on_recenter_pressed() -> void:
 	if _tracker and _tracker.has_method(&"recenter"):

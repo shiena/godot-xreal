@@ -510,6 +510,15 @@ impl XrealSession {
             .rgb_camera_grab_y()
     }
 
+    /// Poll the latest RGB-camera frame as `(y, y_w, y_h, cbcr, c_w, c_h)` — Y plane + interleaved
+    /// CbCr — for a YCbCr feed (`set_ycbcr_images`) + shader conversion.
+    pub fn rgb_camera_grab_yuv(&self) -> Option<(Vec<u8>, i32, i32, Vec<u8>, i32, i32)> {
+        self.native
+            .lock()
+            .expect("xreal native mutex")
+            .rgb_camera_grab_yuv()
+    }
+
     /// Re-center the view. Calls the SDK's input-provider recenter (`NativePerception::Recenter`,
     /// which resets the perception origin the compositor reprojects against — the real fix for
     /// "move the glasses render to current-forward"), plus the legacy `RecenterGlasses` (harmless
