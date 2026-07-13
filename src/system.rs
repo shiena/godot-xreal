@@ -130,6 +130,17 @@ impl XrealSystem {
             .unwrap_or(-1) as i64
     }
 
+    /// Latest glasses temperature level from the hardware event funnel: `0` NORMAL /
+    /// `1` WARM / `2` HOT (mirrors the SDK's `XREALTemperatureLevel`), or `-1` until the
+    /// glasses first report one. A cached poll — no signal. This is the data source behind
+    /// the SDK's over-temperature notification. (The SDK's low-battery notification reads
+    /// the Android *host* battery, not a glasses API — poll it from the platform; SLAM-state
+    /// is `get_tracking_state` / `get_tracking_reason`.)
+    #[func]
+    fn get_glasses_temperature_level(&self) -> i64 {
+        crate::glasses_events::temperature_level() as i64
+    }
+
     /// Switch the tracking mode at runtime (`TRACKING_6DOF` / `TRACKING_3DOF` /
     /// `TRACKING_0DOF` / `TRACKING_0DOF_STAB`). Returns the SDK's bool result; `false`
     /// also when the session is not up yet.
