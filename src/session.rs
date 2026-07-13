@@ -158,14 +158,13 @@ impl XrealSession {
         // narrower tracking modes.
         let settings = UserDefinedSettings {
             color_space: 1,
-            // EXPERIMENT: Multi-pass (0) instead of Single Pass Instanced / Multiview (2).
-            // With Multiview (2) the SDK runs "single_buffer:1" and CreateTexture asks for ONE
-            // 2-layer array texture (arraylen=2), but SetSwapChainBuffers never calls our
-            // QueryTextureDesc, so our GL texture is never registered → black. Multi-pass should
-            // create two separate 2D textures and a normal multi-buffer swapchain, which is the
-            // path our SetSwapChainBuffers analysis assumes and may actually trigger QueryTextureDesc.
-            // Unity uses 2; revert if 0 fails to create the render texture.
-            stereo_rendering_mode: 0,
+            // Multiview / Single-Pass-Instanced (2) — matches LayeredClient's XREALSettings
+            // (StereoRendering: 2), the reference app that renders a correct head-locked peek window.
+            // Our earlier multipass (0) workaround produces a world-anchored layer; the head-lock
+            // difference is narrowed to the frame-submission path, so match the reference stereo mode.
+            // Multiview makes the SDK create ONE 2-layer array texture (arraylen=2, single_buffer:1);
+            // CreateTexture must allocate a GL_TEXTURE_2D_ARRAY and both eyes render into its layers.
+            stereo_rendering_mode: 2,
             tracking_type: TrackingType::Mode6Dof as i32,
             support_mono_mode: 0,
             unity_activity: activity,

@@ -170,6 +170,9 @@ struct XrTexture {
     gl_id: u32,
     width: i32,
     height: i32,
+    /// Number of array layers: 1 for a plain `GL_TEXTURE_2D` (multipass), 2 for a
+    /// `GL_TEXTURE_2D_ARRAY` (Multiview / Single-Pass-Instanced — both eyes in one texture).
+    layers: i32,
 }
 
 static XR_TEXTURES: Mutex<Vec<XrTexture>> = Mutex::new(Vec::new());
@@ -236,13 +239,13 @@ pub fn set_godot_source_size(width: i32, height: i32) {
 }
 
 /// Look up an engine texture by its `UnityXRRenderTextureId`, returning `(gl_id, width, height)`.
-fn xr_texture_for(id: u32) -> Option<(u32, i32, i32)> {
+fn xr_texture_for(id: u32) -> Option<(u32, i32, i32, i32)> {
     XR_TEXTURES
         .lock()
         .expect("xr textures mutex")
         .iter()
         .find(|t| t.id == id)
-        .map(|t| (t.gl_id, t.width, t.height))
+        .map(|t| (t.gl_id, t.width, t.height, t.layers))
 }
 
 #[repr(C)]
@@ -653,6 +656,15 @@ extern "C" fn xr_create_texture(
     let width = desc.width as i32;
     let height = desc.height as i32;
     let srgb = (desc.flags & 0x10) != 0;
+    // `textureArrayLength >= 2` = the SDK's Multiview / Single-Pass-Instanced path: it wants ONE
+    // 2-layer array texture (both eyes), which it binds as a layered multiview framebuffer. A plain
+    // 2D texture there causes `GL_INVALID_FRAMEBUFFER_OPERATION` → black. `layers == 1` is the
+    // multipass path (a normal 2D texture per eye).
+    let layers = if desc.texture_array_length >= 2 {
+        desc.texture_array_length as i32
+    } else {
+        1
+    };
     // If the SDK passed an existing native texture (color != 0), CreateBuffer took the
     // `[DM+0x10]==0x15` path (GetSwapChainBuffers → CreateTexture(color=that buffer)); the SDK
     // owns/registers that swapchain texture and expects the engine to render INTO it. In that
@@ -661,6 +673,16 @@ extern "C" fn xr_create_texture(
     // allocate (the GLES path).
     let gl_id = if desc.color != 0 {
         desc.color as u32
+    } else if layers >= 2 {
+        match crate::gl::alloc_texture_array(width, height, layers, srgb) {
+            Some(t) => t,
+            None => {
+                godot::global::godot_warn!(
+                    "[xreal] CreateTexture array {width}x{height}x{layers} failed (GL alloc)"
+                );
+                return 1;
+            }
+        }
     } else {
         match crate::gl::alloc_texture(width, height, srgb) {
             Some(t) => t,
@@ -673,7 +695,7 @@ extern "C" fn xr_create_texture(
     let id = XR_TEXTURE_NEXT_ID.fetch_add(1, Ordering::Relaxed);
     let count = {
         let mut textures = XR_TEXTURES.lock().expect("xr textures mutex");
-        textures.push(XrTexture { id, gl_id, width, height });
+        textures.push(XrTexture { id, gl_id, width, height, layers });
         textures.len()
     };
     unsafe { *out_id = id };
@@ -1222,21 +1244,32 @@ pub fn run_frame_tick() {
         if tex_id == 0 {
             continue;
         }
-        if let Some((gl_tex, dw, dh)) = xr_texture_for(tex_id) {
-            let src = eye_src[eye.min(1)];
-            if src != 0 && have_size {
-                // Real stereo: this eye's offscreen SubViewport texture.
-                crate::gl::blit_texture(src, src_w, src_h, gl_tex, dw, dh);
-            } else if have_size {
-                // Mono fallback: Godot's default framebuffer into both eyes.
-                crate::gl::blit_default_framebuffer(gl_tex, src_w, src_h, dw, dh);
+        if let Some((gl_tex, dw, dh, layers)) = xr_texture_for(tex_id) {
+            if layers >= 2 {
+                // Multiview / single-pass-instanced: ONE array texture, both eyes in its layers
+                // (layer 0 = left, layer 1 = right). renderPassesCount is 1 here.
+                for layer in 0..layers.min(2) {
+                    let src = eye_src[layer as usize];
+                    if src != 0 && have_size {
+                        crate::gl::blit_texture_to_layer(src, src_w, src_h, gl_tex, layer, dw, dh);
+                    }
+                }
             } else {
-                let (r, g, b) = if eye == 0 {
-                    (0.6 + 0.4 * phase, 0.05, 0.6 - 0.4 * phase)
+                let src = eye_src[eye.min(1)];
+                if src != 0 && have_size {
+                    // Real stereo: this eye's offscreen SubViewport texture.
+                    crate::gl::blit_texture(src, src_w, src_h, gl_tex, dw, dh);
+                } else if have_size {
+                    // Mono fallback: Godot's default framebuffer into both eyes.
+                    crate::gl::blit_default_framebuffer(gl_tex, src_w, src_h, dw, dh);
                 } else {
-                    (0.05, 0.6 - 0.4 * phase, 0.6 + 0.4 * phase)
-                };
-                crate::gl::fill_texture(gl_tex, r, g, b);
+                    let (r, g, b) = if eye == 0 {
+                        (0.6 + 0.4 * phase, 0.05, 0.6 - 0.4 * phase)
+                    } else {
+                        (0.05, 0.6 - 0.4 * phase, 0.6 + 0.4 * phase)
+                    };
+                    crate::gl::fill_texture(gl_tex, r, g, b);
+                }
             }
             filled += 1;
         }
