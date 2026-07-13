@@ -43,7 +43,7 @@ XREAL のネイティブは **Android arm64 のみ** のため、対応端末（
 | **装着センサー / 明るさ / 音量 / 調光 / USB ホットプラグ** | ✅ | シグナル（`wearing_changed`, `brightness_changed`, `glasses_connected` 等）。 |
 | **診断** — セッション/トラッキング状態、HMD クロック、プラグイン版 | ✅ | `XrealSystem` 経由。 |
 | **オンスクリーン・タッチコントローラ**（スマホ画面） | ✅（デモ） | アプリ層の Godot UI（`demo/touch_controller.gd`）: カスタマイズ可能なタッチパッド+ボタン→シグナル、スマホ振動ハプティクス。スマホにコントローラ・グラスに 3D を表示（画面分離）。ネイティブ非依存で SDK の `XREALVirtualController` に相当。 |
-| **スマホ 3D ポインター**（ホスト IMU） | ✅（デモ） | スマホを傾けてグラス内に 3D レイを飛ばす（`demo/phone_pointer.gd`）。姿勢は `XrealSystem.poll_controller()` が露出する NRController の生 IMU（`accel`→ピッチ/ロール, `gyro`→ヨー）を GDScript で融合。本機では NRController の**融合ポーズ**も Godot 内蔵 `Input.get_gyroscope()` も空だったため。`recenter` で正面リセット、NRController のタッチパッド/ボタンもライブ。 |
+| **スマホ 3D ポインター**（ホスト IMU） | ✅（デモ） | スマホを傾けてグラス内に 3D レイを飛ばす（`demo/phone_pointer.gd`）。姿勢は `XrealSystem.poll_controller()` が露出する NRController の生 IMU（`accel`→ピッチ/ロール, `gyro`→ヨー）を GDScript で融合。本機では NRController の**融合ポーズ**も Godot 内蔵 `Input.get_gyroscope()` も空だったため。レイキャストで当たったオブジェクトをハイライト・トリガーで選択、オンスクリーンの左右手切替でレイの原点を切替、gyro ドリフトはバイアス学習+デッドゾーンで抑制。`recenter` で正面リセット。 |
 | **マルチレジューム** — スマホを別アプリに切替えてもグラスのアプリが継続 | ✅ | 実機確認: Home/別アプリ後もグラス側でヘッドトラッキング+カメラが更新継続。manifest 足場（`nr_features=multiResume`+`NRFakeActivity`）で成立。フローティング「戻る」ボタンは**不可**（自前オーバーレイは Godot の GL サーフェスを乱す・NR `FloatingManager` は非 Unity アプリから不可）。 |
 
 未実装: アプリカメラの 6DoF 位置、ハンド/画像/平面トラッキング、空間アンカー、メッシング、

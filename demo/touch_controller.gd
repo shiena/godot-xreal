@@ -19,6 +19,8 @@ signal menu_pressed()
 signal touchpad_moved(value: Vector2)
 ## Emitted when the touchpad finger lifts (value returns to zero).
 signal touchpad_released()
+## Right/left hand toggle for the 3D pointer beam origin (true = right hand).
+signal hand_selected(is_right: bool)
 
 ## Backdrop fill. Opaque by default so the phone shows only the controller (the glasses-bound
 ## 3D preview behind it is hidden); set a translucent alpha to let the 3D show through instead.
@@ -29,6 +31,8 @@ const _buttons := {
 	"trigger": "TRIGGER",
 	"grip": "GRIP",
 	"menu": "MENU",
+	"hand_l": "◀ 左手",
+	"hand_r": "右手 ▶",
 }
 
 # Layout, filled by _layout() from the current size.
@@ -55,8 +59,9 @@ func _layout() -> void:
 	# Buttons: stacked on the right.
 	var bw := s.x * 0.24
 	var bx := s.x - bw - s.x * 0.05
-	var bh := s.y * 0.17
-	var gap := s.y * 0.05
+	var gap := s.y * 0.04
+	# Shrink button height to fit however many buttons are configured (caps at a comfortable size).
+	var bh := minf(s.y * 0.16, (s.y * 0.94 - gap * (_buttons.size() - 1)) / _buttons.size())
 	var total := bh * _buttons.size() + gap * (_buttons.size() - 1)
 	var by := (s.y - total) * 0.5
 	_button_rects.clear()
@@ -102,6 +107,10 @@ func _press(widget: String, pos: Vector2) -> void:
 			grip_changed.emit(true)
 		"menu":
 			menu_pressed.emit()
+		"hand_l":
+			hand_selected.emit(false)
+		"hand_r":
+			hand_selected.emit(true)
 	queue_redraw()
 
 func _release(widget: String) -> void:

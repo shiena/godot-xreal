@@ -195,6 +195,7 @@ func _setup_touch_controller() -> void:
 	_touch_controller.menu_pressed.connect(_on_tc_menu)
 	_touch_controller.touchpad_moved.connect(_on_tc_touchpad)
 	_touch_controller.touchpad_released.connect(_on_tc_touchpad_released)
+	_touch_controller.hand_selected.connect(_on_tc_hand)
 
 	# A head-locked cursor so phone touches are visible in the glasses (proves the split).
 	if _tracker:
@@ -232,6 +233,15 @@ func _on_tc_touchpad_released() -> void:
 func _on_tc_trigger(pressed: bool) -> void:
 	if _cursor_mat:
 		_cursor_mat.albedo_color = Color(1.0, 0.4, 0.3) if pressed else Color(0.3, 0.85, 1.0)
+	# Trigger click = select whatever the phone pointer is aiming at.
+	if pressed and _phone_pointer and _phone_pointer.has_method(&"select"):
+		_phone_pointer.select()
+
+## Right/left hand toggle from the on-screen controller → flip the pointer's beam origin.
+func _on_tc_hand(is_right: bool) -> void:
+	if _phone_pointer and _phone_pointer.has_method(&"set_hand"):
+		_phone_pointer.set_hand(is_right)
+	print("[demo] pointer hand -> ", "right" if is_right else "left")
 
 func _on_tc_grip(pressed: bool) -> void:
 	if _cursor:
@@ -311,10 +321,7 @@ func _process(_delta: float) -> void:
 			if s.size() >= 7 and s[0] > 0.5:
 				var accel := Vector3(s[1], s[2], s[3])
 				var gyro := Vector3(s[4], s[5], s[6])
-				_phone_pointer.update_imu(accel, gyro, _delta)
-				# Emit the beam from a "hand" offset relative to the head, not the eye/camera.
-				var head_xf := _tracker.global_transform
-				_phone_pointer.global_position = head_xf.origin + head_xf.basis * _phone_pointer.hand_offset
+				_phone_pointer.update_imu(accel, gyro, _delta, _tracker.global_transform)
 				_imu_poll_count += 1
 				if _imu_poll_count == 90:  # ~1.5 s in: capture the current aim as "forward"
 					_phone_pointer.recenter()
@@ -369,3 +376,11 @@ func _build_room() -> void:
 
 		box.position = Vector3(sin(angle) * 4.0, 0.0, -cos(angle) * 4.0)
 		add_child(box)
+		# Collider so the phone-pointer raycast can hit it (StaticBody3D parented under the box).
+		var body := StaticBody3D.new()
+		var col := CollisionShape3D.new()
+		var box_shape := BoxShape3D.new()
+		box_shape.size = (box.mesh as BoxMesh).size
+		col.shape = box_shape
+		body.add_child(col)
+		box.add_child(body)
