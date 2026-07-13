@@ -1,5 +1,11 @@
 # Glasses render position / head-lock investigation
 
+> **Current handoff (2026-07-13): see [`multiview-investigation.md`](multiview-investigation.md).** Head-lock
+> is still unsolved; the reachable levers are exhausted (device-tested) and the last grounded path is
+> Multiview, blocked on the NR-compositor (libnr_loader) single-buffer swapchain registration. This file is
+> the earlier head-pose-pipeline writeup; the Multiview doc supersedes it for next steps.
+
+
 Status: **fix implemented; pending a wearer to confirm the visual result.** Root cause identified by RE
 (we drove the Godot cameras from the session-manager head-pose pipeline while the compositor reprojects
 with the *display* `InputManager` pose — two different tracking sources) and the eye cameras are now driven
