@@ -90,6 +90,60 @@ Crack the **single-buffer swapchain registration** — get the NR swapchain to s
 5. Once it displays: re-test head-lock. Multiview submits proper per-eye view matrices, so the compositor's
    reprojection reference may finally be live → verify overshoot gone AND FOV head-locked (peek window).
 
+## Deep-dive session 2 — the swapchain-registration subsystem, mapped
+
+Goal of this pass: find why, in Multiview (`single_buffer:1`), our array texture is **not** registered
+with the NR swapchain (`QueryTextureDesc` never called → compositor samples an empty buffer → black).
+Device counts confirm the split: **Multipass = 8 `CreateTexture` + 8 `QueryTextureDesc`** (registered),
+**Multiview = 1 `CreateTexture` (arraylen=2) + 0 `QueryTextureDesc`** (not registered). Note: LayeredClient
+also runs `single_buffer:1` yet displays, so single-buffer itself is not the blocker.
+
+Registration flow (all in `libXREALXRPlugin.so`):
+- `DisplayManager::CreateDisplayLayer` @0x6dc18 → constructs `DisplayOverlay`/`DummyDisplayOverlay`
+  (@0xa6988) into `vector<shared_ptr<DisplayOverlay>>`, then calls **`OverlayBase::Init` @0xa7cc4**.
+- **`OverlayBase::Init`** calls three *virtual* methods in order: `vtable[+0x18]`, `vtable[+0x30]`,
+  `vtable[+0x40]`. For the real overlay, `+0x18` ≈ `CreateBuffer`, `+0x30` ≈ `SetSwapChainBuffers`. So
+  **registration happens at Init time (CreateDisplayLayer), not per-frame** — confirmed on device by
+  Multipass logging `CreateTexture` and `QueryTextureDesc` at the *same* timestamp.
+- **`OverlayBase::CreateBuffer` @0xa8078**: `[DM+0x10]==0x15` (Vulkan) → `GetSwapChainBuffers` @0xa1b04 →
+  `CreateTexture(color=buffer)`. `!=0x15` (**our GLES path**) → count = `vtable[overlay+0x38]` →
+  loop `CreateTexture(color=0)` @0x69530, storing each id into the overlay's **buffer vector at
+  `overlay+0x20..0x28`**.
+- **`OverlayBase::SetSwapChainBuffers` @0xa7d0c**: early-returns if the byte `overlay+0x8` is set. GLES
+  path loops the buffer vector `[overlay+0x20..0x28]` → `DisplayManager::QueryTextureDesc` @0x695e8 each
+  (this is our registration callback) → `NativeRendering::AcquireBuffers` @0xa23e0; sets `overlay+0x8=1`
+  at the end. Vulkan path just sets the flag.
+- The `overlay+0x8` "done" flag **starts 0** (the `Overlay(int,int,bool,bool)` ctor @0xa71cc puts its two
+  bools at `overlay+0x80/+0x81`, and `+0xc0=1`, `+0x51=0`, `+0xc8=0` — nothing at `+0x8`).
+- `PopulateNextFrameDesc` @0x68c7c *also* calls `SetSwapChainBuffers` per overlay (lists at `DM+0x150`
+  with sub-overlays `+0x18/+0x28`, and `DM+0x128`) when `overlay+0x8 == 0`.
+
+**Refined open question:** in Multiview, `CreateTexture` fires **once** (the array), but `QueryTextureDesc`
+**never** does — even though `overlay+0x8` starts 0. So when `SetSwapChainBuffers` runs (in `Init`, and/or
+`PopulateNextFrameDesc`), the overlay's **buffer vector `[overlay+0x20]` is empty** (or the array texture is
+owned by a *different* overlay object than the one whose `SetSwapChainBuffers` runs). I.e. the single array
+buffer's placement into the overlay's buffer vector differs from the multipass per-eye case.
+
+**Next concrete steps (session 3):**
+1. Identify the **overlay type + vtable** actually used for the Multiview single array buffer (DisplayOverlay
+   vs ProjectionOverlay vs DummyDisplayOverlay) — dump `[overlay]` (vtable ptr) and compare to the `d5xxx`
+   vtables; check `Init`'s `vtable[+0x18]/[+0x30]` resolve to CreateBuffer/SetSwapChainBuffers for it.
+2. RE that overlay's `CreateBuffer` store into `overlay+0x20` in the `single_buffer` case (count from
+   `vtable[+0x38]` — is it 0 or 1? does the array texture land in the vector?).
+3. Runtime confirm: add a **log-trampoline patch** on `SetSwapChainBuffers` @0xa7d0c (reuse the
+   `signal_guard` mprotect/nop machinery) to print when it's called and the buffer-vector size — decides
+   "vector empty" vs "overlay not iterated".
+4. If the SDK won't register it, register our `GL_TEXTURE_2D_ARRAY` with the NR swapchain **directly**
+   via the `native.rs` `NrSwapchain*`/`swapchain_set_buffers` bindings (need the NR swapchain handle the
+   SDK holds inside `NativeRendering` at `DM+0x58`).
+5. `CreateDisplayLayer` is already **patched** (`patch_create_display_layer`, cbz→nop @0x6dc98 forces the
+   real `DisplayOverlay`) — re-check that patch is still correct under `single_buffer` (it may force the
+   wrong branch / a Dummy vs real overlay mismatch in Multiview).
+
+Relevant new addresses: `CreateDisplayLayer` @0x6dc18, `DisplayOverlay` ctor @0xa6988, `OverlayBase::Init`
+@0xa7cc4, `OverlayBase::CreateBuffer` @0xa8078, `OverlayBase::SetSwapChainBuffers` @0xa7d0c, `QueryTextureDesc`
+@0x695e8, `GetSwapChainBuffers` @0xa1b04, `AcquireBuffers` @0xa23e0, `Overlay(int,int,bool,bool)` @0xa71cc.
+
 ## RE map discovered this session (libXREALXRPlugin.so, SDK 3.1.0, arm64-v8a)
 
 Compute `lib_base = <runtime addr of CreateFrame> - 0x53bd8` (or `desc_ptr - 0xdb400`, both logged).
