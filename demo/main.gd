@@ -177,15 +177,19 @@ func _setup_camera_feed() -> void:
 	var mat := ShaderMaterial.new()
 	mat.shader = load(CAM_SHADER)
 
-	# A head-locked quad (16:9) in front of the eye cameras. Parented under the tracker (the head
-	# node), so it stays in front as you look around; rendered by the eye SubViewports (shared world).
+	# A small head-locked preview (16:9) pinned to the top-right of the view. Parented under the
+	# tracker (the head node), so it follows the gaze; rendered by the eye SubViewports (shared world).
+	# The eye cameras see roughly +/-0.8 m horizontal, +/-0.45 m vertical at this 2 m depth (a 1.6x0.9
+	# quad would fill the whole view), so a ~1/3-size quad tucked near that corner reads as a PiP.
 	var quad := QuadMesh.new()
-	quad.size = Vector2(1.6, 0.9)
+	quad.size = Vector2(0.5333, 0.3)  # 16:9 preserved
 	_cam_panel = MeshInstance3D.new()
 	_cam_panel.name = "XrealCameraPanel"
 	_cam_panel.mesh = quad
 	_cam_panel.material_override = mat
-	_cam_panel.position = Vector3(0.0, 0.0, -2.0)  # 2 m in front (Godot cameras look down -Z)
+	# Top-right corner, 2 m in front (Godot cameras look down -Z). The eye cameras invert Y (the pose
+	# handedness (x,-y,z,w) flip), so on the glasses buffer +X is right but -Y is up: hence +x, -y.
+	_cam_panel.position = Vector3(0.48, -0.30, -2.0)
 	if _tracker:
 		_tracker.add_child(_cam_panel)
 	else:
