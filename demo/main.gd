@@ -176,7 +176,7 @@ func _setup_camera_feed() -> void:
 	var mat := ShaderMaterial.new()
 	mat.shader = load(CAM_SHADER)
 	mat.set_shader_parameter(&"flip_v", false)  # device-calibrated: no vertical flip needed
-	mat.set_shader_parameter(&"swap_rb", false)
+	mat.set_shader_parameter(&"swap_rb", true)  # device-calibrated: R/B are swapped (matches the SDK shader)
 
 	# A head-locked quad (16:9) in front of the eye cameras. Parented under the tracker (the head
 	# node), so it stays in front as you look around; rendered by the eye SubViewports (shared world).
