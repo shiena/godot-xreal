@@ -43,6 +43,7 @@ community-reverse-engineered interop, not an official API.
 | **Glasses input** — physical keys (MENU/MULTI: click/double/long) | ✅ | Godot signals (`key_event`, `key_state_changed`). |
 | **Wear sensor / brightness / volume / electrochromic / USB hot-plug** | ✅ | Signals (`wearing_changed`, `brightness_changed`, `glasses_connected`, …). |
 | **Diagnostics** — session / tracking state, HMD clock, plugin version | ✅ | Via `XrealSystem`. |
+| **On-screen touch controller** (phone screen) | ✅ (demo) | App-level Godot UI (`demo/touch_controller.gd`): customizable touchpad + buttons → signals, phone-vibration haptics. The phone shows the controller, the glasses show the 3D scene (separate screens) — no native dependency. Godot analog of the SDK's `XREALVirtualController`. |
 
 Not implemented: 6DoF position for the app camera, hand/image/plane tracking, spatial anchors, meshing,
 audio/photo capture, the NRSDK's higher-level perception features.
