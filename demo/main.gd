@@ -57,14 +57,12 @@ func _ready() -> void:
 		var tracking_type := int(ProjectSettings.get_setting("xreal/tracking_type", -1))
 		if tracking_type >= 0 and _system.has_method(&"set_tracking_type"):
 			_system.set_tracking_type(tracking_type)
-			print("[demo] tracking_type set to %d (from ProjectSettings)" % tracking_type)
 		# The RGB camera shares the tracking camera with 6DoF SLAM, so enabling the camera in 6DoF
 		# breaks head tracking (NRSDK "GetPoseWithStates failed" -> identity pose). When the camera is
 		# on, force 3DoF (IMU-only orientation; the DISP pose still carries full pitch/yaw/roll).
 		_camera_enabled = bool(ProjectSettings.get_setting("xreal/enable_camera", true))
 		if _camera_enabled and _system.has_method(&"set_tracking_type"):
 			_system.set_tracking_type(1)  # 3DoF, so the RGB camera and head tracking can coexist
-			print("[demo] camera enabled -> forcing 3DoF tracking so it can coexist with the camera")
 	else:
 		push_error("[demo] godot_xreal GDExtension not loaded — XrealSystem/XrealHeadTracker missing. Build the Android .so (cargo ndk) and check the .gdextension paths.")
 	_build_environment()
@@ -81,28 +79,23 @@ func _try_register_android_bridge() -> void:
 	if not OS.has_feature("android"):
 		return
 	if not Engine.has_singleton(&"AndroidRuntime"):
-		print("[demo] AndroidRuntime singleton unavailable")
 		return
 
 	var runtime := Engine.get_singleton(&"AndroidRuntime")
 	if runtime == null:
-		print("[demo] AndroidRuntime singleton is null")
 		return
 	var activity = runtime.getActivity()
 	if activity == null:
-		print("[demo] Android activity unavailable")
 		return
 
 	var bridge = JavaClassWrapper.wrap("com.godot.game.XrealBridge")
 	if bridge == null:
-		print("[demo] XrealBridge Java class unavailable")
 		return
 
 	# XrealBridge methods are idempotent; this is a Godot-side fallback for template drift.
 	var register_bridge := func() -> void:
 		bridge.register(activity)
 		bridge.startCompanionOnXrealDisplayIfNeeded(activity)
-		print("[demo] XrealBridge registered via JavaClassWrapper")
 
 	activity.runOnUiThread(runtime.createRunnableFromGodotCallable(register_bridge))
 
@@ -115,14 +108,10 @@ func _spawn_rig() -> void:
 		if _tracker.has_signal(&"display_started"):
 			_tracker.display_started.connect(_on_display_started)
 		# React to glasses hot-plug (connect/disconnect) at runtime.
-		if _tracker.has_signal(&"glasses_connected"):
-			_tracker.glasses_connected.connect(_on_glasses_connected)
-			_tracker.glasses_disconnected.connect(_on_glasses_disconnected)
 		# Glasses hardware inputs (One Pro: physical keys + wear sensor).
 		if _tracker.has_signal(&"key_event"):
 			_tracker.key_event.connect(_on_key_event)
 			_tracker.wearing_changed.connect(_on_wearing_changed)
-			_tracker.glasses_event.connect(_on_glasses_event)
 	else:
 		# Fallback so the scene is still visible (and the panel explains why).
 		var camera := Camera3D.new()
@@ -177,7 +166,6 @@ func _setup_camera_feed() -> void:
 		_tracker.add_child(_cam_panel)
 	else:
 		add_child(_cam_panel)
-	print("[demo] XrealCameraFeed registered (id=%d, name=%s) — 3D panel added" % [_cam_feed.get_id(), _cam_feed.get_name()])
 
 ## Add the phone-side on-screen touch controller and wire it to a head-locked 3D cursor. The
 ## controller lives on its own CanvasLayer (below $UI, so the debug text stays on top) and only
@@ -218,8 +206,6 @@ func _setup_touch_controller() -> void:
 		var host_cam := _tracker.get_node_or_null(^"Camera3D") as Camera3D
 		if host_cam:
 			host_cam.current = false
-			print("[demo] host-preview camera disabled (root viewport renders the controller only)")
-	print("[demo] on-screen touch controller ready (phone screen)")
 
 func _on_tc_touchpad(value: Vector2) -> void:
 	# Eye cameras invert Y (pose handedness), so -y maps the pad's "up" to up in the glasses.
@@ -241,14 +227,12 @@ func _on_tc_trigger(pressed: bool) -> void:
 func _on_tc_hand(is_right: bool) -> void:
 	if _phone_pointer and _phone_pointer.has_method(&"set_hand"):
 		_phone_pointer.set_hand(is_right)
-	print("[demo] pointer hand -> ", "right" if is_right else "left")
 
 func _on_tc_grip(pressed: bool) -> void:
 	if _cursor:
 		_cursor.scale = Vector3.ONE * (1.6 if pressed else 1.0)
 
 func _on_tc_menu() -> void:
-	print("[demo] controller menu -> recenter")
 	_on_recenter_pressed()
 	if _phone_pointer:
 		_phone_pointer.recenter()
@@ -259,7 +243,6 @@ func _setup_phone_pointer() -> void:
 	_phone_pointer = (load(PHONE_POINTER) as Script).new()
 	_phone_pointer.name = "PhonePointer"
 	add_child(_phone_pointer)
-	print("[demo] phone pointer created")
 
 func _on_recenter_pressed() -> void:
 	if _tracker and _tracker.has_method(&"recenter"):
@@ -269,39 +252,21 @@ func _on_display_started() -> void:
 	# Glasses display + tracking are live: make the current head direction "forward".
 	if _tracker and _tracker.has_method(&"recenter"):
 		_tracker.recenter()
-		print("[demo] display_started -> recenter")
-
-func _on_glasses_connected() -> void:
-	# Glasses plugged in at runtime (fires even if the app started without them). The native
-	# session bootstrap retries automatically; display_started will follow once tracking is up.
-	print("[demo] glasses connected")
-
-func _on_glasses_disconnected() -> void:
-	print("[demo] glasses disconnected")
 
 func _on_key_event(key: int, action: int) -> void:
-	print("[demo] key event: key=%d action=%d" % [key, action])
 	# Long-press the MENU key to recenter (current head direction becomes "forward"),
 	# replacing the on-screen button for a glasses-only workflow.
 	if key == XREAL_KEY_MENU and action == XREAL_ACTION_LONG_PRESS:
 		_on_recenter_pressed()
-		print("[demo] MENU long-press -> recenter")
 	# Long-press the MULTI key to quit the app (glasses-only exit).
 	elif key == XREAL_KEY_MULTI and action == XREAL_ACTION_LONG_PRESS:
-		print("[demo] MULTI long-press -> quit")
 		get_tree().quit()
 
 func _on_wearing_changed(wearing: bool) -> void:
-	print("[demo] wearing changed: %s" % ("put on" if wearing else "taken off"))
 	if wearing:
 		# Recenter the instant the glasses are actually worn (and the wearer is looking
 		# forward), so "forward" isn't captured while they sit tilted on a desk.
 		_on_recenter_pressed()
-		print("[demo] put on -> recenter")
-
-func _on_glasses_event(action_type: int, para: int, para2: int, para3: float) -> void:
-	# Catch-all diagnostic: one line per native glasses event (Phase A verification).
-	print("[demo] glasses event: type=%d para=%d para2=%d para3=%f" % [action_type, para, para2, para3])
 
 func _process(_delta: float) -> void:
 	# Lazily set up the camera ONLY once head tracking is live — starting the capture before the
@@ -314,7 +279,7 @@ func _process(_delta: float) -> void:
 	if _phone_pointer_enabled and _tracker and _tracker.has_method(&"is_tracking") and _tracker.is_tracking() and _system:
 		if not _controller_started and _system.has_method(&"start_controller"):
 			_controller_started = true
-			print("[demo] ", _system.start_controller())
+			_system.start_controller()
 			_setup_phone_pointer()
 		elif _phone_pointer and _system.has_method(&"poll_controller"):
 			var s: PackedFloat32Array = _system.poll_controller()
@@ -325,7 +290,6 @@ func _process(_delta: float) -> void:
 				_imu_poll_count += 1
 				if _imu_poll_count == 90:  # ~1.5 s in: capture the current aim as "forward"
 					_phone_pointer.recenter()
-					print("[demo] phone pointer recentered (hold the phone forward)")
 	# Pump the XREAL camera feed. The session can come up a frame or two after _ready, so keep
 	# (re)activating until it takes — the feed must be active for a frame to be produced.
 	if _cam_feed:
@@ -342,7 +306,6 @@ func _process(_delta: float) -> void:
 				if yt and ct:
 					mat.set_shader_parameter(&"y_texture", yt)
 					mat.set_shader_parameter(&"cbcr_texture", ct)
-					print("[demo] camera panel textures wired (%dx%d)" % [yt.get_width(), yt.get_height()])
 
 func _build_environment() -> void:
 	var env := Environment.new()
