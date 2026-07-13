@@ -32,6 +32,13 @@ var _cam_feed: Object
 var _cam_panel: MeshInstance3D
 var _camera_enabled := false
 const CAM_SHADER := "res://demo/xreal_ycbcr.gdshader"
+# On-screen touch controller (phone screen) — the Godot analog of XREAL's XREALVirtualController
+# prefab. Pure GDScript touch UI; renders only on the phone's root viewport, so the glasses show
+# the 3D world while the phone shows the controller. Drives a head-locked 3D cursor as a demo.
+const TOUCH_CONTROLLER := "res://demo/touch_controller.gd"
+var _touch_controller: Control
+var _cursor: MeshInstance3D
+var _cursor_mat: StandardMaterial3D
 
 func _ready() -> void:
 	_try_register_android_bridge()
@@ -60,6 +67,8 @@ func _ready() -> void:
 	_build_room()
 	_spawn_rig()
 	_setup_ui()
+	if bool(ProjectSettings.get_setting("xreal/enable_touch_controller", true)):
+		_setup_touch_controller()
 	# The camera is set up lazily in _process, only once head tracking is live (see _camera_enabled),
 	# so starting the capture never races the glasses display/tracking bring-up.
 
@@ -195,6 +204,58 @@ func _setup_camera_feed() -> void:
 	else:
 		add_child(_cam_panel)
 	print("[demo] XrealCameraFeed registered (id=%d, name=%s) — 3D panel added" % [_cam_feed.get_id(), _cam_feed.get_name()])
+
+## Add the phone-side on-screen touch controller and wire it to a head-locked 3D cursor. The
+## controller lives on its own CanvasLayer (below $UI, so the debug text stays on top) and only
+## renders on the phone; the glasses keep showing the 3D scene — the two screens are now distinct.
+func _setup_touch_controller() -> void:
+	var layer := CanvasLayer.new()
+	layer.name = "TouchControllerLayer"
+	layer.layer = 0
+	add_child(layer)
+	_touch_controller = (load(TOUCH_CONTROLLER) as Script).new()
+	_touch_controller.name = "TouchController"
+	layer.add_child(_touch_controller)
+	_touch_controller.trigger_changed.connect(_on_tc_trigger)
+	_touch_controller.grip_changed.connect(_on_tc_grip)
+	_touch_controller.menu_pressed.connect(_on_tc_menu)
+	_touch_controller.touchpad_moved.connect(_on_tc_touchpad)
+	_touch_controller.touchpad_released.connect(_on_tc_touchpad_released)
+
+	# A head-locked cursor so phone touches are visible in the glasses (proves the split).
+	if _tracker:
+		var mesh := BoxMesh.new()
+		mesh.size = Vector3(0.18, 0.18, 0.18)
+		_cursor = MeshInstance3D.new()
+		_cursor.name = "ControllerCursor"
+		_cursor.mesh = mesh
+		_cursor_mat = StandardMaterial3D.new()
+		_cursor_mat.albedo_color = Color(0.3, 0.85, 1.0)
+		_cursor.material_override = _cursor_mat
+		_cursor.position = Vector3(0.0, 0.0, -2.0)
+		_tracker.add_child(_cursor)
+	print("[demo] on-screen touch controller ready (phone screen)")
+
+func _on_tc_touchpad(value: Vector2) -> void:
+	# Eye cameras invert Y (pose handedness), so -y maps the pad's "up" to up in the glasses.
+	if _cursor:
+		_cursor.position = Vector3(value.x * 0.8, -value.y * 0.5, -2.0)
+
+func _on_tc_touchpad_released() -> void:
+	if _cursor:
+		_cursor.position = Vector3(0.0, 0.0, -2.0)
+
+func _on_tc_trigger(pressed: bool) -> void:
+	if _cursor_mat:
+		_cursor_mat.albedo_color = Color(1.0, 0.4, 0.3) if pressed else Color(0.3, 0.85, 1.0)
+
+func _on_tc_grip(pressed: bool) -> void:
+	if _cursor:
+		_cursor.scale = Vector3.ONE * (1.6 if pressed else 1.0)
+
+func _on_tc_menu() -> void:
+	print("[demo] controller menu -> recenter")
+	_on_recenter_pressed()
 
 func _on_recenter_pressed() -> void:
 	if _tracker and _tracker.has_method(&"recenter"):
