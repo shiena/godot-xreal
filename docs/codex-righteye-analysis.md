@@ -253,3 +253,23 @@ A/B probes:
 3. If right remains black even when left is copied into both layers, investigate GL array layer ownership or
    synchronization. That result would contradict the SDK viewport-layer evidence above and would mean the
    submitted layer-1 viewport is not sampling the texture contents we filled.
+
+## Device result (2026-07-13) — descriptor fix landed, but right eye still black
+
+The descriptor fix was applied (`unity_plugin.rs::run_frame_tick` now reads eye 1 from base `0x78`
+= `renderPasses[0].renderParams[1]` @desc+0x80 in Multiview). Device-confirmed: `STEREO_PROJ[1]` is
+now a real right-eye projection (`R: l=-0.458 r=0.441 t=0.256 b=-0.255 pos=(+0.0344,0,0)`), vs the
+zeros it read before. So the per-eye frustum is correct now.
+
+**But the right eye is still black** — and A/B **probe 1 failed**: blitting the LEFT source into BOTH
+array layers still shows the right eye black (only layer 0 / left eye presents). Per the decision tree
+above, that means the compositor is **NOT sampling / presenting array layer 1** — the right-eye
+**layer-1 buffer viewport is not being created** in our path. It is NOT the descriptor read, NOT the
+right SubViewport content, and NOT the `glFramebufferTextureLayer` blit (all fine).
+
+⇒ Next: the two-viewport setup. `DisplayOverlay::CreateViewport @0xa6a68` builds two viewports
+(viewport[0].multiviewLayer=0, viewport[1].multiviewLayer=1) for one array swapchain, and
+`OverlayBase::SetBufferViewport @0xa7f74` submits each. Our path apparently creates only ONE viewport.
+Determine what gates 2 vs 1 viewport (overlay type / a count field / a Multiview flag), why ours is 1,
+and how to force the layer-1 viewport (an extra SDK call, a `signal_guard` code patch, or a descriptor
+field). Until then, **Multipass is the working stereo path** (both eyes) and Multiview is left-eye-only.

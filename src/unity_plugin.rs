@@ -1198,19 +1198,36 @@ pub fn run_frame_tick() {
         u32::from_ne_bytes(desc[offset..offset + 4].try_into().expect("desc u32 slice"))
     };
     let pass_count = read_u32(0x580);
+    // renderPasses[0].renderParamsCount (== 2 in Multiview single-pass-instanced).
+    let rp0_count = read_u32(0x0f8);
     let tex_ids = [read_u32(0x00), read_u32(0xfc)];
+    // Multiview is ONE render pass with TWO renderParams (not two passes). The RIGHT eye's
+    // renderParams[1] lives at desc+0x80 (EyeProj base 0x78), NOT renderPasses[1] (desc+0xfc, which
+    // is 0 here). Reading eye 1 from desc+0xfc gave the right eye a garbage/degenerate frustum → the
+    // right SubViewport rendered black → right-eye-black. See docs/codex-righteye-analysis.md.
+    let multiview = pass_count == 1 && rp0_count >= 2 && tex_ids[0] != 0 && tex_ids[1] == 0;
 
-    // Each render pass's renderParams[0] carries the SDK's per-eye projection (half-angle tangents
-    // at base+0x28..0x34) and eye pose position (deviceAnchorToEyePose at base+0x08..0x10).
-    // renderPasses[0] starts at desc+0x00, renderPasses[1] at desc+0xfc.
+    // Each renderParams block carries the SDK's per-eye projection (half-angle tangents at
+    // base+0x28..0x34) and eye pose position (deviceAnchorToEyePose at base+0x08..0x10). Eye-1 base:
+    // Multipass = 0xfc (renderPasses[1]); Multiview = 0x78 (renderPasses[0].renderParams[1] @desc+0x80).
     let read_f32 = |offset: usize| -> f32 {
         f32::from_ne_bytes(desc[offset..offset + 4].try_into().expect("desc f32 slice"))
     };
     {
         let mut proj = STEREO_PROJ.lock().expect("stereo proj mutex");
-        for (k, base) in [0usize, 0xfc].into_iter().enumerate() {
+        let bases = if multiview {
+            [0x00usize, 0x78usize]
+        } else {
+            [0x00usize, 0xfcusize]
+        };
+        for (k, base) in bases.into_iter().enumerate() {
+            let valid = if multiview {
+                rp0_count as usize > k
+            } else {
+                pass_count as usize > k
+            };
             proj[k] = EyeProj {
-                valid: pass_count as usize > k,
+                valid,
                 px: read_f32(base + 0x08),
                 py: read_f32(base + 0x0c),
                 pz: read_f32(base + 0x10),
