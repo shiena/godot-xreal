@@ -166,7 +166,8 @@ if ($Install) {
     if (-not (Test-Path $ApkOut)) { Die "APK not found: $ApkOut (run with -Export first)" }
     if ($Device) { & $Adb connect $Device | Out-Null }
     Say "adb install -r $ApkOut"
-    $out = Adbx install -r $ApkOut 2>&1
+    # Join: adb output spans multiple lines, and -notmatch on an array filters instead of testing.
+    $out = (Adbx install -r $ApkOut 2>&1) -join "`n"
     if ($out -notmatch 'Success') { Die "install failed: $out" }
     Ok 'Installed.'
 }
