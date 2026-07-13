@@ -30,6 +30,12 @@ var _cam_feed: Object
 var _cam_panel: MeshInstance3D
 var _camera_enabled := false
 const CAM_SHADER := "res://demo/xreal_ycbcr.gdshader"
+# Phase C path B: phone IMU (via NRController state) drives a 3D pointer (demo/phone_pointer.gd).
+const PHONE_POINTER := "res://demo/phone_pointer.gd"
+var _phone_pointer_enabled := true
+var _controller_started := false
+var _imu_poll_count := 0
+var _phone_pointer: Node3D
 # On-screen touch controller (phone screen) — the Godot analog of XREAL's XREALVirtualController
 # prefab. Pure GDScript touch UI; renders only on the phone's root viewport, so the glasses show
 # the 3D world while the phone shows the controller. Drives a head-locked 3D cursor as a demo.
@@ -67,6 +73,7 @@ func _ready() -> void:
 	_setup_ui()
 	if bool(ProjectSettings.get_setting("xreal/enable_touch_controller", true)):
 		_setup_touch_controller()
+	_phone_pointer_enabled = bool(ProjectSettings.get_setting("xreal/enable_phone_pointer", true))
 	# The camera is set up lazily in _process, only once head tracking is live (see _camera_enabled),
 	# so starting the capture never races the glasses display/tracking bring-up.
 
@@ -233,6 +240,16 @@ func _on_tc_grip(pressed: bool) -> void:
 func _on_tc_menu() -> void:
 	print("[demo] controller menu -> recenter")
 	_on_recenter_pressed()
+	if _phone_pointer:
+		_phone_pointer.recenter()
+
+## Instance the phone-IMU 3D pointer (demo/phone_pointer.gd). Added at the scene root so its aim is
+## world-stable (driven by the phone), originating at the head (3DoF: head sits at the origin).
+func _setup_phone_pointer() -> void:
+	_phone_pointer = (load(PHONE_POINTER) as Script).new()
+	_phone_pointer.name = "PhonePointer"
+	add_child(_phone_pointer)
+	print("[demo] phone pointer created")
 
 func _on_recenter_pressed() -> void:
 	if _tracker and _tracker.has_method(&"recenter"):
@@ -282,6 +299,26 @@ func _process(_delta: float) -> void:
 	if _camera_enabled and _cam_feed == null and _tracker and _tracker.has_method(&"is_tracking") \
 			and _tracker.is_tracking():
 		_setup_camera_feed()
+	# Phase C path B: phone IMU (via NRController state) drives the 3D pointer. Godot's own IMU returns
+	# all-zero on this host, so we read accel (gravity → pitch/roll) + gyro (yaw) from the controller.
+	if _phone_pointer_enabled and _tracker and _tracker.has_method(&"is_tracking") and _tracker.is_tracking() and _system:
+		if not _controller_started and _system.has_method(&"start_controller"):
+			_controller_started = true
+			print("[demo] ", _system.start_controller())
+			_setup_phone_pointer()
+		elif _phone_pointer and _system.has_method(&"poll_controller"):
+			var s: PackedFloat32Array = _system.poll_controller()
+			if s.size() >= 7 and s[0] > 0.5:
+				var accel := Vector3(s[1], s[2], s[3])
+				var gyro := Vector3(s[4], s[5], s[6])
+				_phone_pointer.update_imu(accel, gyro, _delta)
+				# Emit the beam from a "hand" offset relative to the head, not the eye/camera.
+				var head_xf := _tracker.global_transform
+				_phone_pointer.global_position = head_xf.origin + head_xf.basis * _phone_pointer.hand_offset
+				_imu_poll_count += 1
+				if _imu_poll_count == 90:  # ~1.5 s in: capture the current aim as "forward"
+					_phone_pointer.recenter()
+					print("[demo] phone pointer recentered (hold the phone forward)")
 	# Pump the XREAL camera feed. The session can come up a frame or two after _ready, so keep
 	# (re)activating until it takes — the feed must be active for a frame to be produced.
 	if _cam_feed:

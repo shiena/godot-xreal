@@ -156,6 +156,33 @@ impl XrealSystem {
         crate::native_error::last_error_message().as_str().into()
     }
 
+    /// Discover + create + start the NRController subsystem (`libnr_loader.so`) and keep it alive for
+    /// `poll_controller`. Returns a one-line diagnostic (count / id / connected & handheld type).
+    /// The phone-as-3D-pointer source (docs/input-plan.md Phase C).
+    #[func]
+    fn start_controller(&self) -> GString {
+        crate::controller_probe::start().as_str().into()
+    }
+
+    /// One-frame read of the live controller's raw sensors (call each frame after
+    /// `start_controller`). Returns a flat `PackedFloat32Array`, layout:
+    /// `[ok, accel.xyz(1..4), gyro.xyz(4..7), mag.xyz(7..10), touch(10), touch_xy(11..13), buttons(13)]`.
+    /// The phone IMU (`accel` = gravity dir via `-accel.normalized()`) feeds the GDScript pointer
+    /// fusion, since the NRController fused pose isn't available on this host.
+    #[func]
+    fn poll_controller(&self) -> PackedFloat32Array {
+        let r = crate::controller_probe::poll_raw();
+        PackedFloat32Array::from(&[
+            if r.ok { 1.0 } else { 0.0 },
+            r.accel[0], r.accel[1], r.accel[2],
+            r.gyro[0], r.gyro[1], r.gyro[2],
+            r.mag[0], r.mag[1], r.mag[2],
+            r.touch as f32,
+            r.touch_xy[0], r.touch_xy[1],
+            r.buttons as f32,
+        ])
+    }
+
     /// Switch the tracking mode at runtime (`TRACKING_6DOF` / `TRACKING_3DOF` /
     /// `TRACKING_0DOF` / `TRACKING_0DOF_STAB`). Returns the SDK's bool result; `false`
     /// also when the session is not up yet.

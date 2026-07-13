@@ -14,6 +14,7 @@
 use godot::prelude::*;
 
 mod camera_feed;
+mod controller_probe;
 mod ffi;
 mod gl;
 mod glasses_events;
