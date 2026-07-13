@@ -19,11 +19,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
----
-
-This project interoperates with, but does not include, the XREAL SDK
-(`com.xreal.xr`) native libraries. Those libraries are property of XREAL and are
-subject to their own license terms. Vendoring and redistributing them is the
-user's responsibility.
-</content>

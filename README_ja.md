@@ -118,4 +118,7 @@ docs/           移植計画 + リバースエンジニアリングメモ
 
 ## ライセンス
 
-MIT（[LICENSE](LICENSE)）。XREAL のネイティブライブラリは **含まれず**、XREAL の規約に従います。
+以下のいずれかのライセンスを選択できます:
+
+* Apache License, Version 2.0（[LICENSE-APACHE](LICENSE-APACHE) または http://www.apache.org/licenses/LICENSE-2.0 ）
+* MIT license（[LICENSE-MIT](LICENSE-MIT) または http://opensource.org/licenses/MIT ）
