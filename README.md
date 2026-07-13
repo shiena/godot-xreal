@@ -70,21 +70,38 @@ pwsh scripts/vendor_xreal_libs.ps1 -XrealPackage <…>/package
 The script stages everything the Android export needs (all destinations are git-ignored; nothing is
 downloaded — you supply the package):
 
-- **8 `.so` → `jniLibs/arm64-v8a/`** — the 3 core libs (`libXREALNativeSessionManager.so`,
-  `libXREALXRPlugin.so`, `libVulkanSupport.so`) copied from
-  `package/Runtime/Plugins/Android/arm64-v8a/`, plus the 5 NR libs extracted from the package's
-  `.aar` files (an `.aar` is a zip; the libs sit at `jni/arm64-v8a/<lib>`):
-  `nr_api.aar` → `libnr_api.so` / `libnr_plugin_6dof.so` / `libnr_rgb_camera.so`,
-  `nr_loader.aar` → `libnr_loader.so`, `nr_common.aar` → `libnr_libusb.so`.
-  Packed next to the GDExtension via `godot_xreal.gdextension` `[dependencies]` and `dlopen`ed at
-  startup.
-- **5 `.aar` → `addons/godot_xreal/android/`** — `nr_loader.aar`, `nr_api.aar`, `nr_common.aar`,
-  `GlassesDisplayPlugEvent-2.4.2.aar`, `Log-Control-1.2.aar`. The addon's export plugin
-  (`export_plugin.gd`) ships them into the APK: they carry the Java/JNI layer and manifest entries
-  the glasses need (glasses detection provider etc.).
-- **`xreal_bridge.jar` → `addons/godot_xreal/android/`** — compiled by the script from the
-  committed Java source (`addons/godot_xreal/android/src/`); requires a JDK (`javac`) and an
-  Android SDK platform `android.jar` (skip with `-SkipJar` if a built jar is already in place).
+**8 `.so` → `jniLibs/arm64-v8a/`** — packed next to the GDExtension via `godot_xreal.gdextension`
+`[dependencies]` and `dlopen`ed at startup:
+
+| `.so` | Source inside `package/` |
+|---|---|
+| `libXREALNativeSessionManager.so` | `Runtime/Plugins/Android/arm64-v8a/` (copied) |
+| `libXREALXRPlugin.so` | `Runtime/Plugins/Android/arm64-v8a/` (copied) |
+| `libVulkanSupport.so` | `Runtime/Plugins/Android/arm64-v8a/` (copied) |
+| `libnr_api.so` | extracted from `nr_api.aar` at `jni/arm64-v8a/` (an `.aar` is a zip) |
+| `libnr_plugin_6dof.so` | extracted from `nr_api.aar` |
+| `libnr_rgb_camera.so` | extracted from `nr_api.aar` |
+| `libnr_loader.so` | extracted from `nr_loader.aar` |
+| `libnr_libusb.so` | extracted from `nr_common.aar` |
+
+**5 `.aar` → `addons/godot_xreal/android/`** — shipped into the APK by the addon's export plugin
+(`export_plugin.gd`): the Java/JNI layer + manifest entries the glasses need. All copied from
+`Runtime/Plugins/Android/`:
+
+| `.aar` | Role |
+|---|---|
+| `nr_loader.aar` | NR loader Java layer |
+| `nr_api.aar` | NR API Java layer |
+| `nr_common.aar` | NR common layer |
+| `GlassesDisplayPlugEvent-2.4.2.aar` | glasses-detection `GlassesInitProvider` |
+| `Log-Control-1.2.aar` | `LogControl` referenced by the above — **required**, or the app crashes before Godot starts |
+
+**`xreal_bridge.jar` → `addons/godot_xreal/android/`** — *not* from the SDK: the script compiles it
+from the committed Java source (`addons/godot_xreal/android/src/`); needs a JDK (`javac`) and an
+Android SDK platform `android.jar` (skip with `-SkipJar` if a built jar is already in place).
+
+**Never copy `nractivitylife*.aar`** — its launcher is Unity-only and breaks a Godot app. The
+QNN/SNPE libs inside `nr_common.aar` are not needed either.
 
 ### Build & install
 
