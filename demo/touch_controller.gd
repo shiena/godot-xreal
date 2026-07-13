@@ -20,6 +20,10 @@ signal touchpad_moved(value: Vector2)
 ## Emitted when the touchpad finger lifts (value returns to zero).
 signal touchpad_released()
 
+## Backdrop fill. Opaque by default so the phone shows only the controller (the glasses-bound
+## 3D preview behind it is hidden); set a translucent alpha to let the 3D show through instead.
+@export var background_color := Color(0.05, 0.06, 0.09, 1.0)
+
 # Momentary buttons (name -> label). Add/remove/rename here to customize the controller.
 const _buttons := {
 	"trigger": "TRIGGER",
@@ -130,8 +134,9 @@ func _draw() -> void:
 	var font := get_theme_default_font()
 	var font_size := int(maxf(24.0, size.y * 0.035))
 
-	# Dim backdrop so the phone reads as "the controller" (the 3D preview shows faintly behind).
-	draw_rect(Rect2(Vector2.ZERO, size), Color(0.0, 0.0, 0.0, 0.45))
+	# Backdrop: opaque by default, so the phone shows only the controller and the 3D preview
+	# behind it is hidden (set a translucent background_color to let the 3D show through).
+	draw_rect(Rect2(Vector2.ZERO, size), background_color)
 
 	# Touchpad: filled panel + border, center crosshair, and the live thumb dot.
 	var pad_on := _pressed.has("touchpad")
