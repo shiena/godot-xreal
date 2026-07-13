@@ -22,7 +22,7 @@
 //!      REQUIRED before any pose / `IsSessionStarted` call.
 
 use std::sync::{
-    atomic::{AtomicBool, AtomicU64, Ordering},
+    atomic::{AtomicBool, AtomicI32, AtomicU64, Ordering},
     Mutex, OnceLock,
 };
 
@@ -30,6 +30,65 @@ use godot::builtin::Quaternion;
 
 use crate::ffi::{NrPose, TrackingType, UserDefinedSettings};
 use crate::native::XrealNative;
+
+/// Explicit stereo-mode override set from GDScript (`XrealSystem.set_stereo_rendering_mode`).
+/// `-1` = unset (fall through to ProjectSettings / system property / default). Must be set **before**
+/// the session bootstraps (e.g. in an autoload `_ready`, before the XR rig enters the tree).
+static STEREO_MODE_OVERRIDE: AtomicI32 = AtomicI32::new(-1);
+
+/// Set the stereo-mode override from GDScript. See [`stereo_rendering_mode`].
+pub fn set_stereo_mode_override(mode: i32) {
+    STEREO_MODE_OVERRIDE.store(mode, Ordering::Relaxed);
+}
+
+/// The current stereo-mode override (`-1` if unset).
+pub fn stereo_mode_override() -> i32 {
+    STEREO_MODE_OVERRIDE.load(Ordering::Relaxed)
+}
+
+/// Stereo rendering mode for `InitUserDefinedSettings`, resolved **once at session bootstrap** from,
+/// in priority order:
+///   1. the GDScript override (`XrealSystem.set_stereo_rendering_mode`, set before bootstrap — this
+///      is also how a Godot ProjectSetting is applied: read `xreal/stereo_rendering_mode` in GDScript
+///      and pass it to the override before the XR rig starts, see `demo/main.gd`),
+///   2. the Android system property `debug.xreal.stereo_mode`
+///      (`adb shell setprop debug.xreal.stereo_mode 2`),
+///   3. the default.
+///
+/// `0` = Multipass (per-eye 2D textures — renders, but the glasses layer is world-anchored),
+/// `2` = Multiview / Single-Pass-Instanced (one 2-layer array texture, matches LayeredClient; WIP —
+/// nothing displays yet). Defaults to Multipass.
+fn stereo_rendering_mode() -> i32 {
+    const DEFAULT: i32 = 0;
+
+    // 1) Explicit override (GDScript API — also carries a ProjectSetting value).
+    let ovr = STEREO_MODE_OVERRIDE.load(Ordering::Relaxed);
+    if ovr >= 0 {
+        return ovr;
+    }
+
+    // 2) Android system property.
+    #[cfg(target_os = "android")]
+    {
+        let mut buf = [0u8; 92]; // PROP_VALUE_MAX
+        let key = b"debug.xreal.stereo_mode\0";
+        let n = unsafe {
+            libc::__system_property_get(
+                key.as_ptr() as *const libc::c_char,
+                buf.as_mut_ptr() as *mut libc::c_char,
+            )
+        };
+        if n > 0 {
+            if let Ok(s) = std::str::from_utf8(&buf[..n as usize]) {
+                if let Ok(v) = s.trim().parse::<i32>() {
+                    return v;
+                }
+            }
+        }
+    }
+
+    DEFAULT
+}
 
 /// The created session (success latch). `XrealNative` is `Send + Sync` (the `libloading`
 /// handles and the resolved `extern "C"` function pointers all are), so it lives in a
@@ -156,15 +215,17 @@ impl XrealSession {
         // reference app even when the MVP only consumes head rotation. Keep this
         // aligned with Unity's InitUserDefinedSettings log before falling back to
         // narrower tracking modes.
+        let stereo_mode = stereo_rendering_mode();
+        godot::global::godot_print!(
+            "[xreal] stereo_rendering_mode = {stereo_mode} (0=Multipass, 2=Multiview)"
+        );
         let settings = UserDefinedSettings {
             color_space: 1,
-            // Multiview / Single-Pass-Instanced (2) — matches LayeredClient's XREALSettings
-            // (StereoRendering: 2), the reference app that renders a correct head-locked peek window.
-            // Our earlier multipass (0) workaround produces a world-anchored layer; the head-lock
-            // difference is narrowed to the frame-submission path, so match the reference stereo mode.
-            // Multiview makes the SDK create ONE 2-layer array texture (arraylen=2, single_buffer:1);
-            // CreateTexture must allocate a GL_TEXTURE_2D_ARRAY and both eyes render into its layers.
-            stereo_rendering_mode: 2,
+            // Selectable at startup (see stereo_rendering_mode()): 0 = Multipass (per-eye 2D
+            // textures; renders but the layer is world-anchored), 2 = Multiview / Single-Pass-
+            // Instanced (one 2-layer array texture, matches LayeredClient's StereoRendering: 2 —
+            // the reference app's head-locked peek window; still WIP: NR swapchain registration).
+            stereo_rendering_mode: stereo_mode,
             tracking_type: TrackingType::Mode6Dof as i32,
             support_mono_mode: 0,
             unity_activity: activity,

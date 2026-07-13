@@ -32,6 +32,15 @@ func _ready() -> void:
 	_extension_loaded = ClassDB.class_exists(&"XrealSystem") and ClassDB.class_exists(&"XrealHeadTracker")
 	if _extension_loaded:
 		_system = ClassDB.instantiate(&"XrealSystem")
+		# Stereo rendering mode from the project setting `xreal/stereo_rendering_mode`
+		# (0 = Multipass, 2 = Multiview). Must be set BEFORE the XR rig starts — the native
+		# session reads it once at bootstrap. Absent setting (-1) falls back to the native default
+		# / the `debug.xreal.stereo_mode` system property. Add the setting in Project Settings, or
+		# override it here, to switch modes without rebuilding.
+		var stereo_mode := int(ProjectSettings.get_setting("xreal/stereo_rendering_mode", -1))
+		if stereo_mode >= 0 and _system.has_method(&"set_stereo_rendering_mode"):
+			_system.set_stereo_rendering_mode(stereo_mode)
+			print("[demo] stereo_rendering_mode set to %d (from ProjectSettings)" % stereo_mode)
 	else:
 		push_error("[demo] godot_xreal GDExtension not loaded — XrealSystem/XrealHeadTracker missing. Build the Android .so (cargo ndk) and check the .gdextension paths.")
 	_build_environment()
