@@ -30,6 +30,7 @@ var _extension_loaded := false
 # quad in front of the eye cameras via a YCbCr→RGB shader.
 var _cam_feed: Object
 var _cam_panel: MeshInstance3D
+var _camera_enabled := false
 const CAM_SHADER := "res://demo/xreal_ycbcr.gdshader"
 
 func _ready() -> void:
@@ -53,14 +54,21 @@ func _ready() -> void:
 		if tracking_type >= 0 and _system.has_method(&"set_tracking_type"):
 			_system.set_tracking_type(tracking_type)
 			print("[demo] tracking_type set to %d (from ProjectSettings)" % tracking_type)
+		# The RGB camera shares the tracking camera with 6DoF SLAM, so enabling the camera in 6DoF
+		# breaks head tracking (NRSDK "GetPoseWithStates failed" -> identity pose). When the camera is
+		# on, force 3DoF (IMU-only orientation; the DISP pose still carries full pitch/yaw/roll).
+		_camera_enabled = bool(ProjectSettings.get_setting("xreal/enable_camera", true))
+		if _camera_enabled and _system.has_method(&"set_tracking_type"):
+			_system.set_tracking_type(1)  # 3DoF, so the RGB camera and head tracking can coexist
+			print("[demo] camera enabled -> forcing 3DoF tracking so it can coexist with the camera")
 	else:
 		push_error("[demo] godot_xreal GDExtension not loaded — XrealSystem/XrealHeadTracker missing. Build the Android .so (cargo ndk) and check the .gdextension paths.")
 	_build_environment()
 	_build_room()
 	_spawn_rig()
 	_setup_ui()
-	if _extension_loaded:
-		_setup_camera_feed()
+	# The camera is set up lazily in _process, only once head tracking is live (see _camera_enabled),
+	# so starting the capture never races the glasses display/tracking bring-up.
 
 func _try_register_android_bridge() -> void:
 	if not OS.has_feature("android"):
@@ -166,23 +174,16 @@ func _setup_camera_feed() -> void:
 	# if you enable CameraServer.monitoring_feeds, are the HOST device's cameras — routed by id/class).
 	_cam_feed.set_name("XREAL Glasses RGB")
 	CameraServer.add_feed(_cam_feed)
-	_cam_feed.set_active(true)  # -> activate_feed() starts capture; active=true enables set_ycbcr_images
+	_cam_feed.set_active(true)  # -> activate_feed() starts the XREAL capture
 
-	# Two CameraTextures bound to THIS feed by id (this is the routing): the Y and CbCr planes the
-	# feed publishes via set_ycbcr_images. The shader converts YCbCr → RGB.
-	var y_tex := CameraTexture.new()
-	y_tex.camera_feed_id = _cam_feed.get_id()
-	y_tex.which_feed = CameraServer.FEED_Y_IMAGE
-	var cbcr_tex := CameraTexture.new()
-	cbcr_tex.camera_feed_id = _cam_feed.get_id()
-	cbcr_tex.which_feed = CameraServer.FEED_CBCR_IMAGE
-
+	# The shader samples the feed's Y (R8) + CbCr (RG8) ImageTextures DIRECTLY (get_y_texture /
+	# get_cbcr_texture). A CameraTexture on a script-fed feed only shows Godot's placeholder, so we
+	# bypass it — matching the XREAL SDK's YUVTransRGB sample. The textures are wired in _process once
+	# the first frame has created them.
 	var mat := ShaderMaterial.new()
 	mat.shader = load(CAM_SHADER)
-	mat.set_shader_parameter(&"y_texture", y_tex)
-	mat.set_shader_parameter(&"cbcr_texture", cbcr_tex)
-	mat.set_shader_parameter(&"color_range", 1)  # Android RGB camera is video range
-	mat.set_shader_parameter(&"flip_v", true)
+	mat.set_shader_parameter(&"flip_v", false)  # device-calibrated: no vertical flip needed
+	mat.set_shader_parameter(&"swap_rb", false)
 
 	# A head-locked quad (16:9) in front of the eye cameras. Parented under the tracker (the head
 	# node), so it stays in front as you look around; rendered by the eye SubViewports (shared world).
@@ -244,12 +245,28 @@ func _on_glasses_event(action_type: int, para: int, para2: int, para3: float) ->
 	print("[demo] glasses event: type=%d para=%d para2=%d para3=%f" % [action_type, para, para2, para3])
 
 func _process(_delta: float) -> void:
+	# Lazily set up the camera ONLY once head tracking is live — starting the capture before the
+	# glasses/tracking are up races (and in 6DoF would fight the SLAM camera). See _setup_camera_feed.
+	if _camera_enabled and _cam_feed == null and _tracker and _tracker.has_method(&"is_tracking") \
+			and _tracker.is_tracking():
+		_setup_camera_feed()
 	# Pump the XREAL camera feed. The session can come up a frame or two after _ready, so keep
-	# (re)activating until it takes — set_rgb_image is a no-op while the feed is inactive.
+	# (re)activating until it takes — the feed must be active for a frame to be produced.
 	if _cam_feed:
 		if not _cam_feed.is_active():
 			_cam_feed.set_active(true)
 		_cam_feed.poll_frame()
+		# Wire the feed's Y/CbCr ImageTextures into the panel shader once the first frame made them.
+		# They update in place afterwards, so this only needs to happen once.
+		if _cam_panel:
+			var mat: ShaderMaterial = _cam_panel.material_override
+			if mat and mat.get_shader_parameter(&"y_texture") == null:
+				var yt = _cam_feed.get_y_texture()
+				var ct = _cam_feed.get_cbcr_texture()
+				if yt and ct:
+					mat.set_shader_parameter(&"y_texture", yt)
+					mat.set_shader_parameter(&"cbcr_texture", ct)
+					print("[demo] camera panel textures wired (%dx%d)" % [yt.get_width(), yt.get_height()])
 	if _euler_label == null:
 		return
 	if not _extension_loaded:

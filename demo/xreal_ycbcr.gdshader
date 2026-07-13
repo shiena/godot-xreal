@@ -1,18 +1,16 @@
-// YCbCr(separate Y + CbCr planes) -> RGB for the XREAL glasses RGB camera on a 3D surface.
-//
-// Spatial port of ~/dev/godot-camerafeed-demo/ycbcr_to_rgb.gdshader (the mode==1 / FEED_YCBCR_SEP
-// path). The two samplers are CameraTextures bound to an XrealCameraFeed (Y -> FEED_Y_IMAGE r8,
-// CbCr -> FEED_CBCR_IMAGE rg8); the feed is fed by set_ycbcr_images. Unshaded so the camera image
-// shows as-is regardless of scene lighting.
+// XREAL glasses RGB camera YCbCr -> RGB on a 3D surface. Conversion ported from the XREAL SDK's
+// own sample shader (Samples~/Camera Features/RGBCameraAndCapture/Materials/YUVTransRGB.shader):
+// full-range BT.601-style coefficients. y_texture = R8 luma (.r = Y); cbcr_texture = RG8 chroma
+// (.r = U/Cb, .g = V/Cr) — both plain ImageTextures the XrealCameraFeed keeps updated.
 shader_type spatial;
 render_mode unshaded, cull_disabled;
 
 uniform sampler2D y_texture : filter_linear;
 uniform sampler2D cbcr_texture : filter_linear;
-// 0 = full range (0-255), 1 = video/limited range (16-235 / 16-240). Android is typically video.
-uniform int color_range : hint_range(0, 1) = 1;
 // The camera Y plane is top-down vs Godot's texture V; flip for an upright image.
 uniform bool flip_v = true;
+// The SDK sample swaps R<->B on output; expose it so we can match on device.
+uniform bool swap_rb = false;
 
 void fragment() {
 	vec2 uv = UV;
@@ -20,23 +18,17 @@ void fragment() {
 		uv.y = 1.0 - uv.y;
 	}
 	float y = texture(y_texture, uv).r;
-	vec2 cbcr = texture(cbcr_texture, uv).rg;
+	vec2 ch = texture(cbcr_texture, uv).rg;
+	float u = ch.r; // Cb
+	float v = ch.g; // Cr
 
-	vec3 ycbcr;
-	if (color_range == 1) {
-		// Video range (ITU-R BT.601/709): Y (16..235)/219, CbCr (16..240)/224 - 0.5.
-		ycbcr.r = (y - 16.0 / 255.0) * (255.0 / 219.0);
-		ycbcr.gb = (cbcr - 16.0 / 255.0) * (255.0 / 224.0) - vec2(0.5);
-	} else {
-		ycbcr.r = y;
-		ycbcr.gb = cbcr - vec2(0.5);
+	// XREAL YUVTransRGB (full range): r = Y + 1.4022(V-0.5), etc.
+	float r = y + 1.40220 * v - 0.70110;
+	float g = y - 0.34560 * u - 0.71450 * v + 0.53005;
+	float b = y + 1.77100 * u - 0.88550;
+	vec3 rgb = clamp(vec3(r, g, b), vec3(0.0), vec3(1.0));
+	if (swap_rb) {
+		rgb = rgb.bgr;
 	}
-
-	// BT.709 YCbCr -> RGB.
-	vec3 rgb = mat3(
-			vec3(1.00000, 1.00000, 1.00000),
-			vec3(0.00000, -0.18732, 1.85560),
-			vec3(1.57481, -0.46813, 0.00000)) * ycbcr;
-
-	ALBEDO = clamp(rgb, vec3(0.0), vec3(1.0));
+	ALBEDO = rgb;
 }
