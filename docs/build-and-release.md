@@ -87,7 +87,7 @@ Godot's Android export packs them next to the extension. The extension `dlopen`s
 2. **3 core libs** live loose at `package/Runtime/Plugins/Android/arm64-v8a/`; the script copies them:
 
    ```powershell
-   pwsh tools/vendor_xreal_libs.ps1 -XrealPackage "C:\path\to\package"
+   pwsh scripts/vendor_xreal_libs.ps1 -XrealPackage "C:\path\to\package"
    #   -> jniLibs/arm64-v8a/libXREALNativeSessionManager.so
    #   -> jniLibs/arm64-v8a/libXREALXRPlugin.so
    #   -> jniLibs/arm64-v8a/libVulkanSupport.so

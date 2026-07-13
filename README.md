@@ -34,7 +34,7 @@ APK (`jniLibs/` is git-ignored):
 
 1. Extract `com.xreal.xr.tar.gz` → a `package/` directory.
 2. **3 core libs** from `package/Runtime/Plugins/Android/arm64-v8a/` — copy them, or run
-   `pwsh tools/vendor_xreal_libs.ps1 -XrealPackage <…>/package`:
+   `pwsh scripts/vendor_xreal_libs.ps1 -XrealPackage <…>/package`:
    `libXREALNativeSessionManager.so`, `libXREALXRPlugin.so`, `libVulkanSupport.so`.
 3. **5 NR libs** from the package's `.aar` files (an `.aar` is a zip; take `jni/arm64-v8a/<lib>`):
    - `nr_api.aar` → `libnr_api.so`, `libnr_plugin_6dof.so`, `libnr_rgb_camera.so`
@@ -99,8 +99,7 @@ src/
   system.rs     XrealSystem (RefCounted) — read-only SDK info
 demo/           demo scene (main.tscn + main.gd) with a status UI
 jniLibs/        vendored XREAL .so (git-ignored) + built libgodot_xreal.so
-scripts/        build.ps1 / build.sh — build -> export -> install -> run pipeline
-tools/          vendor_xreal_libs.ps1
+scripts/        build.ps1 / build.sh (pipeline) + vendor_xreal_libs.ps1 (copy core libs)
 docs/           port plan + reverse-engineering notes
 ```
 

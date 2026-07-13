@@ -26,7 +26,7 @@ compiled `xreal_bridge.jar`) registers the Activity, `session_started=true`, ste
 
 Remaining polish (non-blocking): revert the working template's `GodotApp.java` to stock (its
 `XrealBridge.register` call is now redundant with the GDScript path); fold the AAR-copy + JAR-build
-into `tools/vendor_xreal_libs.ps1`.
+into `scripts/vendor_xreal_libs.ps1`.
 
 ---
 
