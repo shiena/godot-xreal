@@ -90,6 +90,25 @@ Crack the **single-buffer swapchain registration** — get the NR swapchain to s
 5. Once it displays: re-test head-lock. Multiview submits proper per-eye view matrices, so the compositor's
    reprojection reference may finally be live → verify overshoot gone AND FOV head-locked (peek window).
 
+## UPDATE 2026-07-13 — Multiview now DISPLAYS (registration solved), head-lock still open
+
+The single-buffer registration blocker is **fixed** (commit `4f04008`, see
+`codex-multiview-analysis.md`): our `patch_create_display_layer` was forcing the DummyDisplayOverlay in
+Multiview; changing it from `nop` to `b 0x6dd18` forces the real DisplayOverlay, so QueryTextureDesc now
+runs (0→7) and our `GL_TEXTURE_2D_ARRAY`s register with the NR swapchain. **On-glasses: Multiview now
+renders** (no longer black); Multipass unaffected (no regression). Toggle with
+`adb shell setprop debug.xreal.stereo_mode 2|0`.
+
+**Remaining: head-lock.** With Multiview rendering, the glasses image is **still world-locked** (drifts /
+anchored to the session-start direction) instead of a head-locked peek window — the same compositor
+world-anchoring diagnosed earlier (see "Root cause" above: overshoot = camera 1× + compositor 1×; the
+compositor's reprojection reference is frozen at session start). LayeredClient uses the SAME Multiview +
+libs and IS head-locked, so the remaining difference is the per-frame pose the real Unity XR provider
+feeds the submission that we don't. Next: RE how the NR compositor / `NativeRendering::SubmitFrame`
+@0xa3ef0 obtains the layer's head pose (args are `DM+0x100/0x108/0x110` + frame `DM+0x120`), whether the
+per-eye `deviceAnchorToEyePose` in `PopulateNextFrameDesc`'s renderParams must carry the head world
+orientation, and what per-frame call makes the layer track the head.
+
 ## Deep-dive session 2 — the swapchain-registration subsystem, mapped
 
 Goal of this pass: find why, in Multiview (`single_buffer:1`), our array texture is **not** registered
