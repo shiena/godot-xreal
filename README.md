@@ -35,8 +35,8 @@ Verified on XREAL One Pro. Everything below is community-reverse-engineered inte
 |---|---|---|
 | **Head tracking** (orientation: pitch / yaw / roll) | ✅ | From the XR-plugin display pose; drives the eye cameras. |
 | **Tracking mode** 6DoF / 3DoF / 0DoF | ✅ | Selectable (`xreal/tracking_type` / `XrealSystem.set_tracking_type` / `debug.xreal.tracking_type`). |
-| **Stereo glasses display** — head-locked peek window | ✅ | World-locked 3D through the glasses. **Multipass** (both eyes). |
-| **Multiview** stereo | 🚧 WIP | Registers + head-locks, but the right eye is currently black. |
+| **Stereo glasses display** — head-locked peek window | ✅ | World-locked 3D through the glasses. **Multipass** (both eyes); it is the only stereo mode (no selector). |
+| **Multiview** stereo | ❌ Shelved | Right eye is black — the NR compositor (`libnr_api`) can't import our client `GL_TEXTURE_2D_ARRAY`, and it gives no benefit on this two-SubViewport rig anyway. The code is kept but disabled; dev-only escape `setprop debug.xreal.force_multiview 1`. See `docs/codex-righteye-analysis.md`. |
 | **Recenter** | ✅ | Resets the forward direction (SDK `NativePerception::Recenter`). |
 | **RGB camera** as a Godot `CameraFeed` | ✅ | Full-colour, shown in-scene on a head-locked quad. **Requires 3DoF** (it shares the camera with 6DoF SLAM). |
 | **Glasses input** — physical keys (MENU/MULTI: click/double/long) | ✅ | Godot signals (`key_event`, `key_state_changed`). |
