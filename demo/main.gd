@@ -29,6 +29,9 @@ var _extension_loaded := false
 var _cam_feed: Object
 var _cam_panel: MeshInstance3D
 var _camera_enabled := false
+# Set once the RGB capture fails to start (wedged glasses camera), so _process stops re-attempting
+# setup — a hard failure isn't retried; re-plug the glasses and relaunch to recover.
+var _cam_failed := false
 const CAM_SHADER := "res://demo/xreal_ycbcr.gdshader"
 # Phase C path B: phone IMU (via NRController state) drives a 3D pointer (demo/phone_pointer.gd).
 const PHONE_POINTER := "res://demo/phone_pointer.gd"
@@ -140,6 +143,16 @@ func _setup_camera_feed() -> void:
 	_cam_feed.set_name("XREAL Glasses RGB")
 	CameraServer.add_feed(_cam_feed)
 	_cam_feed.set_active(true)  # -> activate_feed() starts the XREAL capture
+	if not _cam_feed.is_active():
+		# The XREAL capture didn't start. On this device that means the glasses RGB camera is wedged:
+		# an unclean prior exit (e.g. a render-thread crash) left it holding the capture, so NRSDK
+		# rejects the new connection ("Recv Frame, -99"). Re-plug the glasses to reset it. Don't show
+		# an unfed (pink) panel or spin re-attempting — disable the preview cleanly for this run.
+		push_warning("[demo] XREAL RGB camera did not start (glasses camera wedged? re-plug to reset) — preview disabled")
+		CameraServer.remove_feed(_cam_feed)
+		_cam_feed = null
+		_cam_failed = true
+		return
 
 	# The shader samples the feed's Y (R8) + CbCr (RG8) ImageTextures DIRECTLY (get_y_texture /
 	# get_cbcr_texture). A CameraTexture on a script-fed feed only shows Godot's placeholder, so we
@@ -159,6 +172,9 @@ func _setup_camera_feed() -> void:
 	_cam_panel.name = "XrealCameraPanel"
 	_cam_panel.mesh = quad
 	_cam_panel.material_override = mat
+	# Hidden until the first real frame wires the textures (in _process), so the not-yet-fed shader
+	# never shows as a pink (unset-sampler) placeholder.
+	_cam_panel.visible = false
 	# Top-right corner, 2 m in front (Godot cameras look down -Z). The eye cameras invert Y (the pose
 	# handedness (x,-y,z,w) flip), so on the glasses buffer +X is right but -Y is up: hence +x, -y.
 	_cam_panel.position = Vector3(0.48, -0.30, -2.0)
@@ -271,7 +287,7 @@ func _on_wearing_changed(wearing: bool) -> void:
 func _process(_delta: float) -> void:
 	# Lazily set up the camera ONLY once head tracking is live — starting the capture before the
 	# glasses/tracking are up races (and in 6DoF would fight the SLAM camera). See _setup_camera_feed.
-	if _camera_enabled and _cam_feed == null and _tracker and _tracker.has_method(&"is_tracking") \
+	if _camera_enabled and not _cam_failed and _cam_feed == null and _tracker and _tracker.has_method(&"is_tracking") \
 			and _tracker.is_tracking():
 		_setup_camera_feed()
 	# Phase C path B: phone IMU (via NRController state) drives the 3D pointer. Godot's own IMU returns
@@ -293,19 +309,28 @@ func _process(_delta: float) -> void:
 	# Pump the XREAL camera feed. The session can come up a frame or two after _ready, so keep
 	# (re)activating until it takes — the feed must be active for a frame to be produced.
 	if _cam_feed:
-		if not _cam_feed.is_active():
-			_cam_feed.set_active(true)
 		_cam_feed.poll_frame()
-		# Wire the feed's Y/CbCr ImageTextures into the panel shader once the first frame made them.
+		# Wire the feed's Y/CbCr ImageTextures into the panel shader once the first frame made them,
+		# then reveal the panel (kept hidden until now so a not-yet-fed shader never shows as pink).
 		# They update in place afterwards, so this only needs to happen once.
-		if _cam_panel:
+		if _cam_panel and not _cam_panel.visible:
 			var mat: ShaderMaterial = _cam_panel.material_override
-			if mat and mat.get_shader_parameter(&"y_texture") == null:
+			if mat:
 				var yt = _cam_feed.get_y_texture()
 				var ct = _cam_feed.get_cbcr_texture()
 				if yt and ct:
 					mat.set_shader_parameter(&"y_texture", yt)
 					mat.set_shader_parameter(&"cbcr_texture", ct)
+					_cam_panel.visible = true
+
+func _exit_tree() -> void:
+	# Best-effort camera release on a *graceful* shutdown (MULTI-quit, window close, scene change) so
+	# the glasses RGB camera is handed back instead of staying wedged. deactivate_feed() -> the native
+	# rgb_camera_stop. NOTE: a hard render-thread crash (SIGSEGV) can't be intercepted — Android's
+	# libsigchain swallows signal handlers on ART threads (see src/native.rs) — so after a crash the
+	# camera stays held and must be re-plugged; this only covers clean exits.
+	if _cam_feed and _cam_feed.is_active():
+		_cam_feed.set_active(false)
 
 func _build_environment() -> void:
 	var env := Environment.new()

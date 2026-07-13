@@ -1335,12 +1335,20 @@ impl XrealNative {
     }
 
     /// Start RGB-camera capture in **poll mode** (null callback). Returns the capture handle for
-    /// [`Self::rgb_camera_stop`], or `None` only if the export is unavailable. NOTE: in poll mode the
-    /// SDK returns a `0` handle (there is no callback registration to track), which is **not** a
-    /// failure — capture is enabled and [`Self::rgb_camera_grab_y`] then works; device-confirmed.
+    /// [`Self::rgb_camera_stop`], or `None` if the export is unavailable or the SDK reports failure.
+    /// NOTE: in poll mode a successful start returns a `0` handle (there is no callback registration
+    /// to track) — that is **not** a failure; capture is enabled and [`Self::rgb_camera_grab_y`] then
+    /// works (device-confirmed). A wedged glasses camera — e.g. an unclean prior exit left it holding
+    /// the connection, so NRSDK rejects the new one ("RgbCamera Recv Frame, -99" / "Plugin Start
+    /// failed") — instead returns the `u64::MAX` (-1) error sentinel; surface that as `None` so the
+    /// caller doesn't cache a dead handle and drive an unfed (pink) panel.
     pub fn rgb_camera_start(&self) -> Option<u64> {
         let f = self.rgb_start_capture?;
-        Some(unsafe { f(std::ptr::null_mut(), std::ptr::null_mut()) })
+        let handle = unsafe { f(std::ptr::null_mut(), std::ptr::null_mut()) };
+        if handle == u64::MAX {
+            return None;
+        }
+        Some(handle)
     }
 
     /// Stop RGB-camera capture (`false` if unavailable).
