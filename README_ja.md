@@ -34,8 +34,8 @@ XREAL One Pro で実機確認。以下はすべてコミュニティによるリ
 |---|---|---|
 | **ヘッドトラッキング**（姿勢: ピッチ / ヨー / ロール） | ✅ | XR-plugin の表示ポーズ由来。アイカメラを駆動。 |
 | **トラッキングモード** 6DoF / 3DoF / 0DoF | ✅ | 選択可（`xreal/tracking_type` / `XrealSystem.set_tracking_type` / `debug.xreal.tracking_type`）。 |
-| **ステレオ表示** — ヘッドロックの覗き窓 | ✅ | グラス越しにワールド固定 3D。**Multipass**（両眼）。 |
-| **Multiview** ステレオ | 🚧 WIP | 登録・head-lock は動作するが右目が現状黒。 |
+| **ステレオ表示** — ヘッドロックの覗き窓 | ✅ | グラス越しにワールド固定 3D。**Multipass**（両眼）。唯一のステレオモード（セレクタなし）。 |
+| **Multiview** ステレオ | ❌ 棚上げ | 右目が黒 — NR コンポジタ（`libnr_api`）が我々の client `GL_TEXTURE_2D_ARRAY` を取り込めず、かつ本リグ（2 SubViewport 描画）では性能利得も無い。コードは残すが無効化、開発者用エスケープ `setprop debug.xreal.force_multiview 1` のみ。詳細 `docs/codex-righteye-analysis.md`。 |
 | **Recenter** | ✅ | 正面方向をリセット（SDK `NativePerception::Recenter`）。 |
 | **RGB カメラ**（Godot `CameraFeed`） | ✅ | フルカラーで 3D シーン内のヘッドロックのクアッドに表示。**3DoF 必須**（6DoF SLAM とカメラを共有するため）。 |
 | **グラス入力** — 物理キー（MENU/MULTI: クリック/ダブル/長押し） | ✅ | Godot シグナル（`key_event`, `key_state_changed`）。 |

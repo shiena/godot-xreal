@@ -161,27 +161,13 @@ impl XrealSystem {
             .unwrap_or(-1) as i64
     }
 
-    /// Select the stereo rendering mode applied when the native session bootstraps:
-    /// `0` = Multipass (per-eye 2D textures — renders; the glasses layer is world-anchored),
-    /// `2` = Multiview / Single-Pass-Instanced (matches LayeredClient; still WIP). **Call before the
-    /// session starts** (e.g. an autoload `_ready`, before the XR rig enters the tree) — it is read
-    /// once at `InitUserDefinedSettings`. Equivalent to the ProjectSetting
-    /// `xreal/stereo_rendering_mode` or `adb shell setprop debug.xreal.stereo_mode <n>`.
-    #[func]
-    fn set_stereo_rendering_mode(&self, mode: i64) {
-        session::set_stereo_mode_override(mode as i32);
-    }
+    // NOTE: there is no stereo-mode selector. The port always uses Multipass — Multiview is shelved
+    // (right eye black in the NR compositor, no benefit on this rig; see docs/codex-righteye-analysis.md).
+    // The Multiview code is kept and reachable only via `adb shell setprop debug.xreal.force_multiview 1`.
 
-    /// The current stereo-mode override (`-1` if unset; the effective mode is resolved at bootstrap
-    /// from the override, the ProjectSetting, the system property, then the default).
-    #[func]
-    fn get_stereo_rendering_mode(&self) -> i64 {
-        session::stereo_mode_override() as i64
-    }
-
-    /// Select the head-tracking mode applied when the native session **bootstraps** (the startup
-    /// selector, parallel to `set_stereo_rendering_mode`): `0` = 6DoF (SLAM position + orientation,
-    /// no drift — the recommended mode), `1` = 3DoF (IMU orientation only, no position), `2` = 0DoF.
+    /// Select the head-tracking mode applied when the native session **bootstraps** (a startup
+    /// selector): `0` = 6DoF (SLAM position + orientation, no drift — the recommended mode),
+    /// `1` = 3DoF (IMU orientation only, no position), `2` = 0DoF.
     /// **Call before the session starts** (e.g. an autoload `_ready`, before the XR rig enters the
     /// tree) — it is read once at `InitUserDefinedSettings`. Equivalent to the ProjectSetting
     /// `xreal/tracking_type` or `adb shell setprop debug.xreal.tracking_type <n>`. Use
