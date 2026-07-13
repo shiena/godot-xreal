@@ -8,7 +8,7 @@ that reuses the SDK's **native** libraries instead of its Unity C# layer.
 
 > **⚠️ Unofficial & experimental.** This is an independent community project — **not affiliated with,
 > endorsed by, or supported by XREAL**. "XREAL" and the SDK are the property of their respective
-> owners; the native libraries are **not** bundled (see [Vendoring](#vendoring-the-xreal-runtime-libraries-required)).
+> owners; the native libraries are **not** bundled — you vendor them yourself as a build prerequisite (see [Build](#build)).
 > It works by reverse-engineering the vendored SDK's C ABI for interop — use at your own risk.
 
 ## Why a native port (not a C# translation)
@@ -47,12 +47,18 @@ community-reverse-engineered interop, not an official API.
 Not implemented: 6DoF position for the app camera, hand/image/plane tracking, spatial anchors, meshing,
 audio/photo capture, the NRSDK's higher-level perception features.
 
-## Vendoring the XREAL runtime libraries (required)
+## Build
 
-The XREAL native libraries are **not** included in this repo (they remain under XREAL's terms). You
-obtain them from the **XREAL SDK for Unity** — the `com.xreal.xr` package, shipped as a tgz
+The GDExtension is plain godot-rust; the one project-specific step is a **prerequisite** you do once —
+vendoring the XREAL native libraries — before the Android export. Full command reference (desktop
+iteration, manual `cargo ndk` / Gradle steps, signing): [`docs/build-and-release.md`](docs/build-and-release.md).
+
+### Prerequisite: vendor the XREAL runtime libraries
+
+The XREAL native libraries are **not** included in this repo (they remain under XREAL's terms). Obtain
+them from the **XREAL SDK for Unity** — the `com.xreal.xr` package, shipped as a tgz
 (`com.xreal.xr.tar.gz`); **3.1.0 is the verified version** — and place these **8 `.so` into
-`jniLibs/arm64-v8a/`** before exporting the APK (`jniLibs/` is git-ignored):
+`jniLibs/arm64-v8a/`** (git-ignored) before exporting the APK:
 
 1. Extract `com.xreal.xr.tar.gz` → a `package/` directory.
 2. **3 core libs** from `package/Runtime/Plugins/Android/arm64-v8a/` — copy them, or run
@@ -63,13 +69,20 @@ obtain them from the **XREAL SDK for Unity** — the `com.xreal.xr` package, shi
    - `nr_loader.aar` → `libnr_loader.so`
    - `nr_common.aar` → `libnr_libusb.so`
 
-`scripts/build.ps1` / `scripts/build.sh` verify these before an export and print this same guide if any
-are missing. Details: [`docs/build-and-release.md`](docs/build-and-release.md).
+### Build & install
+
+With the toolchain on `PATH` (Rust `aarch64-linux-android` target, `cargo-ndk`, `ANDROID_NDK_HOME`, a
+Godot 4.7-stable binary, `adb`), `scripts/build.sh` (or `scripts/build.ps1`) wraps the four Android
+stages — cargo-ndk build → Godot APK export → `adb install` → launch. It re-checks the prerequisite
+above first and prints the same guide if any `.so` is missing.
+
+```bash
+./scripts/build.sh --all      # build + export + install + run on the glasses
+```
 
 ## Usage (MVP)
 
-1. Build the extension and vendor the XREAL libraries — see
-   [`docs/build-and-release.md`](docs/build-and-release.md).
+1. Vendor the libraries and build/deploy — see [Build](#build) above.
 2. Instance `addons/godot_xreal/xreal_rig.tscn` (an `XrealHeadTracker` with a `Camera3D`
    child) into your scene, or add an `XrealHeadTracker` and parent a `Camera3D` yourself.
 3. On device, the camera looks around with the wearer's head (3DoF).
