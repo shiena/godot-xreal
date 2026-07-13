@@ -115,42 +115,88 @@ impl INode3D for XrealHeadTracker {
             Variant::nil()
         });
         RenderingServer::singleton().call_on_render_thread(&callable);
-        match session.head_pose() {
-            Some((pose, rotation)) => {
-                self.tracking = true;
-                if !self.display_signaled {
-                    self.display_signaled = true;
-                    self.signals().display_started().emit();
+        // Primary: drive the eye cameras from the **display** InputManager pose — the exact pose the
+        // compositor reprojects the glasses layer against (full orientation incl. ROLL, which the
+        // compact session-manager NrPose lacks; see docs/roll-tracking-investigation.md). Sharing one
+        // pose between our render and the compositor is what makes a correct peek window on all axes.
+        // CRASH RULE (device-confirmed): never query BOTH head_pose_display() and head_pose() in the
+        // same frame → SIGSEGV 0x3f800000. So the session-manager read is a fallback used ONLY when
+        // the display export is entirely absent (None), never merely when a frame's block is unusable.
+        match session.head_pose_display() {
+            Some(raw) => {
+                if let Some(rotation) = Self::display_rotation(&raw) {
+                    self.tracking = true;
+                    if !self.display_signaled {
+                        self.display_signaled = true;
+                        self.signals().display_started().emit();
+                    }
+                    self.last_raw_rotation = rotation;
+                    // Bake the compositor's pose straight into the node. No app-side recenter — the
+                    // peek window needs baked camera rotation == the compositor's reprojection pose;
+                    // recenter is delegated to the SDK (session.recenter → NativePerception::Recenter),
+                    // which shifts this pose source and the layer together.
+                    self.base_mut().set_quaternion(rotation);
+                    let euler = rotation.get_euler() * (180.0 / std::f32::consts::PI);
+                    // Calibration log: extracted Godot euler + the raw 4×4 rows. Move head in a known
+                    // way — nod=pitch/X, turn=yaw/Y, tilt=roll/Z — and check each axis + sign; if one
+                    // reads inverted, flip it in display_rotation().
+                    if self.frames < 16 || self.frames % 30 == 0 {
+                        godot_print!(
+                            "[xreal] DISP euler pitch/x={:.1} yaw/y={:.1} roll/z={:.1} | \
+                             r0=[{:.3},{:.3},{:.3}] r1=[{:.3},{:.3},{:.3}] r2=[{:.3},{:.3},{:.3}] pos=[{:.3},{:.3},{:.3}]",
+                            euler.x, euler.y, euler.z,
+                            raw[0], raw[1], raw[2], raw[4], raw[5], raw[6], raw[8], raw[9], raw[10],
+                            raw[12], raw[13], raw[14]
+                        );
+                    }
+                    self.debug_pose = GString::from(&format!(
+                        "DISP\npitch {:.0}\nyaw {:.0}\nroll {:.0}",
+                        euler.x, euler.y, euler.z
+                    ));
+                } else {
+                    // Display export present but this frame's block isn't a valid rotation (e.g. a
+                    // startup transient). Hold the previous transform; do NOT fall through to the
+                    // session-manager pose (that would query both pipelines this frame — the crash).
+                    if self.frames % 120 == 1 {
+                        godot_warn!(
+                            "[xreal] DISP pose: 16-float block not a valid rotation transform (raw={raw:?})"
+                        );
+                    }
                 }
-                // Apply the app-side recenter reference (see the field docs: the SDK's
-                // RecenterGlasses does not affect this pose source).
-                self.last_raw_rotation = rotation;
-                let corrected =
-                    (self.recenter_reference.inverse() * rotation).normalized();
-                self.base_mut().set_quaternion(corrected);
-                let euler = corrected.get_euler() * (180.0 / std::f32::consts::PI);
-                // Rotation calibration log: raw NRSDK quaternion + resulting Godot Euler (deg).
-                // Move the head in a known way and match: pitch=X (nod up/down), yaw=Y (turn
-                // left/right), roll=Z (tilt ear-to-shoulder). Wrong sign/axis → adjust the flip in
-                // NrPose::to_godot_quaternion.
-                if self.frames % 30 == 0 {
-                    godot_print!(
-                        "[xreal] pose q(wxyz)=({:.3},{:.3},{:.3},{:.3}) euler_deg pitch/x={:.1} yaw/y={:.1} roll/z={:.1}",
-                        pose.qx, pose.qy, pose.qz, pose.qw, euler.x, euler.y, euler.z
-                    );
-                }
-                self.debug_pose = GString::from(&format!(
-                    "pitch {:.0}\nyaw {:.0}\nroll {:.0}\nq {:.2} {:.2} {:.2} {:.2}",
-                    euler.x, euler.y, euler.z, pose.qx, pose.qy, pose.qz, pose.qw
-                ));
             }
-            None => {
-                self.tracking = false;
-                // Throttled (~every 2s at 60fps) so we can diagnose why no pose arrives.
-                if self.frames % 120 == 1 {
-                    godot_warn!("[xreal] no head pose — {}", session.diagnostics());
+            None => match session.head_pose() {
+                Some((pose, rotation)) => {
+                    self.tracking = true;
+                    if !self.display_signaled {
+                        self.display_signaled = true;
+                        self.signals().display_started().emit();
+                    }
+                    // Session-manager fallback (display export absent): app-side recenter, since the
+                    // SDK's RecenterGlasses does not affect this pose source.
+                    self.last_raw_rotation = rotation;
+                    let corrected =
+                        (self.recenter_reference.inverse() * rotation).normalized();
+                    self.base_mut().set_quaternion(corrected);
+                    let euler = corrected.get_euler() * (180.0 / std::f32::consts::PI);
+                    if self.frames % 30 == 0 {
+                        godot_print!(
+                            "[xreal] SM pose q(wxyz)=({:.3},{:.3},{:.3},{:.3}) euler_deg pitch/x={:.1} yaw/y={:.1} roll/z={:.1}",
+                            pose.qx, pose.qy, pose.qz, pose.qw, euler.x, euler.y, euler.z
+                        );
+                    }
+                    self.debug_pose = GString::from(&format!(
+                        "SM\npitch {:.0}\nyaw {:.0}\nroll {:.0}",
+                        euler.x, euler.y, euler.z
+                    ));
                 }
-            }
+                None => {
+                    self.tracking = false;
+                    // Throttled (~every 2s at 60fps) so we can diagnose why no pose arrives.
+                    if self.frames % 120 == 1 {
+                        godot_warn!("[xreal] no head pose — {}", session.diagnostics());
+                    }
+                }
+            },
         }
 
         // Point the eye cameras from the (now-updated) head transform, then publish their
@@ -160,6 +206,54 @@ impl INode3D for XrealHeadTracker {
 }
 
 impl XrealHeadTracker {
+    /// Interpret libXREALXRPlugin.so's 16-float display head-pose block as a Godot rotation.
+    ///
+    /// DEVICE-CONFIRMED layout (on-device raw log): the 16 floats are a **4×4 row-major transform**
+    /// — the upper-left 3×3 is the head rotation (each row a unit vector), the last row (12,13,14) is
+    /// the tiny position, the last column (3,7,11) is 0 and raw[15] is 1 (it copies
+    /// `NativePerception::GetHeadPose`'s struct return verbatim). We validate that structure, extract
+    /// the quaternion from the 3×3 (Shepperd), then apply the same NRSDK→Godot handedness flip as
+    /// `NrPose::to_godot_quaternion`. Returns `None` if the block isn't a valid rotation transform
+    /// (e.g. before the session is live), so the caller can hold the previous pose.
+    fn display_rotation(raw: &[f32; 16]) -> Option<Quaternion> {
+        // Row-major 3×3 rotation.
+        let (m00, m01, m02) = (raw[0], raw[1], raw[2]);
+        let (m10, m11, m12) = (raw[4], raw[5], raw[6]);
+        let (m20, m21, m22) = (raw[8], raw[9], raw[10]);
+        // Validate the homogeneous 4×4 structure so we don't extract from a zero/garbage block.
+        let unit = |a: f32, b: f32, c: f32| ((a * a + b * b + c * c).sqrt() - 1.0).abs() < 0.05;
+        let structured = unit(m00, m01, m02)
+            && unit(m10, m11, m12)
+            && unit(m20, m21, m22)
+            && raw[3].abs() < 0.01
+            && raw[7].abs() < 0.01
+            && raw[11].abs() < 0.01
+            && (raw[15] - 1.0).abs() < 0.05;
+        if !structured {
+            return None;
+        }
+        // Standard rotation-matrix → quaternion (Shepperd), in the source (NRSDK/Unity LH) frame.
+        let trace = m00 + m11 + m22;
+        let (x, y, z, w) = if trace > 0.0 {
+            let s = (trace + 1.0).sqrt() * 2.0; // s = 4w
+            ((m21 - m12) / s, (m02 - m20) / s, (m10 - m01) / s, 0.25 * s)
+        } else if m00 > m11 && m00 > m22 {
+            let s = (1.0 + m00 - m11 - m22).sqrt() * 2.0; // s = 4x
+            (0.25 * s, (m01 + m10) / s, (m02 + m20) / s, (m21 - m12) / s)
+        } else if m11 > m22 {
+            let s = (1.0 + m11 - m00 - m22).sqrt() * 2.0; // s = 4y
+            ((m01 + m10) / s, 0.25 * s, (m12 + m21) / s, (m02 - m20) / s)
+        } else {
+            let s = (1.0 + m22 - m00 - m11).sqrt() * 2.0; // s = 4z
+            ((m02 + m20) / s, (m12 + m21) / s, 0.25 * s, (m10 - m01) / s)
+        };
+        // NRSDK → Godot handedness. Device-calibrated with a wearer (DISP calibration log): with
+        // (-x,-y,z,w) roll (Z) and yaw (Y) were correct but PITCH (X) came out inverted — nodding
+        // down clipped the box's bottom instead of its top. Keep pitch un-negated: (x,-y,z,w) makes
+        // nod=pitch/X, turn=yaw/Y, tilt=roll/Z all track world-locked in the correct direction.
+        Some(Quaternion::new(x, -y, z, w).normalized())
+    }
+
     /// Poll the JNI glasses hot-plug counters and re-emit any new events as signals (called on the
     /// Godot main thread, where signal emission is safe — the JNI callbacks run on the UI thread).
     fn poll_glasses_events(&mut self) {
