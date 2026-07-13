@@ -29,7 +29,8 @@ func _get_android_manifest_element_contents(_platform: EditorExportPlatform, _de
 <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 <uses-permission android:name="android.permission.REORDER_TASKS" />
 <uses-permission android:name="android.permission.ACTIVITY_EMBEDDING" tools:ignore="ProtectedPermissions" />
-<uses-permission android:name="android.permission.FOREGROUND_SERVICE" />"""
+<uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+<uses-permission android:name="android.permission.CAMERA" />"""
 
 ## <application>-level: XREAL markers + the companion / NRFakeActivity declarations. Uses the
 ## fully-qualified com.godot.game.XrealCompanionActivity (matches the .jar class).

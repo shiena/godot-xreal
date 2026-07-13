@@ -26,6 +26,9 @@ var _status: Label
 var _euler_label: Label
 var _wear_prompt: Label
 var _extension_loaded := false
+# XREAL RGB camera as a Godot CameraFeed (spike — see docs/camera-feed-plan.md).
+var _cam_feed: Object
+var _cam_preview: TextureRect
 
 func _ready() -> void:
 	_try_register_android_bridge()
@@ -54,6 +57,8 @@ func _ready() -> void:
 	_build_room()
 	_spawn_rig()
 	_setup_ui()
+	if _extension_loaded:
+		_setup_camera_feed()
 
 func _try_register_android_bridge() -> void:
 	if not OS.has_feature("android"):
@@ -143,6 +148,50 @@ func _setup_ui() -> void:
 	_wear_prompt.text = "グラスを装着して\n正面を見てください\n\nPut on the glasses\nand look forward"
 	$UI.add_child(_wear_prompt)
 
+## Expose the XREAL glasses RGB camera as a Godot CameraFeed (docs/camera-feed-plan.md), register it
+## with the CameraServer, and show it in a corner preview — modeled on ~/dev/godot-camerafeed-demo.
+## The feed is driven per-frame from _process (poll_frame grabs the latest frame → set_rgb_image).
+func _setup_camera_feed() -> void:
+	if not ClassDB.class_exists(&"XrealCameraFeed"):
+		return
+	# Runtime CAMERA permission (also grant via `adb shell pm grant … android.permission.CAMERA`).
+	if OS.has_feature("android"):
+		OS.request_permission("android.permission.CAMERA")
+
+	_cam_feed = ClassDB.instantiate(&"XrealCameraFeed")
+	# Name it so it's identifiable among CameraServer.feeds() — the XREAL glasses camera is NOT an
+	# Android Camera2 device, so it only exists as this feed (Godot's built-in CameraAndroid feeds,
+	# if you enable CameraServer.monitoring_feeds, are the HOST device's cameras — routed by id/class).
+	_cam_feed.set_name("XREAL Glasses RGB")
+	CameraServer.add_feed(_cam_feed)
+	_cam_feed.set_active(true)  # -> activate_feed() starts capture; active=true enables set_rgb_image
+
+	# Corner preview: a CameraTexture bound to THIS feed by id (this is the routing) + which_feed for
+	# the RGB image our feed publishes. A plain TextureRect is enough for RGB (no YCbCr shader needed).
+	var tex := CameraTexture.new()
+	tex.camera_feed_id = _cam_feed.get_id()
+	tex.which_feed = CameraServer.FEED_RGBA_IMAGE
+	_cam_preview = TextureRect.new()
+	_cam_preview.name = "CameraPreview"
+	_cam_preview.texture = tex
+	_cam_preview.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_cam_preview.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT
+	_cam_preview.flip_v = true  # the Y plane is top-down vs Godot's texture V; flip for an upright view
+	_cam_preview.position = Vector2(32, 32)
+	_cam_preview.size = Vector2(512, 288)
+	$UI.add_child(_cam_preview)
+
+	var cap := Label.new()
+	cap.text = "XREAL CAM"
+	cap.position = Vector2(32, 8)
+	cap.add_theme_font_size_override(&"font_size", 28)
+	cap.add_theme_color_override(&"font_color", Color(0.4, 1.0, 0.6))
+	cap.add_theme_color_override(&"font_shadow_color", Color.BLACK)
+	cap.add_theme_constant_override(&"shadow_offset_x", 2)
+	cap.add_theme_constant_override(&"shadow_offset_y", 2)
+	$UI.add_child(cap)
+	print("[demo] XrealCameraFeed registered (id=%d, name=%s)" % [_cam_feed.get_id(), _cam_feed.get_name()])
+
 func _on_recenter_pressed() -> void:
 	if _tracker and _tracker.has_method(&"recenter"):
 		_tracker.recenter()
@@ -188,6 +237,12 @@ func _on_glasses_event(action_type: int, para: int, para2: int, para3: float) ->
 	print("[demo] glasses event: type=%d para=%d para2=%d para3=%f" % [action_type, para, para2, para3])
 
 func _process(_delta: float) -> void:
+	# Pump the XREAL camera feed. The session can come up a frame or two after _ready, so keep
+	# (re)activating until it takes — set_rgb_image is a no-op while the feed is inactive.
+	if _cam_feed:
+		if not _cam_feed.is_active():
+			_cam_feed.set_active(true)
+		_cam_feed.poll_frame()
 	if _euler_label == null:
 		return
 	if not _extension_loaded:

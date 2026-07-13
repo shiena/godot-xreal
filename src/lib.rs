@@ -13,6 +13,7 @@
 
 use godot::prelude::*;
 
+mod camera_feed;
 mod ffi;
 mod gl;
 mod glasses_events;
@@ -29,5 +30,6 @@ struct GodotXrealExtension;
 #[gdextension]
 unsafe impl ExtensionLibrary for GodotXrealExtension {}
 
+pub use camera_feed::XrealCameraFeed;
 pub use node::XrealHeadTracker;
 pub use system::XrealSystem;
