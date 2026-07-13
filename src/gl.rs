@@ -34,12 +34,16 @@ type FnBlitFramebuffer =
     unsafe extern "C" fn(i32, i32, i32, i32, i32, i32, i32, i32, u32, u32);
 type FnClearColor = unsafe extern "C" fn(f32, f32, f32, f32);
 type FnClear = unsafe extern "C" fn(u32);
+type FnTexImage3D =
+    unsafe extern "C" fn(u32, i32, i32, i32, i32, i32, i32, u32, u32, *const c_void);
+type FnFramebufferTextureLayer = unsafe extern "C" fn(u32, u32, u32, i32, i32);
 type FnGetIntegerv = unsafe extern "C" fn(u32, *mut i32);
 type FnIsEnabled = unsafe extern "C" fn(u32) -> u8;
 type FnEnable = unsafe extern "C" fn(u32);
 type FnDisable = unsafe extern "C" fn(u32);
 
 const GL_TEXTURE_2D: u32 = 0x0DE1;
+const GL_TEXTURE_2D_ARRAY: u32 = 0x8C1A;
 const GL_RGBA: u32 = 0x1908;
 const GL_RGBA8: i32 = 0x8058;
 const GL_UNSIGNED_BYTE: u32 = 0x1401;
@@ -72,6 +76,8 @@ struct Gl {
     blit_framebuffer: FnBlitFramebuffer,
     clear_color: FnClearColor,
     clear: FnClear,
+    tex_image_3d: FnTexImage3D,
+    framebuffer_texture_layer: FnFramebufferTextureLayer,
     get_integerv: FnGetIntegerv,
     is_enabled: FnIsEnabled,
     enable: FnEnable,
@@ -107,6 +113,11 @@ impl Gl {
                 blit_framebuffer: sym!("glBlitFramebuffer", FnBlitFramebuffer),
                 clear_color: sym!("glClearColor", FnClearColor),
                 clear: sym!("glClear", FnClear),
+                tex_image_3d: sym!("glTexImage3D", FnTexImage3D),
+                framebuffer_texture_layer: sym!(
+                    "glFramebufferTextureLayer",
+                    FnFramebufferTextureLayer
+                ),
                 get_integerv: sym!("glGetIntegerv", FnGetIntegerv),
                 is_enabled: sym!("glIsEnabled", FnIsEnabled),
                 enable: sym!("glEnable", FnEnable),
@@ -180,6 +191,99 @@ pub fn alloc_texture(width: i32, height: i32, _srgb: bool) -> Option<u32> {
             return None;
         }
         Some(tex)
+    }
+}
+
+/// Allocate a `GL_TEXTURE_2D_ARRAY` with `layers` layers (RGBA8), for the SDK's Multiview /
+/// Single-Pass-Instanced path (`CreateTexture` with `textureArrayLength == 2`). The compositor
+/// binds this as a layered multiview framebuffer; a plain 2D texture there yields
+/// `GL_INVALID_FRAMEBUFFER_OPERATION` (black). Returns the GL name (`None` on failure).
+pub fn alloc_texture_array(width: i32, height: i32, layers: i32, _srgb: bool) -> Option<u32> {
+    let g = gl()?;
+    unsafe {
+        while (g.get_error)() != 0 {}
+        let mut tex: u32 = 0;
+        (g.gen_textures)(1, &mut tex);
+        if tex == 0 || (g.get_error)() != 0 {
+            return None;
+        }
+        (g.bind_texture)(GL_TEXTURE_2D_ARRAY, tex);
+        (g.tex_parameteri)(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        (g.tex_parameteri)(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        (g.tex_parameteri)(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        (g.tex_parameteri)(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        (g.tex_image_3d)(
+            GL_TEXTURE_2D_ARRAY,
+            0,
+            GL_RGBA8,
+            width,
+            height,
+            layers,
+            0,
+            GL_RGBA,
+            GL_UNSIGNED_BYTE,
+            std::ptr::null(),
+        );
+        (g.bind_texture)(GL_TEXTURE_2D_ARRAY, 0);
+        let err = (g.get_error)();
+        if err != 0 {
+            godot::global::godot_warn!(
+                "[xreal] alloc_texture_array {width}x{height}x{layers} gl_err={err}"
+            );
+            (g.delete_textures)(1, &tex);
+            return None;
+        }
+        Some(tex)
+    }
+}
+
+/// Blit 2D `src` into a single `layer` of a `GL_TEXTURE_2D_ARRAY` (`dst_array`), via
+/// `glFramebufferTextureLayer`. Used to fill the per-eye layers of the Multiview swapchain texture.
+static LAYER_LOG: AtomicU32 = AtomicU32::new(0);
+pub fn blit_texture_to_layer(
+    src: u32,
+    src_w: i32,
+    src_h: i32,
+    dst_array: u32,
+    layer: i32,
+    dst_w: i32,
+    dst_h: i32,
+) {
+    let Some(g) = gl() else { return };
+    if src == 0 || dst_array == 0 {
+        return;
+    }
+    unsafe {
+        let mut prev_draw: i32 = 0;
+        let mut prev_read: i32 = 0;
+        (g.get_integerv)(GL_DRAW_FRAMEBUFFER_BINDING, &mut prev_draw);
+        (g.get_integerv)(GL_READ_FRAMEBUFFER_BINDING, &mut prev_read);
+
+        let read_fbo = scratch_fbo(g, 1);
+        let draw_fbo = scratch_fbo(g, 0);
+        (g.bind_framebuffer)(GL_READ_FRAMEBUFFER, read_fbo);
+        (g.framebuffer_texture_2d)(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, src, 0);
+        (g.bind_framebuffer)(GL_DRAW_FRAMEBUFFER, draw_fbo);
+        (g.framebuffer_texture_layer)(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, dst_array, 0, layer);
+
+        let read_ok = (g.check_framebuffer_status)(GL_READ_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
+        let draw_ok = (g.check_framebuffer_status)(GL_DRAW_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
+        if read_ok && draw_ok {
+            (g.blit_framebuffer)(
+                0, 0, src_w, src_h, 0, 0, dst_w, dst_h, GL_COLOR_BUFFER_BIT, GL_LINEAR as u32,
+            );
+        }
+
+        (g.framebuffer_texture_2d)(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
+        (g.framebuffer_texture_layer)(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, 0, 0, 0);
+        (g.bind_framebuffer)(GL_READ_FRAMEBUFFER, prev_read as u32);
+        (g.bind_framebuffer)(GL_DRAW_FRAMEBUFFER, prev_draw as u32);
+
+        if LAYER_LOG.fetch_add(1, Ordering::Relaxed) < 8 {
+            godot::global::godot_print!(
+                "[xreal] blit_to_layer dst={dst_array} layer={layer} src={src}: read_ok={read_ok} draw_ok={draw_ok}"
+            );
+        }
     }
 }
 
