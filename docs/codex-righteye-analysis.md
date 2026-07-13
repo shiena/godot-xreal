@@ -273,3 +273,471 @@ right SubViewport content, and NOT the `glFramebufferTextureLayer` blit (all fin
 Determine what gates 2 vs 1 viewport (overlay type / a count field / a Multiview flag), why ours is 1,
 and how to force the layer-1 viewport (an extra SDK call, a `signal_guard` code patch, or a descriptor
 field). Until then, **Multipass is the working stereo path** (both eyes) and Multiview is left-eye-only.
+
+## Follow-up RE (2026-07-13) - why our Multiview path still submits one viewport
+
+The right-eye-black A/B result is consistent with a one-viewport `DisplayOverlay`, not with a
+render-target or descriptor problem. The decisive gate is **not** `UnityXRNextFrameDesc.renderParamsCount`;
+it is `OverlayBase+0x14`, initialized when `DisplayManager::CreateDisplayLayer` constructs the
+display overlay.
+
+### (a) Two-viewports vs one: exact gate
+
+`DisplayOverlay::CreateViewport @0xa6a68` gates the viewport count on `*(overlay+0x14)`:
+
+```text
+0xa6a7c  ldr w8, [x0,#0x14]
+0xa6a88  cbz w8, 0xa6af0        ; zero => one viewport for overlay+0x50 component
+
+0xa6a8c..0xa6aec                ; non-zero path: append viewport 0, component 0
+0xa6cb8..0xa6d18                ; non-zero path: append viewport 1, component 1
+0xa6e10  str wzr, [viewport0,#0x64] ; multiviewLayer = 0
+0xa6eb0  select viewport[1]
+0xa6ebc  str w9, [viewport1,#0x64]  ; multiviewLayer = 1
+
+0xa6af0..0xa6b50                ; zero path: append one viewport for [overlay+0x50]
+0xa6ea8  mov x8, xzr
+0xa6eac  mov w9, wzr
+0xa6ebc  str w9, [viewport0,#0x64]  ; multiviewLayer = 0 only
+```
+
+`overlay+0x14` is written by `OverlayBase::OverlayBase(NRSize2i,uint,uint) @0xa7be8`:
+
+```text
+0xa7bfc  str w2, [x0,#0x14]
+```
+
+`DisplayOverlay::DisplayOverlay @0xa6988` forwards its third argument (`w2`) into that base
+constructor, then stores only the target component at `overlay+0x50`:
+
+```text
+0xa6998  bl 0xa7be8             ; w2 -> overlay+0x14
+0xa69a8  str w19, [x20,#0x50]   ; component, usually 6 for display overlay
+```
+
+For Multiview, `DisplayManager::CreateDisplayLayer @0x6dc18` computes that `w2` argument from
+`DisplayManager+0x62`, **not** from the next-frame descriptor:
+
+```text
+0x6dc48  ldr w9, [settings,#0x4] ; stereo_rendering_mode
+0x6dc50  cmp w9, #2
+0x6dc54  b.ne 0x6dc68
+0x6dc58  cmp w8, #0              ; w8 = *(DisplayManager+0x62)
+0x6dc5c  cset w8, eq
+0x6dc60  lsl w21, w8, #1         ; w21 = (*(DM+0x62)==0) ? 2 : 0
+...
+0x6dd44  mov w2, w21
+0x6dd48  bl 0xa6988              ; real DisplayOverlay ctor
+```
+
+So the concrete condition is:
+
+```text
+stereo_rendering_mode == 2 AND DisplayManager+0x62 == 0
+```
+
+Only then `overlay+0x14 == 2`, and `DisplayOverlay::CreateViewport` creates two viewports. If
+`DM+0x62 == 1`, the same Multiview descriptor can still have `renderParamsCount=2`, but the display
+overlay is constructed with `overlay+0x14=0` and therefore creates only the single component-6 viewport.
+
+`DM+0x62` is set earlier in `DisplayManager::GfxThreadStart @0x67d14` from
+`NativeRendering::GetFrameBufferMode @0x68034`:
+
+```text
+0x67d90  bl 0x68034              ; NativeRendering::GetFrameBufferMode()
+0x67d94  cmp w0, #2
+0x67d98  b.eq 0x67e10
+...
+0x67dc4  strb w21, [x19,#0x62]  ; framebuffer mode 1 + setting byte +0xc => DM+0x62 = 1
+...
+0x67e20  strb wzr, [x19,#0x62]  ; framebuffer mode 2 => DM+0x62 = 0
+```
+
+This explains the observed mismatch: `PopulateNextFrameDesc` can be in the `stereo_rendering_mode==2`
+branch and write `renderParamsCount=2`, while the display overlay was already constructed as a
+one-viewport component-6 overlay because `GetFrameBufferMode()` did not leave `DM+0x62 == 0`.
+
+### (b) Where the viewport vector is populated
+
+The viewport vector is populated once during overlay initialization, not rebuilt from
+`UnityXRNextFrameDesc` per frame.
+
+`OverlayBase::Init @0xa7cc4` calls virtual methods in this order:
+
+```text
+0xa7ce0  vtable+0x18  InitSwapchain
+0xa7cf0  vtable+0x30  CreateBuffer
+0xa7d00  vtable+0x40  CreateViewport
+```
+
+For a real `DisplayOverlay`, `vtable+0x40 -> DisplayOverlay::CreateViewport @0xa6a68`, which appends
+one or two `Viewport` records into `[overlay+0x38..0x40]`, stride `0x88`.
+
+Per frame, `DisplayManager::SetBufferViewport @0x681f4` calls
+`OverlayBase::SetBufferViewport @0xa7f74` for each display overlay in `DM+0x128`. That function first
+calls virtual `UpdateViewport` and then walks the existing vector:
+
+```text
+0xa7f90  ldr x8, [vtable,#0x48]
+0xa7f94  blr x8                  ; UpdateViewport()
+0xa7f98  ldp x21,x22,[overlay,#0x38]
+0xa7fc0  bl 0xa2770              ; NativeRendering::SetBufferViewport
+0xa7fc4  add x21, x21, #0x88
+```
+
+`DisplayOverlay::UpdateViewport @0xa6f28` updates the existing records. It does not append a second
+record:
+
+```text
+0xa6f3c  ldp x9,x8,[overlay,#0x38]
+0xa6f40  sub x20,x8,x9
+0xa6f48  cmp x20,#0x88
+0xa6f4c  b.ne 0xa6fa8
+
+; exactly one viewport: update only component [overlay+0x50]
+0xa6f50  ldr w20,[overlay,#0x50]
+...
+0xa6f64  stp s0,s1,[viewport0,#0x3c]
+0xa6f88  stur q0,[viewport0,#0x24]
+
+; not exactly one viewport, i.e. the two-viewport Multiview vector:
+0xa6fa8..0xa6fe4  update viewport0 with component 0
+0xa6fec..0xa7028  update viewport1 with component 1
+```
+
+`ProjectionOverlay::UpdateViewport @0xa8c18` has the same shape for composition projection overlays:
+it branches on current vector byte length `==0x88`, updates either one record or records at
+`viewport0 + 0x00` and `viewport0 + 0x88`, and does not rebuild the vector from the descriptor. It is
+not the display-overlay path used by the Multiview swapchain in `DM+0x128`.
+
+Therefore a one-element `[overlay+0x38..0x40]` cannot be fixed by writing more fields into
+`UnityXRNextFrameDesc` during `run_frame_tick`; the second viewport must exist before
+`SetBufferViewport` runs.
+
+### (c) Minimal lever for our emulation
+
+Keep the existing `CreateDisplayLayer+0x80` patch:
+
+```text
+lib+0x6dc98: cbz w8, 0x6dd18 -> b 0x6dd18
+encoding: 0x14000020
+```
+
+That patch is still required to force the real `DisplayOverlay` instead of `DummyDisplayOverlay`.
+However, it only selects the class. It does **not** force the two-viewport constructor parameter.
+
+Add one small Multiview-only code patch in `src/signal_guard.rs`:
+
+```text
+lib+0x6dc60: lsl w21, w8, #1 -> mov w21, #2
+encoding: 0x52800055
+```
+
+Why this is the smallest/safest lever:
+
+1. `0x6dc60` is inside the `stereo_rendering_mode == 2` block (`0x6dc50 cmp w9,#2`, `0x6dc54 b.ne`),
+   so Multipass construction is not affected.
+2. It preserves the real `DisplayOverlay`, real swapchain, real `CreateBuffer`, and real
+   `SetSwapChainBuffers` paths already proven necessary for texture registration.
+3. It makes `OverlayBase+0x14 = 2`, which is exactly the value `DisplayOverlay::CreateViewport`
+   tests to take the two-viewport path.
+4. It avoids direct NR API calls and avoids manufacturing a `Viewport` struct in our code.
+
+Expected flow after both patches:
+
+```text
+CreateDisplayLayer:
+  settings stereo_rendering_mode == 2
+  lib+0x6dc60 forced w21 = 2
+  lib+0x6dc98 forced branch to real DisplayOverlay
+  DisplayOverlay ctor writes overlay+0x14 = 2
+
+OverlayBase::Init:
+  DisplayOverlay::CreateViewport sees overlay+0x14 != 0
+  creates viewport[0] component 0, multiviewLayer 0
+  creates viewport[1] component 1, multiviewLayer 1
+
+SubmitCurrentFrame:
+  SetBufferViewport walks two 0x88 records
+  NativeRendering::SetBufferViewport calls NRBufferViewportSetMultiviewLayer for viewport[1]
+  NativeRendering::SubmitFrame presents both array layers
+```
+
+Verification on device:
+
+```text
+adb shell setprop debug.xreal.stereo_mode 2
+```
+
+Then relaunch and verify logcat:
+
+```text
+[xreal] patch_display_layer ... cbz->b 0x6dd18
+[xreal] patch_display_layer ... lsl w21,w8,#1->mov w21,#2   ; add this log with the new patch
+[xreal] CreateTexture ... arraylen=2 ...
+[xreal] QueryTextureDesc ... same texture id ...
+[xreal] frame_tick ... passes=1 renderParamsCount0=2 tex0=<array> tex1=0
+[xreal] blit_to_layer ... layer=0 ... framebuffer-complete
+[xreal] blit_to_layer ... layer=1 ... framebuffer-complete
+```
+
+For the visual A/B, keep the decisive probe: blit the LEFT source into both array layers. With the
+two-viewport patch active, the right half of:
+
+```text
+adb exec-out screencap -d 4626964009369245188 -p
+```
+
+must no longer be black. If left-to-both shows in both halves, restore left->layer0 and right->layer1
+and verify the right half renders the right-eye SubViewport.
+
+## Follow-up RE (2026-07-13) - after `overlay+0x14 == 2`, right eye is fixed gray
+
+Device result after both patches:
+
+```text
+lib+0x6dc98: cbz -> b 0x6dd18
+lib+0x6dc60: lsl w21,w8,#1 -> mov w21,#2
+```
+
+The right half is no longer black; it is a fixed uniform gray (`mean == 0.2503`) and does not change
+when the left SubViewport is blitted into both array layers. That changes the diagnosis: the second
+viewport is now present enough to produce a right-eye image, but it is not sampling the contents we
+write into the registered array texture.
+
+### (a) Second viewport binding: same swapchain, not a second swapchain
+
+`DisplayOverlay::CreateViewport @0xa6a68` still creates the two viewport records exactly as mapped
+above. The important missing piece is what `CreateProjectionViewport` writes into each record:
+
+```text
+0xa8468  str w1, [x8]          ; Viewport+0x00 = target component
+0xa8478  ldr x8, [x0,#0x18]    ; overlay+0x18 = swapchain handle
+0xa8488  str x8, [x20,#0x8]    ; Viewport+0x08 = same swapchain handle
+```
+
+Both calls in `DisplayOverlay::CreateViewport` use the same `overlay+0x18`:
+
+```text
+0xa6a94  mov w1, wzr
+0xa6a98  bl 0xa8468            ; viewport[0], component 0, swapchain = overlay+0x18
+
+0xa6cbc  mov w1, #1
+0xa6cc4  bl 0xa8468            ; viewport[1], component 1, swapchain = overlay+0x18
+```
+
+Layer assignment is still per viewport:
+
+```text
+0xa6e10  ldr x9, [overlay+0x38]
+0xa6e18  str wzr, [viewport0,#0x64] ; layer 0
+0xa6eb0  select viewport[1]
+0xa6ebc  str w9, [viewport1,#0x64]  ; layer 1
+```
+
+Per-frame submission also uses the same frame and increments only the frame viewport index:
+
+```text
+OverlayBase::SetBufferViewport @0xa7f74
+0xa7fa8  ldr w3, [counter]
+0xa7fb8  add w8, w3, #1
+0xa7fbc  str w8, [counter]
+0xa7fc0  bl 0xa2770            ; NativeRendering::SetBufferViewport(viewport, frame, index)
+
+NativeRendering::SetBufferViewport @0xa3990
+0xa39a0  mov w2, w20           ; index
+0xa39b0  ldr x3, [sp,#0x58]    ; native viewport handle
+0xa39bc  mov w2, w20
+0xa39c0  blr [wrapper+0x2b8]   ; NRFrameSetBufferViewport(rendering, frame, index, viewport)
+```
+
+So the two-viewport path does **not** expect a second `CreateTexture` result or a second swapchain.
+The second viewport is supposed to reference the same multiview swapchain and select layer 1.
+
+### (b) Buffer allocation: one 2-layer swapchain, not two buffers
+
+`DisplayOverlay::CreateBufferSpec @0xa6a48` copies `overlay+0x14` into `BufferSpec+0x18`:
+
+```text
+0xa6a48  ldur x9, [overlay,#0xc] ; width/height
+0xa6a50  str w10, [spec,#0x8]    ; texture format/type field = 2
+0xa6a58  str x9, [spec]          ; size
+0xa6a5c  ldr w9, [overlay,#0x14]
+0xa6a60  str w9, [spec,#0x18]    ; multiview layer count
+```
+
+`NativeRendering::CreateBufferSpec @0xa0878` then calls the loader's
+`NRBufferSpecSetMultiviewLayers` only when that field is `2`:
+
+```text
+0xa0e70  ldr w8, [spec,#0x18]
+0xa0e74  cmp w8, #2
+0xa0e78  b.ne 0xa0ff4
+0xa0e88  mov w2, #2
+0xa0e8c  ldr x8, [wrapper,#0x128]
+0xa0e90  blr x8                 ; NRBufferSpecSetMultiviewLayers(rendering, spec, 2)
+```
+
+`OverlayBase::CreateBuffer @0xa8078` then allocates/registers one vector of swapchain buffers. In the
+normal GLES path it loops the recommended swapchain buffer count and passes `overlay+0x14` as
+`textureArrayLength` to `DisplayManager::CreateTexture`:
+
+```text
+0xa8204  cbz w20, 0xa831c       ; w20 = recommended buffer count
+0xa823c  ldp w1,w2,[overlay,#0xc] ; width/height
+0xa8240  ldr w3,[overlay,#0x14] ; textureArrayLength = 2 after the patch
+0xa8244  mov x4,xzr             ; color = NULL, engine allocates
+0xa8248  bl 0x69530             ; DisplayManager::CreateTexture(width,height,arraylen,NULL)
+```
+
+`OverlayBase::SetSwapChainBuffers @0xa7d0c` walks that same `overlay+0x20` buffer-id vector and
+collects one GL handle per swapchain buffer:
+
+```text
+0xa7d64  ldp x23,x24,[overlay,#0x20]
+0xa7d94  ldr w1,[x23,#0x8]      ; UnityXRRenderTextureId
+0xa7d9c  bl 0x695e8             ; DisplayManager::QueryTextureDesc(id)
+0xa7da0  ldr x8,[desc,#0x08]    ; returned GL name
+0xa7e70  bl 0xa1938             ; NativeRendering::SetSwapChainBuffers(swapchain, vector<GL names>)
+```
+
+Therefore, with `overlay+0x14 == 2`, the SDK's intended allocation is one swapchain containing GL
+texture-array buffers. It does not allocate a second right-eye swapchain, and our `CreateTexture` is
+not supposed to return an extra texture id for viewport 1.
+
+### (c) Why fixed gray is plausible
+
+The fixed gray means the second NR viewport is likely accepted and submitted, but its selected
+multiview layer is not backed by the texture data path we think it is. It is not evidence for a
+missing second `CreateTexture`, because the disassembly shows both viewports point at the same
+`Viewport+0x08 = overlay+0x18` swapchain.
+
+The most suspicious emulator-side inconsistency is now our `QueryTextureDesc` lying about the texture
+shape. `CreateTexture` receives `textureArrayLength == 2` and allocates/stores a `GL_TEXTURE_2D_ARRAY`,
+but `QueryTextureDesc` returns `texture_array_length: 1` and `flags: 0`:
+
+```rust
+// current
+texture_array_length: 1,
+flags: 0,
+```
+
+`DisplayManager::QueryTextureDesc @0x695e8` only uses `color`, `width`, `height`, and `flags` for its
+own log:
+
+```text
+0x6960c  ldr x3, [desc,#0x08]   ; color / GL texture name
+0x69610  ldr w4, [desc,#0x2c]   ; flags
+0x69614  ldp w5,w6,[desc,#0x20] ; width/height
+```
+
+`OverlayBase::SetSwapChainBuffers` only consumes `desc+0x08`. However, returning a 1-layer descriptor
+for a 2-layer object is still wrong for a Unity display-provider emulation, and it is the only concrete
+bad metadata in our path after the two patches. If any loader/runtime side path validates or caches the
+Unity texture descriptor outside the visible wrapper code, it would explain layer 0 behaving like a
+normal 2D texture while layer 1 resolves to the compositor's cleared gray.
+
+### Concrete minimal fix in our emulation
+
+Do **not** allocate/register a second swapchain for viewport 1. The SDK's two-viewport path wants one
+multiview swapchain.
+
+Fix the texture descriptor bookkeeping in `src/unity_plugin.rs`:
+
+1. Extend `XrTexture` to store the original `color_format`, `flags`, and `texture_array_length`
+   received by `xr_create_texture`.
+2. In `xr_query_texture_desc`, return `texture_array_length: entry.layers as u32` for array textures
+   instead of hard-coded `1`.
+3. Return the original `flags` from `CreateTexture` instead of `0` (`CreateTexture @0x69584` passes
+   `flags = 2` or `0x12` depending on provider state).
+4. Keep `color = entry.gl_id`, `width`, and `height` unchanged.
+
+Minimal shape:
+
+```rust
+struct XrTexture {
+    id: u32,
+    gl_id: u32,
+    width: i32,
+    height: i32,
+    layers: i32,
+    color_format: u32,
+    flags: u32,
+}
+
+// in xr_create_texture
+textures.push(XrTexture {
+    id,
+    gl_id,
+    width,
+    height,
+    layers,
+    color_format: desc.color_format,
+    flags: desc.flags,
+});
+
+// in xr_query_texture_desc
+*out = UnityXrRenderTextureDesc {
+    color_format: entry.color_format,
+    _pad0: 0,
+    color: entry.gl_id as u64,
+    depth_format: 0,
+    _pad1: 0,
+    depth: 0,
+    width: entry.width as u32,
+    height: entry.height as u32,
+    texture_array_length: entry.layers as u32,
+    flags: entry.flags,
+};
+```
+
+Also add one diagnostic log before changing behavior permanently:
+
+```text
+[xreal] QueryTextureDesc id=<id> -> gl_tex=<n> <w>x<h> layers=<entry.layers> flags=<entry.flags>
+```
+
+Verification:
+
+```text
+adb shell setprop debug.xreal.stereo_mode 2
+```
+
+Launch and check:
+
+```text
+CreateTexture ... arraylen=2 -> id=<id> gl_tex=<array>
+QueryTextureDesc ... layers=2 flags=2|18
+frame_tick ... passes=1 renderParamsCount0=2 tex0=<id> tex1=0
+blit_to_layer ... layer=0 ... framebuffer-complete
+blit_to_layer ... layer=1 ... framebuffer-complete
+```
+
+Then run the same visual A/B:
+
+```text
+adb exec-out screencap -d 4626964009369245188 -p
+```
+
+Expected result for the A/B build that copies left into both layers: the right half should no longer be
+the fixed `0.2503` gray. If it is still gray after `QueryTextureDesc` reports `layers=2`, the
+remaining likely failure is inside NR's GLES array-texture import/sampling path rather than in the SDK
+overlay wiring. At that point the practical fallback is Multipass (two 2D swapchain buffers), because
+the disassembly does not expose a second-swapchain multiview path to populate from our side.
+
+## Device result (2026-07-13) — QueryTextureDesc fix landed; right eye STILL gray → NR blocker
+
+Applied all three SDK-side fixes and device-confirmed each:
+- descriptor read: `STEREO_PROJ[1]` = real right-eye projection.
+- `signal_guard` two patches: `cbz->b 0x6dd18` + `lsl->mov w21,#2` (`overlay+0x14=2`).
+- QueryTextureDesc now echoes the array shape: logcat shows `layers=2 flags=18 color_format=0` for the
+  registered swapchain textures (was `layers=1 flags=0`).
+
+**Right eye is STILL the fixed uniform gray (right-half mean == 0.2503, unchanged).** Per the caveat
+above, this places the remaining failure **inside libnr_loader's GLES multiview array-texture
+import/sampling path** — not in the libXREALXRPlugin overlay/viewport/descriptor wiring, which is now
+correct on our side. That NR internal path is not controllable from our emulation without RE'ing
+libnr_loader's swapchain/GL import (a large, uncertain effort). **Practical outcome: Multipass is the
+working stereo path (both eyes + camera + tracking); Multiview is left-eye-only and blocked in the NR
+compositor.** The SDK-side fixes here are kept because they are individually correct and are
+prerequisites if the NR array path is ever solved.
