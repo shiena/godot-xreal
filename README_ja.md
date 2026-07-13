@@ -4,7 +4,7 @@
 
 `godot-xreal` は [XREAL](https://www.xreal.com/) グラスを駆動する Godot 4 用 GDExtension
 （[godot-rust](https://godot-rust.github.io/) による Rust 実装）です。Unity 版 `com.xreal.xr` SDK
-を、その **ネイティブライブラリを再利用する形で** Godot へ移植したものです。
+を、その **ネイティブライブラリを再利用する形で** Godot へ移植したものです（動作確認は SDK **3.1.0**）。
 
 > **⚠️ 非公式・実験的。** 本プロジェクトは独立したコミュニティ製で、**XREAL 社とは無関係であり、
 > 同社の承認・サポートを受けていません**。「XREAL」および SDK は各権利者に帰属します。ネイティブ
@@ -28,7 +28,8 @@ XREAL のネイティブは **Android arm64 のみ** のため、対応端末（
 
 ## 対応機能
 
-XREAL One Pro で実機確認。以下はすべてコミュニティによるリバースエンジニアリングでの相互運用であり、公式 API ではありません。
+**XREAL SDK for Unity 3.1.0** のネイティブライブラリを用いて XREAL One Pro で実機確認。以下はすべて
+コミュニティによるリバースエンジニアリングでの相互運用であり、公式 API ではありません。
 
 | 機能 | 状態 | 補足 |
 |---|---|---|
@@ -48,8 +49,8 @@ XREAL One Pro で実機確認。以下はすべてコミュニティによるリ
 ## XREAL ランタイムライブラリの vendoring（必須）
 
 XREAL のネイティブライブラリは本リポジトリに **含まれません**（XREAL の規約に従うため）。**XREAL SDK
-for Unity**（`com.xreal.xr` パッケージ。tgz `com.xreal.xr.tar.gz` で提供）から入手し、APK を
-エクスポートする前に **8 個の `.so` を `jniLibs/arm64-v8a/` に配置**してください（`jniLibs/` は git 管理外）:
+for Unity**（`com.xreal.xr` パッケージ。tgz `com.xreal.xr.tar.gz` で提供。**動作確認済みは 3.1.0**）
+から入手し、APK をエクスポートする前に **8 個の `.so` を `jniLibs/arm64-v8a/` に配置**してください（`jniLibs/` は git 管理外）:
 
 1. `com.xreal.xr.tar.gz` を展開 → `package/` ディレクトリ。
 2. **コア 3 個**（`package/Runtime/Plugins/Android/arm64-v8a/` からコピー、または
