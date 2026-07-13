@@ -136,6 +136,9 @@ const ENABLE_GLASSES_EVENT_CALLBACK: bool = true;
 /// Ensures the one-shot glasses-event registration runs at most once per process (see
 /// [`ENABLE_GLASSES_EVENT_CALLBACK`]).
 static GLASSES_EVENT_CALLBACK_REGISTERED: AtomicBool = AtomicBool::new(false);
+
+/// Set once the native error callback (`SetNativeErrorCallback`) is registered.
+static NATIVE_ERROR_CALLBACK_REGISTERED: AtomicBool = AtomicBool::new(false);
 /// Retry runtime-dependent bootstrap at a modest cadence while the glasses / NR runtime
 /// are unavailable. This avoids spamming UnityPluginLoad/provider registration every frame.
 static SHARED_CALLS: AtomicU64 = AtomicU64::new(0);
@@ -230,6 +233,15 @@ impl XrealSession {
         {
             GLASSES_EVENT_CALLBACK_REGISTERED.store(true, Ordering::SeqCst);
             godot::global::godot_print!("[xreal] glasses event callback registered");
+        }
+
+        // Cache the plugin's asynchronous native errors (XREALErrorCode) for polling via
+        // XrealSystem.get_last_native_error_code/message. Same funnel shape as above.
+        if !NATIVE_ERROR_CALLBACK_REGISTERED.load(Ordering::SeqCst)
+            && native.set_native_error_callback(crate::native_error::on_native_error)
+        {
+            NATIVE_ERROR_CALLBACK_REGISTERED.store(true, Ordering::SeqCst);
+            godot::global::godot_print!("[xreal] native error callback registered");
         }
 
         // Color space: Unity ColorSpace.Linear == 1; stereo/input default to 0.

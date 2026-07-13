@@ -26,8 +26,8 @@ use crate::ffi::{
     FnNrSwapchainGetRecommendBufferCount, FnNrSwapchainSetBuffers, FnNrViewportCreate,
     FnNrViewportSetF32x2, FnNrViewportSetI32, FnNrViewportSetNearFar, FnNrViewportSetPtr,
     FnNrViewportSetU32, FnNrViewportSetU64, FnQueryInt, FnSetGlassesEventCallback,
-    FnSwitchTrackingType, FnUnityPluginLoad, FnVoid, NrGraphicContext, NrHandle, NrPose,
-    UserDefinedSettings,
+    FnSetNativeErrorCallback, FnSwitchTrackingType, FnUnityPluginLoad, FnVoid, NrGraphicContext,
+    NrHandle, NrPose, UserDefinedSettings,
 };
 use crate::ffi::{
     FnDisposeRgbCameraDataHandle, FnStartRgbCameraCapture, FnStopRgbCameraCapture,
@@ -99,6 +99,7 @@ pub struct XrealNative {
     set_display_bypass_psensor: Option<FnControlSetI32>,
     set_glasses_space_mode: Option<FnControlSetI32>,
     set_glasses_event_callback: Option<FnSetGlassesEventCallback>,
+    set_native_error_callback: Option<FnSetNativeErrorCallback>,
     #[allow(dead_code)]
     initialize_rendering: Option<FnVoid>,
     #[allow(dead_code)]
@@ -1104,6 +1105,9 @@ impl XrealNative {
             let set_glasses_event_callback: Option<FnSetGlassesEventCallback> = plugin_lib
                 .as_ref()
                 .and_then(|l| l.get(b"SetGlassesEventCallback\0").ok().map(|s| *s));
+            let set_native_error_callback: Option<FnSetNativeErrorCallback> = plugin_lib
+                .as_ref()
+                .and_then(|l| l.get(b"SetNativeErrorCallback\0").ok().map(|s| *s));
             let initialize_rendering: Option<FnVoid> = plugin_lib
                 .as_ref()
                 .and_then(|l| l.get(b"InitializeRendering\0").ok().map(|s| *s));
@@ -1185,6 +1189,7 @@ impl XrealNative {
                 set_display_bypass_psensor,
                 set_glasses_space_mode,
                 set_glasses_event_callback,
+                set_native_error_callback,
                 unity_plugin_load,
                 init_user_defined_settings,
                 create_session,
@@ -1472,6 +1477,16 @@ impl XrealNative {
     /// `SetGlassesEventCallback`). Returns `false` if the symbol is unavailable.
     pub fn set_glasses_event_callback(&self, callback: FnGlassesEventCallback) -> bool {
         match self.set_glasses_event_callback {
+            Some(f) => {
+                unsafe { f(callback) };
+                true
+            }
+            None => false,
+        }
+    }
+
+    pub fn set_native_error_callback(&self, callback: crate::ffi::FnNativeErrorCallback) -> bool {
+        match self.set_native_error_callback {
             Some(f) => {
                 unsafe { f(callback) };
                 true

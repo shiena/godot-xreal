@@ -19,6 +19,7 @@ mod gl;
 mod glasses_events;
 mod jni_bridge;
 mod native;
+mod native_error;
 mod node;
 mod session;
 mod signal_guard;

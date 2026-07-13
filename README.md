@@ -115,6 +115,7 @@ XrealHeadTracker (Node3D)   # rotation driven by native head pose
 | | `get_device_type() -> int` | `XREALDeviceType` enum value. |
 | | `get_tracking_state() / get_tracking_reason() / get_tracking_type() -> int` | XR-plugin tracking enums (`-1` when unavailable). Also the SLAM-state notification source. |
 | | `get_glasses_temperature_level() -> int` | Over-temperature poll: `0` normal / `1` warm / `2` hot (`-1` until first reported). |
+| | `get_last_native_error_code() -> int` / `get_last_native_error_message() -> String` | Latest native error (`XREALErrorCode`; `-1` / `""` until one fires). |
 | | `switch_tracking_type(type) -> bool` | Switch tracking mode (`TRACKING_6DOF/3DOF/0DOF/0DOF_STAB` constants). |
 | | `set_display_bypass_psensor(bypass) -> int` | Keep the display on while the glasses are not worn (SDK status). |
 | | `get_hmd_time_nanos() -> int` | Native HMD clock (ns, `0` when down). |
