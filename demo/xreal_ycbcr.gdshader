@@ -11,6 +11,15 @@ uniform sampler2D cbcr_texture : filter_linear;
 uniform bool flip_v = true;
 // The SDK sample swaps R<->B on output; expose it so we can match on device.
 uniform bool swap_rb = false;
+// The YUV->RGB result is gamma/sRGB-encoded (like a camera). Godot treats ALBEDO as linear and
+// re-applies sRGB at output, so feeding sRGB directly blows out highlights (double-encode). Convert
+// sRGB->linear here (the SDK did GammaToLinearSpace for the same reason). Toggle off if the renderer
+// is already in an sRGB workflow.
+uniform bool to_linear = true;
+
+vec3 srgb_to_linear(vec3 c) {
+	return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(vec3(0.04045), c));
+}
 
 void fragment() {
 	vec2 uv = UV;
@@ -29,6 +38,9 @@ void fragment() {
 	vec3 rgb = clamp(vec3(r, g, b), vec3(0.0), vec3(1.0));
 	if (swap_rb) {
 		rgb = rgb.bgr;
+	}
+	if (to_linear) {
+		rgb = srgb_to_linear(rgb);
 	}
 	ALBEDO = rgb;
 }
