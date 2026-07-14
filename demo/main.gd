@@ -2,11 +2,22 @@ extends Node3D
 
 ## Minimal 3DoF demo for the Godot XREAL addon.
 ##
-## Builds a ring of colored boxes, instances the addon camera rig
-## (addons/godot_xreal/xreal_rig.tscn — an XrealHeadTracker with a Camera3D child),
-## and shows live SDK status via XrealSystem. On XREAL hardware the camera looks
-## around with the wearer's head; on desktop the rig stays at identity so the scene
-## is still runnable.
+## The static content lives in two sub-scenes instanced by demo/main.tscn:
+##   - $ARScene (demo/ar_scene.tscn + ar_scene.gd) — the 3D world: WorldEnvironment (black
+##     background — on the XREAL optical see-through display black reads as transparent), sun,
+##     the ring of colored boxes (with colliders for the phone-pointer raycast), plus the
+##     head-locked camera preview panel, controller cursor and phone-IMU pointer, exposed as
+##     `cam_panel` / `cursor` / `phone_pointer`.
+##   - $PhoneScreen (demo/phone_screen.tscn + phone_screen.gd) — the phone-only touch
+##     controller layer; its signals are re-emitted at the scene root and wired to the
+##     _on_tc_* handlers here via main.tscn connections.
+## The debug UI ($UI) also lives in main.tscn, its Recenter button wired the same way.
+##
+## This script does only what has to be dynamic: detect the GDExtension, instance the addon
+## camera rig (addons/godot_xreal/xreal_rig.tscn — an XrealHeadTracker with a Camera3D child),
+## reparent the head-locked nodes under the tracker, and pump the camera feed / controller IMU
+## per frame. On XREAL hardware the camera looks around with the wearer's head; on desktop the
+## rig stays at identity so the scene is still runnable.
 
 # The GDExtension classes (XrealHeadTracker / XrealSystem) only exist if the native
 # extension loaded. We look everything up defensively so a missing/failed extension
@@ -22,30 +33,25 @@ const XREAL_ACTION_LONG_PRESS := 3
 
 var _tracker: Node3D
 var _system: Object
-var _status: Label
 var _extension_loaded := false
-# XREAL RGB camera as a Godot CameraFeed (see docs/camera-feed-plan.md), shown on a head-locked
-# quad in front of the eye cameras via a YCbCr→RGB shader.
+# XREAL RGB camera as a Godot CameraFeed (see docs/camera-feed-plan.md), shown on the
+# head-locked cam_panel quad via its YCbCr→RGB ShaderMaterial (both defined in ar_scene.tscn).
 var _cam_feed: Object
-var _cam_panel: MeshInstance3D
 var _camera_enabled := false
 # Set once the RGB capture fails to start (wedged glasses camera), so _process stops re-attempting
 # setup — a hard failure isn't retried; re-plug the glasses and relaunch to recover.
 var _cam_failed := false
-const CAM_SHADER := "res://demo/xreal_ycbcr.gdshader"
-# Phase C path B: phone IMU (via NRController state) drives a 3D pointer (demo/phone_pointer.gd).
-const PHONE_POINTER := "res://demo/phone_pointer.gd"
+# Phase C path B: phone IMU (via NRController state) drives the 3D pointer (_ar.phone_pointer).
 var _phone_pointer_enabled := true
 var _controller_started := false
 var _imu_poll_count := 0
 var _phone_pointer: Node3D
-# On-screen touch controller (phone screen) — the Godot analog of XREAL's XREALVirtualController
-# prefab. Pure GDScript touch UI; renders only on the phone's root viewport, so the glasses show
-# the 3D world while the phone shows the controller. Drives a head-locked 3D cursor as a demo.
-const TOUCH_CONTROLLER := "res://demo/touch_controller.gd"
-var _touch_controller: Control
-var _cursor: MeshInstance3D
 var _cursor_mat: StandardMaterial3D
+
+@onready var _status: Label = $UI/Panel/Margin/VBox/Status
+@onready var _ar: Node3D = $ARScene
+@onready var _cam_panel: MeshInstance3D = $ARScene.cam_panel
+@onready var _cursor: MeshInstance3D = $ARScene.cursor
 
 func _ready() -> void:
 	_try_register_android_bridge()
@@ -68,13 +74,20 @@ func _ready() -> void:
 			_system.set_tracking_type(1)  # 3DoF, so the RGB camera and head tracking can coexist
 	else:
 		push_error("[demo] godot_xreal GDExtension not loaded — XrealSystem/XrealHeadTracker missing. Build the Android .so (cargo ndk) and check the .gdextension paths.")
-	_build_environment()
-	_build_room()
 	_spawn_rig()
-	_setup_ui()
+	if not _camera_enabled:
+		# No camera this run — drop the (hidden) preview panel.
+		_cam_panel.queue_free()
+		_cam_panel = null
 	if bool(ProjectSettings.get_setting("xreal/enable_touch_controller", true)):
 		_setup_touch_controller()
+	else:
+		$PhoneScreen.queue_free()
+		_cursor.queue_free()
+		_cursor = null
 	_phone_pointer_enabled = bool(ProjectSettings.get_setting("xreal/enable_phone_pointer", true))
+	if not _phone_pointer_enabled:
+		_ar.phone_pointer.queue_free()
 	# The camera is set up lazily in _process, only once head tracking is live (see _camera_enabled),
 	# so starting the capture never races the glasses display/tracking bring-up.
 
@@ -121,13 +134,8 @@ func _spawn_rig() -> void:
 		camera.current = true
 		add_child(camera)
 
-func _setup_ui() -> void:
-	_status = $UI/Panel/Margin/VBox/Status
-	$UI/Panel.visible = false
-	($UI/Panel/Margin/VBox/Recenter as Button).pressed.connect(_on_recenter_pressed)
-
 ## Expose the XREAL glasses RGB camera as a Godot CameraFeed (docs/camera-feed-plan.md), register it
-## with the CameraServer, and show it in a corner preview — modeled on ~/dev/godot-camerafeed-demo.
+## with the CameraServer, and show it on the head-locked cam_panel quad (defined in ar_scene.tscn).
 ## The feed is driven per-frame from _process (poll_frame grabs the latest frame → set_rgb_image).
 func _setup_camera_feed() -> void:
 	if not ClassDB.class_exists(&"XrealCameraFeed"):
@@ -154,65 +162,30 @@ func _setup_camera_feed() -> void:
 		_cam_failed = true
 		return
 
-	# The shader samples the feed's Y (R8) + CbCr (RG8) ImageTextures DIRECTLY (get_y_texture /
-	# get_cbcr_texture). A CameraTexture on a script-fed feed only shows Godot's placeholder, so we
-	# bypass it — matching the XREAL SDK's YUVTransRGB sample. The textures are wired in _process once
-	# the first frame has created them.
-	# Orientation and the R/B swap are baked into the shader (device-calibrated constants).
-	var mat := ShaderMaterial.new()
-	mat.shader = load(CAM_SHADER)
+	# The panel's shader samples the feed's Y (R8) + CbCr (RG8) ImageTextures DIRECTLY
+	# (get_y_texture / get_cbcr_texture). A CameraTexture on a script-fed feed only shows Godot's
+	# placeholder, so we bypass it — matching the XREAL SDK's YUVTransRGB sample. The textures are
+	# wired in _process once the first frame has created them; until then the panel stays hidden so
+	# the not-yet-fed shader never shows as a pink (unset-sampler) placeholder.
+	# Reparent the panel under the tracker (the head node), so it follows the gaze; rendered by the
+	# eye SubViewports (shared world). Its corner position/size are set in ar_scene.tscn.
+	if _tracker and _cam_panel.get_parent() != _tracker:
+		_cam_panel.reparent(_tracker, false)
 
-	# A small head-locked preview (16:9) pinned to the top-right of the view. Parented under the
-	# tracker (the head node), so it follows the gaze; rendered by the eye SubViewports (shared world).
-	# The eye cameras see roughly +/-0.8 m horizontal, +/-0.45 m vertical at this 2 m depth (a 1.6x0.9
-	# quad would fill the whole view), so a ~1/3-size quad tucked near that corner reads as a PiP.
-	var quad := QuadMesh.new()
-	quad.size = Vector2(0.5333, 0.3)  # 16:9 preserved
-	_cam_panel = MeshInstance3D.new()
-	_cam_panel.name = "XrealCameraPanel"
-	_cam_panel.mesh = quad
-	_cam_panel.material_override = mat
-	# Hidden until the first real frame wires the textures (in _process), so the not-yet-fed shader
-	# never shows as a pink (unset-sampler) placeholder.
-	_cam_panel.visible = false
-	# Top-right corner, 2 m in front (Godot cameras look down -Z). The eye cameras invert Y (the pose
-	# handedness (x,-y,z,w) flip), so on the glasses buffer +X is right but -Y is up: hence +x, -y.
-	_cam_panel.position = Vector3(0.48, -0.30, -2.0)
-	if _tracker:
-		_tracker.add_child(_cam_panel)
-	else:
-		add_child(_cam_panel)
-
-## Add the phone-side on-screen touch controller and wire it to a head-locked 3D cursor. The
-## controller lives on its own CanvasLayer (below $UI, so the debug text stays on top) and only
-## renders on the phone; the glasses keep showing the 3D scene — the two screens are now distinct.
+## Set up the runtime side of the phone touch controller ($PhoneScreen — its layout and signal
+## wiring are static in phone_screen.tscn / main.tscn; it only renders on the phone's root
+## viewport, so the glasses keep showing the 3D scene): the head-locked 3D cursor and the
+## host-preview camera.
 func _setup_touch_controller() -> void:
-	var layer := CanvasLayer.new()
-	layer.name = "TouchControllerLayer"
-	layer.layer = 0
-	add_child(layer)
-	_touch_controller = (load(TOUCH_CONTROLLER) as Script).new()
-	_touch_controller.name = "TouchController"
-	layer.add_child(_touch_controller)
-	_touch_controller.trigger_changed.connect(_on_tc_trigger)
-	_touch_controller.grip_changed.connect(_on_tc_grip)
-	_touch_controller.menu_pressed.connect(_on_tc_menu)
-	_touch_controller.touchpad_moved.connect(_on_tc_touchpad)
-	_touch_controller.touchpad_released.connect(_on_tc_touchpad_released)
-	_touch_controller.hand_selected.connect(_on_tc_hand)
-
-	# A head-locked cursor so phone touches are visible in the glasses (proves the split).
+	# The head-locked cursor makes phone touches visible in the glasses (proves the split):
+	# reparent it under the tracker. Without a tracker (desktop fallback) there is nothing to
+	# lock it to — drop it.
 	if _tracker:
-		var mesh := BoxMesh.new()
-		mesh.size = Vector3(0.18, 0.18, 0.18)
-		_cursor = MeshInstance3D.new()
-		_cursor.name = "ControllerCursor"
-		_cursor.mesh = mesh
-		_cursor_mat = StandardMaterial3D.new()
-		_cursor_mat.albedo_color = Color(0.3, 0.85, 1.0)
-		_cursor.material_override = _cursor_mat
-		_cursor.position = Vector3(0.0, 0.0, -2.0)
-		_tracker.add_child(_cursor)
+		_cursor.reparent(_tracker, false)
+		_cursor_mat = _cursor.material_override as StandardMaterial3D
+	else:
+		_cursor.queue_free()
+		_cursor = null
 
 	# The phone shows the controller, not a 3D preview, so stop the rig's host-preview camera: the
 	# root viewport no longer renders the world (one fewer full scene pass — the world was drawn 3×:
@@ -253,12 +226,11 @@ func _on_tc_menu() -> void:
 	if _phone_pointer:
 		_phone_pointer.recenter()
 
-## Instance the phone-IMU 3D pointer (demo/phone_pointer.gd). Added at the scene root so its aim is
-## world-stable (driven by the phone), originating at the head (3DoF: head sits at the origin).
+## Reveal the phone-IMU 3D pointer (demo/phone_pointer.gd — defined in ar_scene.tscn,
+## hidden until the NRController has started so no beam shows before it can be driven).
 func _setup_phone_pointer() -> void:
-	_phone_pointer = (load(PHONE_POINTER) as Script).new()
-	_phone_pointer.name = "PhonePointer"
-	add_child(_phone_pointer)
+	_phone_pointer = _ar.phone_pointer
+	_phone_pointer.visible = true
 
 func _on_recenter_pressed() -> void:
 	if _tracker and _tracker.has_method(&"recenter"):
@@ -331,44 +303,3 @@ func _exit_tree() -> void:
 	# camera stays held and must be re-plugged; this only covers clean exits.
 	if _cam_feed and _cam_feed.is_active():
 		_cam_feed.set_active(false)
-
-func _build_environment() -> void:
-	var env := Environment.new()
-	env.background_mode = Environment.BG_COLOR
-	# Solid black. On the XREAL optical see-through display black reads as transparent,
-	# so the scene appears to float over the real world.
-	env.background_color = Color(0.0, 0.0, 0.0)
-	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
-	env.ambient_light_color = Color(0.6, 0.6, 0.7)
-	env.ambient_light_energy = 0.6
-
-	var world_env := WorldEnvironment.new()
-	world_env.environment = env
-	add_child(world_env)
-
-	var sun := DirectionalLight3D.new()
-	sun.rotation_degrees = Vector3(-50.0, -30.0, 0.0)
-	add_child(sun)
-
-func _build_room() -> void:
-	# A ring of boxes at eye level so head rotation reads as look-around.
-	const COUNT := 12
-	for i in COUNT:
-		var angle := TAU * float(i) / float(COUNT)
-		var box := MeshInstance3D.new()
-		box.mesh = BoxMesh.new()
-
-		var material := StandardMaterial3D.new()
-		material.albedo_color = Color.from_hsv(float(i) / float(COUNT), 0.7, 0.9)
-		box.material_override = material
-
-		box.position = Vector3(sin(angle) * 4.0, 0.0, -cos(angle) * 4.0)
-		add_child(box)
-		# Collider so the phone-pointer raycast can hit it (StaticBody3D parented under the box).
-		var body := StaticBody3D.new()
-		var col := CollisionShape3D.new()
-		var box_shape := BoxShape3D.new()
-		box_shape.size = (box.mesh as BoxMesh).size
-		col.shape = box_shape
-		body.add_child(col)
-		box.add_child(body)

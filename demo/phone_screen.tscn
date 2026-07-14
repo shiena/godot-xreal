@@ -1,0 +1,11 @@
+[gd_scene load_steps=3 format=3 uid="uid://phonescreen1"]
+
+[ext_resource type="Script" uid="uid://od815fs6jvr3" path="res://demo/phone_screen.gd" id="1_screen"]
+[ext_resource type="Script" uid="uid://doa8qxnnjo0i" path="res://demo/touch_controller.gd" id="2_touch"]
+
+[node name="PhoneScreen" type="CanvasLayer"]
+layer = 0
+script = ExtResource("1_screen")
+
+[node name="TouchController" type="Control" parent="."]
+script = ExtResource("2_touch")
