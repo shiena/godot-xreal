@@ -11,14 +11,15 @@
 #
 # Usage:
 #   ./scripts/build.sh                        # build only (cargo ndk, release)
+#   ./scripts/build.sh --extract <com.xreal.xr.tar.gz>  # vendor the XREAL runtime libs (needs pwsh)
 #   ./scripts/build.sh --all                  # build + export + install + run
 #   ./scripts/build.sh --all --stereo 0 --tracking 0   # + set device props first
 #   ./scripts/build.sh --export --install --run        # reuse the current .so
 #   ./scripts/build.sh --run --logcat         # relaunch and stream [xreal] logs
 #   ./scripts/build.sh --install --run --release-apk
 #
-# Stages run in order when combined: build -> export -> install -> run -> logcat.
-# With no stage flag, only build runs. --all = build+export+install+run.
+# Stages run in order when combined: extract -> build -> export -> install -> run -> logcat.
+# With no stage flag, only build runs (--extract alone just vendors). --all = build+export+install+run.
 # Env overrides: GODOT (default: godot), ADB (default: adb), XREAL_DEVICE, APK_OUT, EXPORT_PRESET.
 
 set -uo pipefail
@@ -36,7 +37,7 @@ ACTIVITY="$PKG/com.godot.game.GodotAppLauncher"
 
 do_build=0; do_export=0; do_install=0; do_run=0; do_logcat=0
 release_apk=0; cargo_debug=0; run_checks=0
-stereo=-1; tracking=-1
+stereo=-1; tracking=-1; extract=""
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -49,6 +50,7 @@ while [ $# -gt 0 ]; do
         --release-apk) release_apk=1 ;;
         --cargo-debug) cargo_debug=1 ;;
         --checks)      run_checks=1 ;;
+        --extract)     extract="$2"; shift ;;
         --stereo)      stereo="$2"; shift ;;
         --tracking)    tracking="$2"; shift ;;
         --device)      DEVICE="$2"; shift ;;
@@ -57,7 +59,7 @@ while [ $# -gt 0 ]; do
     esac
     shift
 done
-[ $((do_build+do_export+do_install+do_run+do_logcat)) -eq 0 ] && do_build=1
+[ $((do_build+do_export+do_install+do_run+do_logcat)) -eq 0 ] && [ -z "$extract" ] && do_build=1
 
 say() { echo -e "\033[36m>> $*\033[0m"; }
 ok()  { echo -e "\033[32m$*\033[0m"; }
@@ -104,6 +106,14 @@ GUIDE
 }
 
 profile=release; [ "$cargo_debug" -eq 1 ] && profile=debug
+
+# --------------------------------------------------- extract (vendor XREAL runtime libs) ---
+if [ -n "$extract" ]; then
+    command -v pwsh >/dev/null 2>&1 || die "--extract needs pwsh (PowerShell 7) for scripts/vendor_xreal_libs.ps1"
+    say "vendor XREAL runtime libs from $extract"
+    pwsh -NoProfile -File "$repo_root/scripts/vendor_xreal_libs.ps1" -XrealPackage "$(cygpath -w "$extract" 2>/dev/null || echo "$extract")" \
+        || die "vendoring failed"
+fi
 
 # Fail fast (before a long build) if an export is requested but the XREAL runtime libs aren't vendored.
 [ "$do_export" -eq 1 ] && require_vendored_libs

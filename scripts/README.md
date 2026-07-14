@@ -14,7 +14,8 @@ requirement (relaunching a not-fully-dead instance leaves the glasses black).
 `vendor_xreal_libs.ps1` is the one-time prerequisite: it stages every XREAL runtime piece
 (3 core `.so` → `jniLibs/arm64-v8a/`, 5 `.aar` + the compiled `xreal_bridge.jar` →
 `addons/godot_xreal/android/`; the aars also carry the NR native libs into the APK) out of a
-local copy of the SDK package.
+local copy of the SDK package — either the extracted `package/` dir or the `com.xreal.xr.tar.gz`
+archive itself (auto-extracted to a temp dir). The build scripts wrap it as `-Extract` / `--extract`.
 
 ## Prerequisites (assumed installed and on PATH)
 
@@ -25,8 +26,9 @@ local copy of the SDK package.
   if it isn't on PATH under that name.
 - **XREAL runtime pieces vendored** — the 3 core `.so` in `jniLibs/arm64-v8a/` plus the 5 `.aar`
   and the compiled `xreal_bridge.jar` in `addons/godot_xreal/android/`; none are in the repo.
-  `vendor_xreal_libs.ps1 -XrealPackage <…>/package` stages all of them from a local copy of the
-  XREAL SDK for Unity (`com.xreal.xr.tar.gz`). The `-Export` / `--export` stage checks for them and
+  `vendor_xreal_libs.ps1 -XrealPackage <…>/package` (or `-XrealPackage <…>/com.xreal.xr.tar.gz`,
+  or the build scripts' `-Extract` / `--extract <tar.gz>`) stages all of them from a local copy of
+  the XREAL SDK for Unity. The `-Export` / `--export` stage checks for them and
   prints the acquisition steps if anything is missing. See the main
   [README](../README.md#prerequisite-vendor-the-xreal-runtime-libraries).
 
@@ -34,6 +36,7 @@ local copy of the SDK package.
 
 ```powershell
 # Windows
+.\scripts\build.ps1 -Extract <…>\com.xreal.xr.tar.gz   # vendor the XREAL runtime libs (once)
 .\scripts\build.ps1                       # build only (cargo ndk, release)
 .\scripts\build.ps1 -All                  # build + export + install + run
 .\scripts\build.ps1 -All -StereoMode 0 -TrackingType 0
@@ -43,6 +46,7 @@ local copy of the SDK package.
 
 ```bash
 # Git Bash
+./scripts/build.sh --extract <…>/com.xreal.xr.tar.gz  # vendor the XREAL runtime libs (once)
 ./scripts/build.sh                        # build only
 ./scripts/build.sh --all                  # build + export + install + run
 ./scripts/build.sh --all --stereo 0 --tracking 0
@@ -50,14 +54,16 @@ local copy of the SDK package.
 ./scripts/build.sh --run --logcat
 ```
 
-Stages run in order when combined: **build → export → install → run → logcat**. With no stage flag,
-only *build* runs. `--all` / `-All` = build + export + install + run.
+Stages run in order when combined: **extract → build → export → install → run → logcat**. With no
+stage flag, only *build* runs (`--extract` alone just vendors). `--all` / `-All` = build + export +
+install + run.
 
 ## Options
 
 | PowerShell | Bash | Meaning |
 |---|---|---|
 | `-Build` `-Export` `-Install` `-Run` `-Logcat` | `--build` `--export` `--install` `--run` `--logcat` | pick stages |
+| `-Extract <path>` | `--extract <path>` | vendor the XREAL runtime libs from `com.xreal.xr.tar.gz` (or the extracted `package/` dir) via `vendor_xreal_libs.ps1` |
 | `-All` | `--all` | build + export + install + run |
 | `-StereoMode <n>` | `--stereo <n>` | set `debug.xreal.stereo_mode` before launch (0 = Multipass, 2 = Multiview) |
 | `-TrackingType <n>` | `--tracking <n>` | set `debug.xreal.tracking_type` before launch (0 = 6DoF, 1 = 3DoF, 2 = 0DoF) |

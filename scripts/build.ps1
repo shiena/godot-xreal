@@ -10,16 +10,19 @@
 #
 # Usage:
 #   .\scripts\build.ps1                       # build only (cargo ndk, release)
+#   .\scripts\build.ps1 -Extract <com.xreal.xr.tar.gz>  # vendor the XREAL runtime libs from the SDK
 #   .\scripts\build.ps1 -All                  # build + export + install + run
 #   .\scripts\build.ps1 -All -StereoMode 0 -TrackingType 0   # + set device props first
 #   .\scripts\build.ps1 -Export -Install -Run # reuse the current .so
 #   .\scripts\build.ps1 -Run -Logcat          # relaunch and stream [xreal] logs
 #   .\scripts\build.ps1 -Install -Run -ReleaseApk
 #
-# Stages run in order when combined: Build -> Export -> Install -> Run -> Logcat.
-# With no stage switch, only -Build runs. -All = Build+Export+Install+Run.
+# Stages run in order when combined: Extract -> Build -> Export -> Install -> Run -> Logcat.
+# With no stage switch, only -Build runs (-Extract alone just vendors). -All = Build+Export+Install+Run.
 
 param(
+    [string]$Extract,        # path to com.xreal.xr.tar.gz (or the extracted package/ dir):
+                             # runs vendor_xreal_libs.ps1 first to stage the XREAL runtime libs
     [switch]$Build,
     [switch]$Export,
     [switch]$Install,
@@ -49,7 +52,7 @@ $Activity = "$Pkg/com.godot.game.GodotAppLauncher"
 $profile_ = if ($CargoDebug) { 'debug' } else { 'release' }
 
 if ($All) { $Build = $Export = $Install = $Run = $true }
-if (-not ($Build -or $Export -or $Install -or $Run -or $Logcat)) { $Build = $true }
+if (-not ($Build -or $Export -or $Install -or $Run -or $Logcat -or $Extract)) { $Build = $true }
 
 function Say ([string]$m) { Write-Host ">> $m" -ForegroundColor Cyan }
 function Ok  ([string]$m) { Write-Host $m -ForegroundColor Green }
@@ -96,6 +99,13 @@ Vendor them once from a local copy of the package (nothing is downloaded):
 See the README "Prerequisite: vendor the XREAL runtime libraries" and docs/build-and-release.md.
 '@
     exit 1
+}
+
+# --------------------------------------------------- Extract (vendor XREAL runtime libs) ---
+if ($Extract) {
+    Say "vendor XREAL runtime libs from $Extract"
+    & (Join-Path $PSScriptRoot 'vendor_xreal_libs.ps1') -XrealPackage $Extract
+    if ($LASTEXITCODE -ne 0) { Die "vendoring failed (exit $LASTEXITCODE)" }
 }
 
 # Fail fast (before a long build) if an export is requested but the XREAL runtime libs aren't vendored.
