@@ -51,7 +51,11 @@ if ((Test-Path $XrealPackage -PathType Leaf)) {
     $tempExtract = Join-Path ([System.IO.Path]::GetTempPath()) "xreal_pkg_$([guid]::NewGuid().ToString('n'))"
     New-Item -ItemType Directory -Path $tempExtract | Out-Null
     Write-Host "extracting $XrealPackage ..."
-    tar -xzf $XrealPackage -C $tempExtract
+    # Use Windows' System32 tar (bsdtar) explicitly: when invoked from Git Bash / MSYS, PATH
+    # resolves `tar` to GNU tar, which reads the `C:` in a Windows path as a remote host name.
+    $tarExe = Join-Path $env:SystemRoot 'System32\tar.exe'
+    if (-not (Test-Path $tarExe)) { $tarExe = 'tar' }
+    & $tarExe -xzf $XrealPackage -C $tempExtract
     if ($LASTEXITCODE -ne 0) {
         Remove-Item -Recurse -Force $tempExtract -ErrorAction SilentlyContinue
         throw "tar -xzf failed (exit $LASTEXITCODE): $XrealPackage"
@@ -140,7 +144,7 @@ try {
             }
             else {
                 Write-Warning ("Cannot build xreal_bridge.jar ($why). Build it manually:`n" +
-                    "  javac -encoding UTF-8 -source 11 -target 11 -classpath <sdk>/platforms/android-NN/android.jar ``
+                    "  javac -encoding UTF-8 -source 8 -target 8 -classpath <sdk>/platforms/android-NN/android.jar ``
     -d out addons/godot_xreal/android/src/com/godot/game/*.java`n" +
                     "  jar cf addons/godot_xreal/android/xreal_bridge.jar -C out .")
             }
@@ -148,11 +152,17 @@ try {
         else {
             $jarTool = Join-Path (Split-Path $javac.Source) 'jar.exe'
             if (-not (Test-Path $jarTool)) { $jarTool = 'jar' }
+            # The sources are Java-8-compatible; a JDK 8 javac rejects `-source 11` outright, so
+            # match the language level to the installed JDK (8 on JDK 8, 11 on JDK 11+).
+            $javacMajor = if (((& $javac.Source -version 2>&1) -join ' ') -match '(\d+)(?:\.(\d+))?') {
+                if ($Matches[1] -eq '1') { [int]$Matches[2] } else { [int]$Matches[1] }
+            } else { 11 }
+            $lang = if ($javacMajor -ge 11) { '11' } else { '8' }
             $classesDir = Join-Path ([System.IO.Path]::GetTempPath()) "xreal_bridge_$([guid]::NewGuid().ToString('n'))"
             New-Item -ItemType Directory -Path $classesDir | Out-Null
             try {
                 $javaSrc = Get-ChildItem (Join-Path $addonDir 'src/com/godot/game') -Filter '*.java' | ForEach-Object FullName
-                & $javac.Source -encoding UTF-8 -source 11 -target 11 -nowarn -classpath $androidJar -d $classesDir @javaSrc
+                & $javac.Source -encoding UTF-8 -source $lang -target $lang -nowarn -classpath $androidJar -d $classesDir @javaSrc
                 if ($LASTEXITCODE -ne 0) { throw "javac failed (exit $LASTEXITCODE)" }
                 & $jarTool cf $jarOut -C $classesDir .
                 if ($LASTEXITCODE -ne 0) { throw "jar failed (exit $LASTEXITCODE)" }

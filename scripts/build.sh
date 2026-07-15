@@ -11,7 +11,7 @@
 #
 # Usage:
 #   ./scripts/build.sh                        # build only (cargo ndk, release)
-#   ./scripts/build.sh --extract <com.xreal.xr.tar.gz>  # vendor the XREAL runtime libs (needs pwsh)
+#   ./scripts/build.sh --extract <com.xreal.xr.tar.gz>  # vendor the XREAL runtime libs from the SDK
 #   ./scripts/build.sh --all                  # build + export + install + run
 #   ./scripts/build.sh --all --stereo 0 --tracking 0   # + set device props first
 #   ./scripts/build.sh --export --install --run        # reuse the current .so
@@ -92,8 +92,8 @@ require_vendored_libs() {
 These ship with the XREAL SDK for Unity (com.xreal.xr) and are NOT included in this repo.
 Vendor them once from a local copy of the package (nothing is downloaded):
   1. Obtain the XREAL SDK for Unity package `com.xreal.xr.tar.gz` and extract it (-> a `package/` dir).
-  2. Run  pwsh scripts/vendor_xreal_libs.ps1 -XrealPackage <...>/package
-     which stages everything:
+  2. Run  scripts/vendor_xreal_libs.sh <...>/package
+     (on Windows: pwsh scripts/vendor_xreal_libs.ps1 -XrealPackage <...>) which stages everything:
        - 3 core .so -> jniLibs/arm64-v8a/      (dlopen'd by the GDExtension)
        - 5 .aar -> addons/godot_xreal/android/ (shipped by the addon's export plugin; they also
          carry the NR native libs, which Gradle merges into the APK)
@@ -109,10 +109,8 @@ profile=release; [ "$cargo_debug" -eq 1 ] && profile=debug
 
 # --------------------------------------------------- extract (vendor XREAL runtime libs) ---
 if [ -n "$extract" ]; then
-    command -v pwsh >/dev/null 2>&1 || die "--extract needs pwsh (PowerShell 7) for scripts/vendor_xreal_libs.ps1"
     say "vendor XREAL runtime libs from $extract"
-    pwsh -NoProfile -File "$repo_root/scripts/vendor_xreal_libs.ps1" -XrealPackage "$(cygpath -w "$extract" 2>/dev/null || echo "$extract")" \
-        || die "vendoring failed"
+    bash "$repo_root/scripts/vendor_xreal_libs.sh" "$extract" || die "vendoring failed"
 fi
 
 # Fail fast (before a long build) if an export is requested but the XREAL runtime libs aren't vendored.
