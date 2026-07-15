@@ -17,10 +17,12 @@ extends EditorExportPlugin
 ## JavaClassWrapper path), so the launcher Activity (GodotApp) needs no patching.
 
 const ANDROID_DIR := "res://addons/godot_xreal/android/"
-const JAVA_SRC_DIR := ANDROID_DIR + "src/com/godot/game/"
-## Same package dir as the template's own GodotApp.java (standard AGP main source set).
-## Matches the default gradle_build/gradle_build_directory ("").
-const GRADLE_JAVA_DIR := "res://android/build/src/main/java/com/godot/game/"
+## Java sources staged as a whole tree — package dirs (com/godot/game, ai/nreal/activitylife)
+## are preserved relative to this root.
+const JAVA_SRC_ROOT := ANDROID_DIR + "src/"
+## The template's main source set root (its own GodotApp.java lives under it, standard AGP
+## layout). Matches the default gradle_build/gradle_build_directory ("").
+const GRADLE_JAVA_ROOT := "res://android/build/src/main/java/"
 
 func _get_name() -> String:
 	return "godot_xreal_android"
@@ -62,6 +64,14 @@ func _get_android_libraries(_platform: EditorExportPlatform, _debug: bool) -> Pa
 
 var _copied_java := PackedStringArray()
 
+## .java files under root, as paths relative to root (recursive, package dirs preserved).
+func _collect_java_sources(root: String, rel: String, out: PackedStringArray) -> void:
+	for f in DirAccess.get_files_at(root + rel):
+		if f.get_extension() == "java":
+			out.append(rel + f)
+	for d in DirAccess.get_directories_at(root + rel):
+		_collect_java_sources(root, rel + d + "/", out)
+
 ## Stage the bridge Java sources into the gradle build template so the export's Gradle run
 ## compiles them (the gradle build is mandatory for this addon: _get_android_libraries and the
 ## manifest hooks above only apply to gradle exports).
@@ -74,22 +84,25 @@ func _export_begin(features: PackedStringArray, _is_debug: bool, _path: String, 
 			"install it via Project > Install Android Build Template (the XrealBridge Java " +
 			"sources are compiled by the export's gradle build).")
 		return
-	var err := DirAccess.make_dir_recursive_absolute(GRADLE_JAVA_DIR)
-	if err != OK:
-		push_error("godot_xreal: cannot create %s (error %d)" % [GRADLE_JAVA_DIR, err])
-		return
-	for f in DirAccess.get_files_at(JAVA_SRC_DIR):
-		if f.get_extension() != "java":
-			continue
-		err = DirAccess.copy_absolute(JAVA_SRC_DIR + f, GRADLE_JAVA_DIR + f)
+	var sources := PackedStringArray()
+	_collect_java_sources(JAVA_SRC_ROOT, "", sources)
+	for rel in sources:
+		var dst := GRADLE_JAVA_ROOT + rel
+		var err := DirAccess.make_dir_recursive_absolute(dst.get_base_dir())
+		if err == OK:
+			err = DirAccess.copy_absolute(JAVA_SRC_ROOT + rel, dst)
 		if err != OK:
-			push_error("godot_xreal: failed to copy %s into the gradle build template (error %d)" % [f, err])
+			push_error("godot_xreal: failed to stage %s into the gradle build template (error %d)" % [rel, err])
 			continue
-		_copied_java.append(GRADLE_JAVA_DIR + f)
+		_copied_java.append(dst)
 
 ## Remove the staged sources again — the build template must stay pristine (Godot wipes it on
-## regeneration, and stale copies would shadow renamed/deleted addon sources).
+## regeneration, and stale copies would shadow renamed/deleted addon sources). Package dirs we
+## introduced are pruned too (remove fails harmlessly on non-empty dirs like com/godot/game).
 func _export_end() -> void:
 	for f in _copied_java:
 		DirAccess.remove_absolute(f)
+		var dir := f.get_base_dir()
+		while dir.length() > GRADLE_JAVA_ROOT.length() and DirAccess.remove_absolute(dir) == OK:
+			dir = dir.get_base_dir()
 	_copied_java.clear()
