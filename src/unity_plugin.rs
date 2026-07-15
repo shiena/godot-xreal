@@ -141,15 +141,24 @@ struct IUnityXrDisplay {
     set_occlusion_mesh: extern "C" fn(*mut c_void, u32, *mut c_void, u32, *mut u32, u32) -> i32, // +0x48
 }
 
-/// `UnityXRRenderTextureDesc` (0x30 bytes). Field offsets confirmed from
-/// `DisplayManager::CreateTexture` (builds it) and `QueryTextureDesc` (reads it back): the SDK
-/// only touches `color` (+0x08), `width` (+0x20), `height` (+0x24) and `flags` (+0x2c).
+/// `UnityXRRenderTextureDesc` (0x30 bytes) as the **vendored `libXREALXRPlugin.so` 3.1.0** builds it.
+/// Re-confirmed by disassembly of `DisplayManager::CreateTexture @0x69530`, which fills:
+/// colorFormat(+0x00)=0, color(+0x08)=native tex, depthFormat(+0x10)=0, depth(+0x18)=0,
+/// width(+0x20), height(+0x24), textureArrayLength(+0x28), flags(+0x2c). `color`/`depth` are Unity's
+/// `UnityXRTextureData` union (8 bytes = `nativePtr` | `referenceTextureId`; verified via the reference
+/// app's IL2CPP managed mirror).
+///
+/// Version caveat: Unity's newer XR SDK (Unity 6) inserts `shadingRateFormat` (int32) + `shadingRate`
+/// (`UnityXRTextureData`) between `depth` and `width`, making the struct 0x40 bytes with width→+0x30.
+/// The 3.1.0 plugin we vendor predates that, so this 0x30 layout is correct here — but if the vendored
+/// plugin is ever rebuilt against a newer SDK, add those two fields (else CreateTexture reads garbage
+/// width/height).
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct UnityXrRenderTextureDesc {
     color_format: u32,         // +0x00
     _pad0: u32,                // +0x04
-    color: u64,                // +0x08  native GL texture name
+    color: u64,                // +0x08  UnityXRTextureData (native GL texture name)
     depth_format: u32,         // +0x10
     _pad1: u32,                // +0x14
     depth: u64,                // +0x18
