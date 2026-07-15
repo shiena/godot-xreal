@@ -15,8 +15,8 @@ crate-type = ["cdylib"]
 # Bump to api-4-5 etc. if you want to depend on newer engine symbols.
 godot = { version = "0.5", features = ["api-4-6"] }
 # Runtime dlopen/dlsym of the vendored XREAL .so files (libXREALNativeSessionManager.so,
-# libXREALXRPlugin.so). Kept out of the link line so the extension still loads on a
-# desktop editor where those libraries are absent.
+# libXREALXRPlugin.so), kept out of the link line rather than linked directly. The extension
+# itself is Android-only (see godot_xreal.gdextension) — the desktop editor does not load it.
 libloading = "0.8"
 
 # Android-only: read the host JavaVM / Activity jobject published to the process, used as
