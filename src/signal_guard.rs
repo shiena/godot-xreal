@@ -23,7 +23,7 @@
 //! may terminate the process before our handler runs.  The code-patch is the
 //! primary mechanism.
 
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 // Runtime base address of libXREALXRPlugin.so — set by XrealNative::load().
 static LIB_BASE: AtomicUsize = AtomicUsize::new(0);
@@ -189,12 +189,12 @@ pub fn patch_create_display_layer(lib_base: usize) {
     // so Multiview registers the swapchain texture.
     let patch_addr = lib_base + 0x6dc98;
     let branch_real: u32 = 0x1400_0020; // b 0x6dd18 (delta 0x80, imm26 0x20)
-    // Patch 2 (Multiview two-viewport): `lsl w21, w8, #1` → `mov w21, #2` at CreateDisplayLayer+0x48.
-    // This is inside the `stereo_rendering_mode == 2` block, so Multipass is untouched. It forces the
-    // DisplayOverlay ctor's `overlay+0x14 = 2` — the value `DisplayOverlay::CreateViewport @0xa6a68`
-    // tests to build TWO viewports (viewport[0] layer 0 = left, viewport[1] layer 1 = right) for the
-    // one array swapchain. Without it our path built only ONE viewport (component 6), so the compositor
-    // never presented array layer 1 and the right eye was black. See docs/archive/codex-righteye-analysis.md.
+                                        // Patch 2 (Multiview two-viewport): `lsl w21, w8, #1` → `mov w21, #2` at CreateDisplayLayer+0x48.
+                                        // This is inside the `stereo_rendering_mode == 2` block, so Multipass is untouched. It forces the
+                                        // DisplayOverlay ctor's `overlay+0x14 = 2` — the value `DisplayOverlay::CreateViewport @0xa6a68`
+                                        // tests to build TWO viewports (viewport[0] layer 0 = left, viewport[1] layer 1 = right) for the
+                                        // one array swapchain. Without it our path built only ONE viewport (component 6), so the compositor
+                                        // never presented array layer 1 and the right eye was black. See docs/archive/codex-righteye-analysis.md.
     let viewport_addr = lib_base + 0x6dc60;
     let mov_w21_2: u32 = 0x5280_0055; // mov w21, #2
 
@@ -267,6 +267,45 @@ pub fn patch_update_metrics(lib_base: usize) {
         "[xreal] patch_update_metrics: patched UpdateMetrics at {patch_addr:#018x} → ret \
          (skip null metrics callback so SubmitCurrentFrame can present)"
     );
+}
+
+/// Re-apply the `UpdateMetrics` → `ret` patch on the CURRENT (render/GL) thread, once.
+///
+/// The one-shot `patch_update_metrics` runs on the main thread; its `ic ivau`/`isb` synchronise that
+/// thread, but `UpdateMetrics` runs on the render/GL thread whose instruction fetch may still hold the
+/// stale prologue. Re-applying here (from `run_frame_tick`, which runs on that thread) makes THIS
+/// thread's `isb` land, so its fetch picks up the `ret` — `UpdateMetrics` then returns at its entry and
+/// never reaches ANY of its null reporter callbacks (it has more than one — the "Render Metrics"
+/// `FrameMetrics: FPS=…, drop=…, early=…` telemetry sinks the SDK expects Unity to provide). Now
+/// reachable at all only because `LIB_BASE` is published on Android — previously it was always 0, so the
+/// compiler proved this function a no-op and dead-code-eliminated it entirely.
+#[cfg(target_os = "android")]
+pub fn reassert_update_metrics_on_render_thread() {
+    static DONE: AtomicBool = AtomicBool::new(false);
+    if DONE.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let lib_base = LIB_BASE.load(Ordering::SeqCst);
+    if lib_base == 0 {
+        return;
+    }
+    patch_update_metrics(lib_base);
+    godot::global::godot_print!(
+        "[xreal] reassert_update_metrics_on_render_thread: re-applied ret on the render thread"
+    );
+}
+
+#[cfg(not(target_os = "android"))]
+pub fn reassert_update_metrics_on_render_thread() {}
+
+/// Publish `libXREALXRPlugin.so`'s runtime base into `LIB_BASE` **without** touching signal handlers.
+///
+/// This is what Android needs: `reassert_update_metrics_on_render_thread` (and the SIGSEGV handler off-Android)
+/// require it, but the SIGSEGV sigaction is a no-op on Android (ART's `libsigchain` intercepts SIGSEGV
+/// first — the code patches are the real mechanism) and registering it was observed to destabilise the
+/// process, so Android publishes the base via this and skips `install`.
+pub fn publish_lib_base(lib_base: usize) {
+    LIB_BASE.store(lib_base, Ordering::SeqCst);
 }
 
 /// Install the SIGSEGV guard. Call once with `libXREALXRPlugin.so`'s runtime base.

@@ -1158,6 +1158,11 @@ impl XrealNative {
                             crate::signal_guard::patch_update_metrics(lib_base);
                         });
                     }
+                    // Publish the library base so LIB_BASE readers (reassert_update_metrics_on_render_thread) work.
+                    // On Android publish it WITHOUT installing the SIGSEGV sigaction (a no-op there —
+                    // libsigchain wins — and it destabilised the process); off-Android use install().
+                    #[cfg(target_os = "android")]
+                    crate::signal_guard::publish_lib_base(lib_base);
                     #[cfg(not(target_os = "android"))]
                     crate::signal_guard::install(lib_base);
                     (lib_base + 0xdb400) as *mut c_void

@@ -1182,6 +1182,11 @@ pub fn run_render_thread_tick() {
 pub fn run_frame_tick() {
     let n = FRAME_TICK_COUNT.fetch_add(1, Ordering::Relaxed);
 
+    // Re-apply the UpdateMetrics `ret` on THIS (render/GL) thread once, so its I-cache picks up the
+    // patch the main thread wrote (SubmitCurrentFrame → UpdateMetrics runs here and otherwise SIGBUSes
+    // on a null metrics callback ~1 s in).
+    crate::signal_guard::reassert_update_metrics_on_render_thread();
+
     // Drive the per-frame HMD input update (→ DisplayManager::OnBeforeRender) BEFORE populating the
     // frame, so the render pose the compositor reprojects against is refreshed to the live head pose
     // instead of freezing at session start (which world-anchors our render). Runs on the render
