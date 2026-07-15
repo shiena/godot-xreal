@@ -9,12 +9,12 @@ reloadable = true
 ;   cargo ndk -t arm64-v8a -o ./jniLibs build --release
 android.debug.arm64 = "res://target/aarch64-linux-android/release/libgodot_xreal.so"
 android.release.arm64 = "res://target/aarch64-linux-android/release/libgodot_xreal.so"
-; Desktop entries point at committed do-nothing stubs: Godot has no way to declare an
-; extension platform-only and errors on every editor start when no entry matches the host
+; Desktop entries point at do-nothing stubs: Godot has no way to declare an extension
+; platform-only and errors on every editor start when no entry matches the host
 ; ("No GDExtension library found for current OS and architecture"). The stubs accept
 ; initialization and register nothing, so ClassDB.class_exists(&"XrealSystem") stays false
-; and scripts take their no-extension path. Source: dummy/gdext_dummy.c, rebuilt (rarely
-; needed) with scripts/build_dummy_libs.ps1 / .sh.
+; and scripts take their no-extension path. Not committed — build once after cloning with
+; scripts/build_dummy_libs.ps1 / .sh (clang + lld only; source: dummy/gdext_dummy.c).
 windows.x86_64 = "res://dummy/godot_xreal_dummy.windows.x86_64.dll"
 windows.arm64 = "res://dummy/godot_xreal_dummy.windows.arm64.dll"
 linux.x86_64 = "res://dummy/libgodot_xreal_dummy.linux.x86_64.so"

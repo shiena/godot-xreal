@@ -8,8 +8,9 @@
  * its no-extension path, exactly as on a device without the .so.
  *
  * Deliberately freestanding (no libc) so every desktop target cross-compiles from any
- * host with clang + lld alone — see scripts/build_dummy_libs.ps1 / .sh. The committed
- * binaries under dummy/ only need rebuilding if the entry_symbol or this ABI changes.
+ * host with clang + lld alone — see scripts/build_dummy_libs.ps1 / .sh. The binaries are
+ * not committed: build them once after cloning (rebuild only if the entry_symbol or this
+ * ABI ever changes).
  *
  * ABI: the GDExtensionInitialization struct and entry signature from Godot's
  * gdextension_interface.h (stable since 4.1).

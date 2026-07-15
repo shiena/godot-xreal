@@ -5,8 +5,8 @@
 # they accept initialization and register nothing (see the comment in gdext_dummy.c).
 #
 # The source is freestanding (no libc, no SDKs), so a single clang + lld cross-compiles
-# all six targets from any host. The resulting binaries are tiny and committed to the
-# repo — rerun this only if gdext_dummy.c or the entry_symbol changes.
+# all six targets from any host. The binaries are tiny and NOT committed — run this once
+# after cloning; rerun only if gdext_dummy.c or the entry_symbol changes.
 #
 #   pwsh scripts/build_dummy_libs.ps1              # clang on PATH
 #   pwsh scripts/build_dummy_libs.ps1 -Clang <path-to-clang>

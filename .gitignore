@@ -10,16 +10,12 @@ demo/addons/
 /android/
 jniLibs
 
-# Build artifacts
+# Build artifacts (incl. the desktop dummy stubs built into dummy/ by
+# scripts/build_dummy_libs.ps1 / .sh — build locally, don't commit)
 *.dll
 *.so
 *.dylib
 *.apk
-# …except the committed desktop dummy GDExtension stubs (tiny, built by
-# scripts/build_dummy_libs.ps1 / .sh — see dummy/gdext_dummy.c)
-!/dummy/*.dll
-!/dummy/*.so
-!/dummy/*.dylib
 
 # Local device-test artifacts / scratch
 /log

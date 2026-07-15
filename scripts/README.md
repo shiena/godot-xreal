@@ -18,10 +18,10 @@ local copy of the SDK package — either the extracted `package/` dir or the `co
 archive itself (auto-extracted to a temp dir). The build scripts wrap it as `-Extract` / `--extract`.
 (The XrealBridge Java sources are compiled by the export's gradle build — no vendoring step.)
 
-`build_dummy_libs.ps1` / `build_dummy_libs.sh` rebuilds the committed desktop stub libraries in
-`dummy/` (do-nothing GDExtension entry points so a desktop editor doesn't error on this
-Android-only extension). Cross-compiles all six desktop targets from any host with just
-clang + lld; rerun only if `dummy/gdext_dummy.c` or the `entry_symbol` changes.
+`build_dummy_libs.ps1` / `build_dummy_libs.sh` builds the desktop stub libraries into `dummy/`
+(do-nothing GDExtension entry points so a desktop editor doesn't error on this Android-only
+extension). Not committed — run once after cloning. Cross-compiles all six desktop targets from
+any host with just clang + lld; rerun only if `dummy/gdext_dummy.c` or the `entry_symbol` changes.
 
 ## Prerequisites (assumed installed and on PATH)
 
