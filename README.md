@@ -57,6 +57,11 @@ The GDExtension is plain godot-rust; the one project-specific step is a **prereq
 vendoring the XREAL native libraries — before the Android export. Full command reference (desktop
 iteration, manual `cargo ndk` / Gradle steps, signing): [`docs/build-and-release.md`](docs/build-and-release.md).
 
+Opening the project in a **desktop editor needs no build at all**: the extension is Android-only, and
+the `.gdextension` points desktop platforms at committed do-nothing stubs
+([`dummy/`](dummy/gdext_dummy.c)) so the editor doesn't error about a missing library
+(`scripts/build_dummy_libs.ps1` / `.sh` rebuilds them — rarely needed).
+
 ### Prerequisite: vendor the XREAL runtime libraries
 
 The XREAL native libraries are **not** included in this repo (they remain under XREAL's terms). Obtain

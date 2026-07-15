@@ -15,6 +15,11 @@ jniLibs
 *.so
 *.dylib
 *.apk
+# …except the committed desktop dummy GDExtension stubs (tiny, built by
+# scripts/build_dummy_libs.ps1 / .sh — see dummy/gdext_dummy.c)
+!/dummy/*.dll
+!/dummy/*.so
+!/dummy/*.dylib
 
 # Local device-test artifacts / scratch
 /log
