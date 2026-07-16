@@ -128,7 +128,7 @@ aar.)
 With the toolchain on `PATH` (Rust `aarch64-linux-android` target, `cargo-ndk`, `ANDROID_NDK_HOME`, a
 Godot 4.7-stable binary, `adb`), `scripts/build.sh` (or `scripts/build.ps1`) wraps the four Android
 stages — cargo-ndk build → Godot APK export → `adb install` → launch. It re-checks the prerequisite
-above first (both the 3 core `.so` and the addon's `.aar`/`.jar`) and prints the same guide if anything
+above first (both the 4 `.so` and the addon's `.aar`/`.jar`) and prints the same guide if anything
 is missing.
 
 ```bash

@@ -130,8 +130,9 @@ This repo already ships the wiring — the steps below are what produced the cur
    cargo ndk -t arm64-v8a -o ./jniLibs build --release      # -> libgodot_xreal.so
    pwsh scripts/vendor_xreal_libs.ps1 -XrealPackage "<...>/com.xreal.xr/package"
    ```
-   `vendor_xreal_libs.ps1` stages the 3 core `.so` into `jniLibs/arm64-v8a/` and the
-   engine-agnostic aars (`nr_loader`, `nr_common`, `nr_api`, `GlassesDisplayPlugEvent`,
+   `vendor_xreal_libs.ps1` stages the 4 `.so` into `jniLibs/arm64-v8a/` (the 3 core + the FPV
+   `libmedia_codec.so`) and the engine-agnostic aars (`nr_loader`, `nr_common`, `nr_api`,
+   `nr_spatial_anchor`, `nr_image_tracking`, `GlassesDisplayPlugEvent`,
    **`Log-Control`** — they also carry the NR native libs, which Gradle merges into the APK) into
    `addons/godot_xreal/android/`; for a direct Gradle build, copy those aars on into
    `android/build/libs/{debug,release}/` (§4 step 6). It **excludes `nractivitylife`**.
@@ -315,9 +316,9 @@ After doing that, re-apply the project-specific XREAL wiring below.
 
 7. Ensure `godot_xreal.gdextension` lists the core Android native dependencies.
 
-   The `[dependencies] android.arm64` block must include the 3 core XREAL `.so`
-   (`libXREALNativeSessionManager.so`, `libXREALXRPlugin.so`, `libVulkanSupport.so`).
-   The NR `.so` are deliberately not listed — they reach the APK via the aars.
+   The `[dependencies] android.arm64` block must include the 4 XREAL `.so`
+   (`libXREALNativeSessionManager.so`, `libXREALXRPlugin.so`, `libVulkanSupport.so`,
+   `libmedia_codec.so`). The NR `.so` are deliberately not listed — they reach the APK via the aars.
 
 8. Ensure the Android template default min SDK is 29.
 

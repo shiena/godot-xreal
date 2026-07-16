@@ -88,13 +88,15 @@ pwsh scripts/vendor_xreal_libs.ps1 -XrealPackage "C:\path\to\package"
 The script stages **everything** the Android export needs (all git-ignored; nothing is downloaded —
 you supply the package):
 
-1. **3 core `.so` → `jniLibs/arm64-v8a/`** — copied from
-   `package/Runtime/Plugins/Android/arm64-v8a/`: `libXREALNativeSessionManager.so`,
-   `libXREALXRPlugin.so`, `libVulkanSupport.so`. `godot_xreal.gdextension` lists them under
+1. **4 `.so` → `jniLibs/arm64-v8a/`** — three from
+   `package/Runtime/Plugins/Android/arm64-v8a/` (`libXREALNativeSessionManager.so`,
+   `libXREALXRPlugin.so`, `libVulkanSupport.so`) plus `libmedia_codec.so` (the FPV H.264 encoder,
+   from the Camera Features plugin path). `godot_xreal.gdextension` lists them under
    `[dependencies] android.arm64`, so Godot's Android export packs them next to the extension; the
    extension `dlopen`s them at startup.
 
-2. **5 `.aar` → `addons/godot_xreal/android/`** — `nr_loader.aar`, `nr_api.aar`, `nr_common.aar`,
+2. **7 `.aar` → `addons/godot_xreal/android/`** — `nr_loader.aar`, `nr_api.aar`, `nr_common.aar`,
+   `nr_spatial_anchor.aar`, `nr_image_tracking.aar`,
    `GlassesDisplayPlugEvent-2.4.2.aar`, `Log-Control-1.2.aar`, copied from
    `package/Runtime/Plugins/Android/`. The addon's export plugin
    (`addons/godot_xreal/export_plugin.gd`) ships them into the APK: they carry the Java/JNI layer +
@@ -119,7 +121,7 @@ you supply the package):
    the template stays pristine. Requires the Android build template to be installed
    (Project > Install Android Build Template) — but the gradle export needs that anyway.
 
-`scripts/build.ps1` / `scripts/build.sh` verify all of the above (the 3 core `.so` **and** the
+`scripts/build.ps1` / `scripts/build.sh` verify all of the above (the 4 `.so` **and** the
 addon's `.aar`) before an export and stop with these instructions if anything is missing.
 
 ## Lint

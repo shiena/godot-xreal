@@ -27,7 +27,7 @@ compiled `xreal_bridge.jar`) registers the Activity, `session_started=true`, ste
 Remaining polish (non-blocking): revert the working template's `GodotApp.java` to stock (its
 `XrealBridge.register` call is now redundant with the GDScript path).
 ~~Fold the AAR-copy + JAR-build into `scripts/vendor_xreal_libs.ps1`~~ — **done (2026-07-14)**:
-the script now stages the 3 core `.so`, copies the 5 `.aar` into `addons/godot_xreal/android/`,
+the script now stages the 4 `.so`, copies the 7 `.aar` into `addons/godot_xreal/android/`,
 and compiles `xreal_bridge.jar`; `build.ps1`/`build.sh` check all of it before an export.
 **Superseded (2026-07-15):** the pre-compiled `xreal_bridge.jar` is gone — `export_plugin.gd`
 now stages the Java sources into the gradle build template at `_export_begin` and the export's
