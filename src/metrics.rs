@@ -72,7 +72,10 @@ static METRICS: Mutex<Option<Metrics>> = Mutex::new(None);
 /// `1`) nothing is stored, so a later call retries. Returns a one-line diagnostic.
 fn start_locked(slot: &mut Option<Metrics>) -> String {
     if let Some(m) = slot.as_ref() {
-        return format!("[xreal] render metrics already started (handle={:#x})", m.handle);
+        return format!(
+            "[xreal] render metrics already started (handle={:#x})",
+            m.handle
+        );
     }
     unsafe {
         let lib = match Library::new("libnr_loader.so") {
@@ -105,15 +108,24 @@ fn start_locked(slot: &mut Option<Metrics>) -> String {
         // Enable the TearedFrameCount feature so `NRMetricsGetTearedFrameCount` returns a real value
         // instead of an error — the same thing the Unity SDK does via its exported
         // `EnableTearedFrameCount(true)` (→ `NativeMetrics::SetFeatureEnable(1, true)`).
-        let set_feature_enable = lib.get::<FnSetFeature>(b"NRMetricsSetFeatureEnable\0").ok().map(|f| *f);
+        let set_feature_enable = lib
+            .get::<FnSetFeature>(b"NRMetricsSetFeatureEnable\0")
+            .ok()
+            .map(|f| *f);
         let teared_feature = set_feature_enable
             .map(|f| f(handle, NR_METRICS_FEATURE_TEARED_FRAME_COUNT, 1))
             .unwrap_or(-1);
 
         *slot = Some(Metrics {
             stop: lib.get::<FnOneHandle>(b"NRMetricsStop\0").ok().map(|f| *f),
-            destroy: lib.get::<FnOneHandle>(b"NRMetricsDestroy\0").ok().map(|f| *f),
-            get_present_fps: lib.get::<FnGetI32>(b"NRMetricsGetPresentFps\0").ok().map(|f| *f),
+            destroy: lib
+                .get::<FnOneHandle>(b"NRMetricsDestroy\0")
+                .ok()
+                .map(|f| *f),
+            get_present_fps: lib
+                .get::<FnGetI32>(b"NRMetricsGetPresentFps\0")
+                .ok()
+                .map(|f| *f),
             get_dropped_frame_count: lib
                 .get::<FnGetI32>(b"NRMetricsGetDroppedFrameCount\0")
                 .ok()

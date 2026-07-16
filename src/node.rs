@@ -140,7 +140,7 @@ impl INode3D for XrealHeadTracker {
                     // Calibration log: extracted Godot euler + the raw 4×4 rows. Move head in a known
                     // way — nod=pitch/X, turn=yaw/Y, tilt=roll/Z — and check each axis + sign; if one
                     // reads inverted, flip it in display_rotation().
-                    if self.frames < 16 || self.frames % 30 == 0 {
+                    if self.frames < 16 || self.frames.is_multiple_of(30) {
                         godot_print!(
                             "[xreal] DISP euler pitch/x={:.1} yaw/y={:.1} roll/z={:.1} | \
                              r0=[{:.3},{:.3},{:.3}] r1=[{:.3},{:.3},{:.3}] r2=[{:.3},{:.3},{:.3}] pos=[{:.3},{:.3},{:.3}]",
@@ -177,7 +177,7 @@ impl INode3D for XrealHeadTracker {
                     let corrected = (self.recenter_reference.inverse() * rotation).normalized();
                     self.base_mut().set_quaternion(corrected);
                     let euler = corrected.get_euler() * (180.0 / std::f32::consts::PI);
-                    if self.frames % 30 == 0 {
+                    if self.frames.is_multiple_of(30) {
                         godot_print!(
                             "[xreal] SM pose q(wxyz)=({:.3},{:.3},{:.3},{:.3}) euler_deg pitch/x={:.1} yaw/y={:.1} roll/z={:.1}",
                             pose.qx, pose.qy, pose.qz, pose.qw, euler.x, euler.y, euler.z
@@ -333,7 +333,7 @@ impl XrealHeadTracker {
         let Some(world) = self.base().get_world_3d() else {
             return;
         };
-        let mut make_eye = || {
+        let make_eye = || {
             let mut sv = SubViewport::new_alloc();
             sv.set_size(Vector2i::new(EYE_W, EYE_H));
             sv.set_update_mode(UpdateMode::ALWAYS);
@@ -398,10 +398,10 @@ impl XrealHeadTracker {
                 cam.set_far(FAR);
             }
         }
-        let mut rs = RenderingServer::singleton();
+        let rs = RenderingServer::singleton();
         // Use the actual render-target texture RID (viewport_get_texture on the viewport RID), not
         // the ViewportTexture *resource* RID, whose native handle is 0.
-        let mut handle = |sv: &Gd<SubViewport>| -> u32 {
+        let handle = |sv: &Gd<SubViewport>| -> u32 {
             let tex_rid = rs.viewport_get_texture(sv.get_viewport_rid());
             rs.texture_get_native_handle(tex_rid) as u32
         };

@@ -17,6 +17,9 @@
 //! **RE / unverified**, recovered from `libXREALXRPlugin.so` AArch64 disassembly and
 //! relocation tables; see `docs/reference/reverse-engineering.md`.
 
+// Desktop never drives the Unity provider path, so these items are dead there; keep the lint on Android.
+#![cfg_attr(not(target_os = "android"), allow(dead_code))]
+
 use std::ffi::{c_char, c_void, CStr};
 use std::ptr;
 use std::sync::{
@@ -1193,7 +1196,7 @@ pub fn run_frame_tick() {
     // thread — a different thread from XrealHeadTracker::process's session-manager pose read, so the
     // two pose pipelines are not touched on the same thread in the same frame.
     let hmd_update = call_input_update_hmd();
-    if n < 5 || n % 300 == 0 {
+    if n < 5 || n.is_multiple_of(300) {
         godot::global::godot_print!(
             "[xreal] input UpdateDeviceState(HMD)->{hmd_update} (frame {n})"
         );
@@ -1345,7 +1348,7 @@ pub fn run_frame_tick() {
         )
     });
 
-    if n < 5 || n % 300 == 0 {
+    if n < 5 || n.is_multiple_of(300) {
         godot::global::godot_print!(
             "[xreal] frame_tick #{n} tid={}: populate={pop_status} passes={pass_count} \
              tex0={} tex1={} filled={filled} submit={submit_status:?} \

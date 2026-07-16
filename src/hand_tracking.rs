@@ -20,14 +20,6 @@
 //! (position `(x, y, -z)`, quaternion `(-x, -y, z, w)`). The array is in **Unity `XRHandJointID` order**
 //! (`[0]=Wrist, [1]=Palm, [2..25]=fingers`); Godot's `XRHandTracker` is `PALM=0, WRIST=1, [2..25]=fingers`
 //! (same finger order), so we only swap the first two.
-//!
-//! ## Open bring-up item (verify on Air 2 Ultra)
-//!
-//! `UpdateHandPose` no-ops until hand tracking is **enabled** (guarded on `InputManager+0x290`). The SDK
-//! enables it via `NRConfigSetHandTrackingEnabled(session, config, true)` during perception setup
-//! (session + config handles held inside `NativePerception`, which we don't drive). Wiring that enable
-//! (recover the config handle, or find a plugin path) is the first Air 2 Ultra bring-up task; until then
-//! `update()` returns `false` and no hands are reported. Everything else here is ready.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
@@ -52,15 +44,10 @@ struct UnityPose {
 /// Matches the SDK's C# `HandJointsPose` under default P/Invoke marshalling: `bool` → 4-byte `BOOL`,
 /// then a by-value `Pose[26]` (`SizeConst = XRHandJointID.EndMarker - 1 = 26`).
 #[repr(C)]
+#[derive(Default)]
 struct HandJointsPose {
     is_tracked: i32,
     joints: [UnityPose; 26],
-}
-
-impl Default for HandJointsPose {
-    fn default() -> Self {
-        Self { is_tracked: 0, joints: [UnityPose::default(); 26] }
-    }
 }
 
 type FnBool = unsafe extern "C" fn() -> bool;
@@ -103,7 +90,12 @@ fn ensure_api_locked(slot: &mut Option<HandApi>) -> &'static str {
             Ok(f) => *f,
             Err(_) => return "dlsym GetHandJointsPose failed",
         };
-        *slot = Some(HandApi { _lib: lib, is_supported, update, get_joints });
+        *slot = Some(HandApi {
+            _lib: lib,
+            is_supported,
+            update,
+            get_joints,
+        });
         "loaded"
     }
 }
@@ -113,7 +105,9 @@ fn ensure_api_locked(slot: &mut Option<HandApi>) -> &'static str {
 pub fn is_supported() -> bool {
     let mut slot = HAND_API.lock().unwrap_or_else(|e| e.into_inner());
     ensure_api_locked(&mut slot);
-    slot.as_ref().map(|a| unsafe { (a.is_supported)() }).unwrap_or(false)
+    slot.as_ref()
+        .map(|a| unsafe { (a.is_supported)() })
+        .unwrap_or(false)
 }
 
 /// One converted hand: `tracked` plus 26 Godot-space joint transforms indexed by Godot `HandJoint` ord.
@@ -144,7 +138,10 @@ pub fn poll(hand_type: i32) -> Option<HandSnapshot> {
         };
         joints[godot_ord] = unity_pose_to_godot(p);
     }
-    Some(HandSnapshot { tracked: raw.is_tracked != 0, joints })
+    Some(HandSnapshot {
+        tracked: raw.is_tracked != 0,
+        joints,
+    })
 }
 
 /// Refresh both hands for this frame. Returns `false` when unavailable or hand tracking is not enabled
@@ -153,7 +150,9 @@ pub fn update_frame() -> bool {
     ensure_enabled();
     let mut slot = HAND_API.lock().unwrap_or_else(|e| e.into_inner());
     ensure_api_locked(&mut slot);
-    slot.as_ref().map(|a| unsafe { (a.update)() }).unwrap_or(false)
+    slot.as_ref()
+        .map(|a| unsafe { (a.update)() })
+        .unwrap_or(false)
 }
 
 // --- Enable path (RE, internal plugin functions by `LIB_BASE + offset`) --------------------------------
@@ -274,7 +273,13 @@ pub struct XrealHandTracker {
 #[godot_api]
 impl INode for XrealHandTracker {
     fn init(base: Base<Node>) -> Self {
-        Self { base, left: None, right: None, registered: false, logged_first_tracked: false }
+        Self {
+            base,
+            left: None,
+            right: None,
+            registered: false,
+            logged_first_tracked: false,
+        }
     }
 
     fn ready(&mut self) {
@@ -288,7 +293,10 @@ impl INode for XrealHandTracker {
         self.left = Some(left);
         self.right = Some(right);
         self.registered = true;
-        godot_print!("[xreal] XrealHandTracker: registered left/right hand trackers (supported={})", is_supported());
+        godot_print!(
+            "[xreal] XrealHandTracker: registered left/right hand trackers (supported={})",
+            is_supported()
+        );
     }
 
     fn process(&mut self, _delta: f64) {
@@ -300,7 +308,8 @@ impl INode for XrealHandTracker {
         let left = if updated { poll(0) } else { None };
         let right = if updated { poll(1) } else { None };
         if !self.logged_first_tracked
-            && (left.as_ref().is_some_and(|s| s.tracked) || right.as_ref().is_some_and(|s| s.tracked))
+            && (left.as_ref().is_some_and(|s| s.tracked)
+                || right.as_ref().is_some_and(|s| s.tracked))
         {
             self.logged_first_tracked = true;
             godot_print!("[xreal] XrealHandTracker: first tracked hand — feeding XRHandTracker(s)");

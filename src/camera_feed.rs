@@ -24,7 +24,6 @@ use godot::prelude::*;
 ///   `get_cbcr_texture`) updated. The 3D panel shader samples those ImageTextures directly — a
 ///   `CameraTexture` bound to a *script-fed* feed shows only the placeholder on this build, so the
 ///   direct textures are what actually display (matching the XREAL SDK's YUVTransRGB sample).
-
 use crate::session;
 
 #[derive(GodotClass)]
@@ -111,14 +110,13 @@ impl XrealCameraFeed {
         let Some(cbcr_img) = Image::create_from_data(cw, ch, false, Format::RG8, &cbcr_data) else {
             return false;
         };
-        // Feed the Godot CameraFeed (for CameraServer integration), and keep the plain ImageTextures
-        // the 3D panel shader samples directly — a CameraTexture on a script feed only shows the
-        // placeholder, so these are what actually display.
+        // Feed the Godot CameraFeed (for CameraServer integration), then keep the plain ImageTextures
+        // the 3D panel shader samples directly (see module docs for why a CameraTexture won't do here).
         self.base_mut().set_ycbcr_images(&y_img, &cbcr_img);
         update_texture(&mut self.y_tex, &y_img);
         update_texture(&mut self.cbcr_tex, &cbcr_img);
 
-        if self.frames <= 3 || self.frames % 120 == 0 {
+        if self.frames <= 3 || self.frames.is_multiple_of(120) {
             let step = (y.len() / 4096).max(1);
             let (mut sum, mut n) = (0u64, 0u64);
             let mut i = 0;

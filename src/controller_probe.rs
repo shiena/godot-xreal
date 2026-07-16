@@ -72,8 +72,14 @@ pub fn start() -> String {
         let create: FnCreate = sym!("NRControllerCreate", FnCreate);
         let start_fn: FnOneHandle = sym!("NRControllerStart", FnOneHandle);
         let state_update: FnStateUpdate = sym!("NRControllerStateUpdate", FnStateUpdate);
-        let group_destroy = lib.get::<FnOneHandle>(b"NRControllerGroupDestroy\0").ok().map(|f| *f);
-        let state_destroy = lib.get::<FnOneHandle>(b"NRControllerStateDestroy\0").ok().map(|f| *f);
+        let group_destroy = lib
+            .get::<FnOneHandle>(b"NRControllerGroupDestroy\0")
+            .ok()
+            .map(|f| *f);
+        let state_destroy = lib
+            .get::<FnOneHandle>(b"NRControllerStateDestroy\0")
+            .ok()
+            .map(|f| *f);
 
         let mut group: u64 = 0;
         let gc = group_create(&mut group);
@@ -92,7 +98,11 @@ pub fn start() -> String {
         group_get_id(group, 0, &mut controller_id);
         let mut handle: u64 = 0;
         let cr = create(controller_id, &mut handle);
-        let sr = if cr == 0 && handle != 0 { start_fn(handle) } else { -1 };
+        let sr = if cr == 0 && handle != 0 {
+            start_fn(handle)
+        } else {
+            -1
+        };
         if let Some(gd) = group_destroy {
             gd(group); // the group was only needed to discover the id
         }
@@ -110,15 +120,30 @@ pub fn start() -> String {
             f(handle, &mut hand_type);
         }
 
-        let button_state =
-            lib.get::<FnHandleOutI32>(b"NRControllerStateGetButtonState\0").ok().map(|f| *f);
-        let touch_state = lib.get::<FnHandleOutI32>(b"NRControllerStateTouchState\0").ok().map(|f| *f);
-        let touch_pose = lib.get::<FnStateGetXy>(b"NRControllerStateGetTouchPose\0").ok().map(|f| *f);
-        let accelerometer =
-            lib.get::<FnStateGetXyz>(b"NRControllerStateGetAccelerometer\0").ok().map(|f| *f);
-        let gyroscope = lib.get::<FnStateGetXyz>(b"NRControllerStateGetGyroscope\0").ok().map(|f| *f);
-        let magnetometer =
-            lib.get::<FnStateGetXyz>(b"NRControllerStateGetMagnetometer\0").ok().map(|f| *f);
+        let button_state = lib
+            .get::<FnHandleOutI32>(b"NRControllerStateGetButtonState\0")
+            .ok()
+            .map(|f| *f);
+        let touch_state = lib
+            .get::<FnHandleOutI32>(b"NRControllerStateTouchState\0")
+            .ok()
+            .map(|f| *f);
+        let touch_pose = lib
+            .get::<FnStateGetXy>(b"NRControllerStateGetTouchPose\0")
+            .ok()
+            .map(|f| *f);
+        let accelerometer = lib
+            .get::<FnStateGetXyz>(b"NRControllerStateGetAccelerometer\0")
+            .ok()
+            .map(|f| *f);
+        let gyroscope = lib
+            .get::<FnStateGetXyz>(b"NRControllerStateGetGyroscope\0")
+            .ok()
+            .map(|f| *f);
+        let magnetometer = lib
+            .get::<FnStateGetXyz>(b"NRControllerStateGetMagnetometer\0")
+            .ok()
+            .map(|f| *f);
 
         *slot = Some(Controller {
             _lib: lib,
@@ -158,7 +183,10 @@ pub fn poll_raw() -> Raw {
     unsafe {
         let mut state: u64 = 0;
         (c.state_update)(c.handle, &mut state);
-        let mut r = Raw { ok: state != 0, ..Default::default() };
+        let mut r = Raw {
+            ok: state != 0,
+            ..Default::default()
+        };
         if state != 0 {
             if let Some(f) = c.accelerometer {
                 f(state, &mut r.accel);

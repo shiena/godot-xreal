@@ -12,6 +12,9 @@
 //! On desktop the `dlopen` fails and every entry point returns `None`/does nothing, matching the
 //! rest of the crate's "native libs absent → no-op" behaviour.
 
+// Desktop has no `.so` — every entry point here is a dummy no-op there; keep the lint on Android.
+#![cfg_attr(not(target_os = "android"), allow(dead_code))]
+
 use std::ffi::c_void;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::OnceLock;
@@ -381,8 +384,8 @@ pub fn fill_texture(tex: u32, r: f32, g_: f32, b: f32) {
     }
 }
 
-/// Blit `src` (size `src_w`×`src_h`) into `dst` (size `dst_w`×`dst_h`), flipping vertically so a
-/// top-left-origin engine texture lands right-side-up in the bottom-left-origin GL texture.
+/// Blit `src` (size `src_w`×`src_h`) into `dst` (size `dst_w`×`dst_h`) as a straight copy (no Y-flip;
+/// both share GL bottom-left origin — see the body comment).
 ///
 /// Blits Godot's rendered viewport color into an eye texture each frame.
 pub fn blit_texture(src: u32, src_w: i32, src_h: i32, dst: u32, dst_w: i32, dst_h: i32) {
@@ -455,7 +458,7 @@ pub fn blit_texture(src: u32, src_w: i32, src_h: i32, dst: u32, dst_w: i32, dst_
 
 /// Blit Godot's just-rendered window content (the default framebuffer / back buffer, fbo 0) into an
 /// eye texture. Godot's root viewport renders direct-to-screen, so it has no sampleable offscreen
-/// texture (`texture_get_native_handle` returns 0); reading fbo 0 gets its pixels instead. Flips Y.
+/// texture (`texture_get_native_handle` returns 0); reading fbo 0 gets its pixels instead. Straight copy, no Y-flip.
 pub fn blit_default_framebuffer(dst: u32, src_w: i32, src_h: i32, dst_w: i32, dst_h: i32) {
     let Some(g) = gl() else { return };
     if dst == 0 {

@@ -88,8 +88,6 @@ func _ready() -> void:
 	_phone_pointer_enabled = bool(ProjectSettings.get_setting("xreal/enable_phone_pointer", true))
 	if not _phone_pointer_enabled:
 		_ar.phone_pointer.queue_free()
-	# The camera is set up lazily in _process, only once head tracking is live (see _camera_enabled),
-	# so starting the capture never races the glasses display/tracking bring-up.
 
 func _try_register_android_bridge() -> void:
 	if not OS.has_feature("android"):

@@ -9,7 +9,7 @@
 //! native head rotation each frame and applies it to its own transform, so a
 //! child `Camera3D` looks around with the wearer's head. The stereo
 //! compositor/display path (`InitializeRendering` / `CreateProjectionRigLayer` /
-//! `CreateFrame`) is the next milestone — see `docs/plans/port-plan.md`.
+//! `CreateFrame`) is implemented — see `node` / `unity_plugin` and `docs/plans/port-plan.md`.
 
 use godot::prelude::*;
 

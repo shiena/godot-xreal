@@ -16,9 +16,6 @@ use godot::builtin::Quaternion;
 /// is a flat `float` array. It maps to the NRSDK `NRPose`, whose documented layout is
 /// **rotation first** (`NRRotation{x,y,z,w}`) then **position** (`NRPosition{x,y,z}`)
 /// — the opposite order from Unity's `Pose`. For the 3DoF MVP only the rotation is used.
-///
-/// RE: confirm the field order on hardware (log the 7 floats and check which 4 form a
-/// unit quaternion).
 #[repr(C)]
 #[derive(Clone, Copy, Default, Debug)]
 pub struct NrPose {
@@ -35,10 +32,9 @@ impl NrPose {
     /// Convert the native (Unity/NRSDK, left-handed, Y-up) rotation into a Godot
     /// (right-handed, Y-up) quaternion.
     ///
-    /// RE: the exact sign convention must be verified on hardware. Mirroring the Z
-    /// axis between the two coordinate systems flips the X/Y quaternion components; if
-    /// look-around is inverted on one axis, try the other variants (`(x,y,-z,-w)`,
-    /// `(x,-y,z,-w)`, `(-x,y,-z,w)`).
+    /// The sign convention is device-confirmed below. Mirroring the Z axis between the two
+    /// coordinate systems flips the X/Y quaternion components; if look-around ever inverts on
+    /// one axis, try the other variants (`(x,y,-z,-w)`, `(x,-y,z,-w)`, `(-x,y,-z,w)`).
     pub fn to_godot_quaternion(self) -> Quaternion {
         // DEVICE-CONFIRMED field order: the 4 rotation floats are **w-first** (w, x, y, z), NOT
         // (x, y, z, w). At rest the first float ≈ 1.0 (the scalar w) and the rest ≈ 0. So the

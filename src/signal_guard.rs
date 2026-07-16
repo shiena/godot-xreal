@@ -83,6 +83,9 @@
 //! may terminate the process before our handler runs.  The code-patch is the
 //! primary mechanism.
 
+// The code patches / offsets here run only on Android; on desktop they are dead. Keep the lint on Android.
+#![cfg_attr(not(target_os = "android"), allow(dead_code, unused_imports))]
+
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 // Runtime base address of libXREALXRPlugin.so — set by XrealNative::load().

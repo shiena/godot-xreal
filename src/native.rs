@@ -8,6 +8,9 @@
 //! Symbols are resolved once and the owning [`libloading::Library`] handles are kept
 //! alive in the struct for the lifetime of the resolved function pointers.
 
+// Desktop never loads the `.so`, so this FFI module's items are dead there; keep the lint on Android.
+#![cfg_attr(not(target_os = "android"), allow(dead_code))]
+
 use libloading::Library;
 
 use std::ffi::c_void;
@@ -240,6 +243,10 @@ type FnEglDestroyImageKHR = unsafe extern "C" fn(*mut c_void, *mut c_void) -> u3
 type FnEglGetNativeClientBufferANDROID = unsafe extern "C" fn(*mut c_void) -> *mut c_void;
 type FnEglGetError = unsafe extern "C" fn() -> u32;
 
+/// One RGB-camera frame as planar YCbCr: `(y, y_w, y_h, cbcr, c_w, c_h)` — the Y plane (R8, full-res)
+/// plus an interleaved CbCr buffer (RG8, half-res), the layout `set_ycbcr_images` + a YCbCr shader expect.
+pub type YuvFrame = (Vec<u8>, i32, i32, Vec<u8>, i32, i32);
+
 // EGL_GL_TEXTURE_2D_KHR from <EGL/eglext.h>
 const EGL_GL_TEXTURE_2D_KHR: u32 = 0x30B1;
 // EGL_NATIVE_BUFFER_ANDROID from <EGL/eglext.h>
@@ -470,7 +477,7 @@ impl GlTextureApi {
                     std::ptr::null(),
                 );
                 if egl_image.is_null() {
-                    let egl_err = self.egl_get_error.map(|f| unsafe { f() }).unwrap_or(0);
+                    let egl_err = self.egl_get_error.map(|f| f()).unwrap_or(0);
                     if let Some(release) = self.ahb_release {
                         release(ahb);
                     }
@@ -1136,7 +1143,7 @@ impl XrealNative {
             // Static compile-time offset: 0xdb400.
             let display_manager_desc_ptr = plugin_lib.as_ref().and_then(|l| {
                 l.get::<FnCreateFrame>(b"CreateFrame\0").ok().map(|s| {
-                    let fn_runtime_addr: usize = std::mem::transmute::<FnCreateFrame, usize>(*s);
+                    let fn_runtime_addr: usize = *s as usize;
                     let lib_base = fn_runtime_addr.wrapping_sub(0x53bd8);
                     // Code-patch HandleActionCallback+28 to add a null-NativeGlasses check.
                     // The SIGSEGV handler approach doesn't work because Android libsigchain
@@ -1401,7 +1408,7 @@ impl XrealNative {
     /// half-res). Returns `(y, y_w, y_h, cbcr, c_w, c_h)` where `cbcr` is `[Cb, Cr, Cb, Cr, …]`
     /// (`Cb = U`, `Cr = V`) — the RG8 layout Godot's `set_ycbcr_images` + a YCbCr shader expect.
     /// The frame handle is disposed before returning.
-    pub fn rgb_camera_grab_yuv(&self) -> Option<(Vec<u8>, i32, i32, Vec<u8>, i32, i32)> {
+    pub fn rgb_camera_grab_yuv(&self) -> Option<YuvFrame> {
         let acquire = self.rgb_try_acquire_latest?;
         let get_plane = self.rgb_get_data_plane?;
         let dispose = self.rgb_dispose_handle;
@@ -1857,7 +1864,6 @@ impl XrealNative {
         }
 
         // AcquiredFrames have no viewports by default; associate our left+right viewports.
-        // Try both 0-based and 1-based indices since the correct indexing is unconfirmed.
         let mut vp_statuses = [99i32; 4];
         for (i, &vp) in self.nr_viewport_handles.iter().enumerate().take(2) {
             // 1-based index (Unity uses vp_idx=1 for left, vp_idx=2 for right)
@@ -1868,7 +1874,6 @@ impl XrealNative {
         static FRAME_CTR: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
         let n = FRAME_CTR.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
-        // Diagnostic: check how many viewports the frame now has.
         let mut vp_count: u32 = 0;
         let vp_count_s = unsafe { (api.frame_get_viewport_count)(rendering, frame, &mut vp_count) };
 
@@ -1876,7 +1881,7 @@ impl XrealNative {
         let submit_s = unsafe { (api.frame_submit)(rendering, frame) };
         let _ = unsafe { (api.frame_destroy)(rendering, frame) };
 
-        if n % 60 == 0 {
+        if n.is_multiple_of(60) {
             godot::global::godot_print!(
                 "[xreal] frame #{n}: Acquire={acquire_s} SetVP={:?} VpCount(s={vp_count_s})={vp_count} \
                  Compose={compose_s} Submit={submit_s}",

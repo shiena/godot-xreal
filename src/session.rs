@@ -42,6 +42,7 @@ pub fn set_tracking_mode_override(mode: i32) {
 }
 
 /// The current tracking-mode override (`-1` if unset).
+#[allow(dead_code)] // kept public API; `tracking_mode` reads the static directly
 pub fn tracking_mode_override() -> i32 {
     TRACKING_MODE_OVERRIDE.load(Ordering::Relaxed)
 }
@@ -205,7 +206,7 @@ impl XrealSession {
     /// One bootstrap attempt: load the libraries, then (once the Activity is available)
     /// create the session and wire the perception API.
     fn try_start() -> TryStart {
-        let mut native = match XrealNative::load() {
+        let native = match XrealNative::load() {
             Ok(native) => native,
             Err(err) => return TryStart::Disabled(format!("native libraries unavailable: {err}")),
         };
@@ -262,10 +263,9 @@ impl XrealSession {
         );
         let settings = UserDefinedSettings {
             color_space: 1,
-            // Selectable at startup (see stereo_rendering_mode()): 0 = Multipass (per-eye 2D
-            // textures; renders but the layer is world-anchored), 2 = Multiview / Single-Pass-
-            // Instanced (one 2-layer array texture, matches the reference app's StereoRendering: 2 —
-            // the reference app's head-locked peek window; still WIP: NR swapchain registration).
+            // Stereo mode (fixed to Multipass by stereo_rendering_mode()): 0 = Multipass (per-eye 2D
+            // textures; renders but the layer is world-anchored), 2 = Multiview / Single-Pass-Instanced
+            // (one 2-layer array texture, reference app's StereoRendering: 2) — shelved, see that fn.
             stereo_rendering_mode: stereo_mode,
             tracking_type: tracking_mode,
             support_mono_mode: 0,
@@ -387,6 +387,7 @@ impl XrealSession {
 
     /// Start the lower NRRendering pipeline (swapchain + GL textures + viewports).
     /// Must be called on the rendering thread (EGL context required for GL texture allocation).
+    #[allow(dead_code)] // dead NR-compositor path, kept for diagnostics/RE
     pub fn start_nr_rendering(&self) -> Result<(), i32> {
         self.native
             .lock()
@@ -396,6 +397,7 @@ impl XrealSession {
 
     /// Submit one frame to the NR compositor.
     /// Returns the swapchain buffer index (maps to gl_texture_ids[index]).
+    #[allow(dead_code)] // dead NR-compositor path, kept for diagnostics/RE
     pub fn submit_nr_frame(&self) -> Result<u32, i32> {
         self.native
             .lock()
@@ -478,7 +480,10 @@ impl XrealSession {
 
     /// Start RGB-camera capture in poll mode; returns the capture handle (or `None`).
     pub fn rgb_camera_start(&self) -> Option<u64> {
-        self.native.lock().expect("xreal native mutex").rgb_camera_start()
+        self.native
+            .lock()
+            .expect("xreal native mutex")
+            .rgb_camera_start()
     }
 
     /// Stop RGB-camera capture.
@@ -490,6 +495,7 @@ impl XrealSession {
     }
 
     /// Poll the latest RGB-camera frame's Y plane as `(bytes, width, height)`.
+    #[allow(dead_code)] // Y-only grab; the demo uses rgb_camera_grab_yuv (colour)
     pub fn rgb_camera_grab_y(&self) -> Option<(Vec<u8>, i32, i32)> {
         self.native
             .lock()
@@ -499,7 +505,7 @@ impl XrealSession {
 
     /// Poll the latest RGB-camera frame as `(y, y_w, y_h, cbcr, c_w, c_h)` — Y plane + interleaved
     /// CbCr — for a YCbCr feed (`set_ycbcr_images`) + shader conversion.
-    pub fn rgb_camera_grab_yuv(&self) -> Option<(Vec<u8>, i32, i32, Vec<u8>, i32, i32)> {
+    pub fn rgb_camera_grab_yuv(&self) -> Option<crate::native::YuvFrame> {
         self.native
             .lock()
             .expect("xreal native mutex")
@@ -535,8 +541,6 @@ impl XrealSession {
             .expect("xreal native mutex")
             .set_glasses_space_mode(mode)
     }
-
-    ///
 
     /// XR-plugin tracking-state enum value, or `None` if the export is absent.
     pub fn tracking_state(&self) -> Option<i32> {

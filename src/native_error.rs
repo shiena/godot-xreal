@@ -25,7 +25,11 @@ pub extern "C" fn on_native_error(code: i32, message: *const c_char) {
     let text = if message.is_null() {
         None
     } else {
-        Some(unsafe { CStr::from_ptr(message) }.to_string_lossy().into_owned())
+        Some(
+            unsafe { CStr::from_ptr(message) }
+                .to_string_lossy()
+                .into_owned(),
+        )
     };
     if let Ok(mut slot) = LAST_ERROR_MESSAGE.lock() {
         *slot = text;

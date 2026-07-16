@@ -10,10 +10,6 @@
 //! `ndk_context::android_context()` panics with *"android context was not initialized"*.
 //! We catch that here — letting it unwind into the session `OnceLock` would leave it
 //! uninitialized and re-panic every frame ("Invalid call error code 1337" spam).
-//!
-//! Integration TODO (Phase 1 completion): actually obtain the Activity under Godot —
-//! either publish it into `ndk_context` from a `JNI_OnLoad` companion, or pass it from a
-//! Godot Android plugin / `AndroidRuntime` singleton.
 
 use std::ffi::c_void;
 

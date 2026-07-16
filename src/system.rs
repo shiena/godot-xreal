@@ -174,11 +174,18 @@ impl XrealSystem {
         let r = crate::controller_probe::poll_raw();
         PackedFloat32Array::from(&[
             if r.ok { 1.0 } else { 0.0 },
-            r.accel[0], r.accel[1], r.accel[2],
-            r.gyro[0], r.gyro[1], r.gyro[2],
-            r.mag[0], r.mag[1], r.mag[2],
+            r.accel[0],
+            r.accel[1],
+            r.accel[2],
+            r.gyro[0],
+            r.gyro[1],
+            r.gyro[2],
+            r.mag[0],
+            r.mag[1],
+            r.mag[2],
             r.touch as f32,
-            r.touch_xy[0], r.touch_xy[1],
+            r.touch_xy[0],
+            r.touch_xy[1],
             r.buttons as f32,
         ])
     }
@@ -274,31 +281,41 @@ impl XrealSystem {
     /// Frames dropped by the compositor. `-1` while the metrics handle is not up yet.
     #[func]
     fn get_dropped_frame_count(&self) -> i64 {
-        crate::metrics::dropped_frame_count().map(i64::from).unwrap_or(-1)
+        crate::metrics::dropped_frame_count()
+            .map(i64::from)
+            .unwrap_or(-1)
     }
 
     /// Frames presented early. `-1` while the metrics handle is not up yet.
     #[func]
     fn get_early_frame_count(&self) -> i64 {
-        crate::metrics::early_frame_count().map(i64::from).unwrap_or(-1)
+        crate::metrics::early_frame_count()
+            .map(i64::from)
+            .unwrap_or(-1)
     }
 
     /// Present count for the current frame (FPC). `-1` while the metrics handle is not up yet.
     #[func]
     fn get_frame_present_count(&self) -> i64 {
-        crate::metrics::frame_present_count().map(i64::from).unwrap_or(-1)
+        crate::metrics::frame_present_count()
+            .map(i64::from)
+            .unwrap_or(-1)
     }
 
     /// Extended (re-projected/stale) frame count (EFC). `-1` while the metrics handle is not up yet.
     #[func]
     fn get_extended_frame_count(&self) -> i64 {
-        crate::metrics::extended_frame_count().map(i64::from).unwrap_or(-1)
+        crate::metrics::extended_frame_count()
+            .map(i64::from)
+            .unwrap_or(-1)
     }
 
     /// Teared frame count. `-1` when unavailable (also the SDK's own "not tracked" sentinel).
     #[func]
     fn get_teared_frame_count(&self) -> i64 {
-        crate::metrics::teared_frame_count().map(i64::from).unwrap_or(-1)
+        crate::metrics::teared_frame_count()
+            .map(i64::from)
+            .unwrap_or(-1)
     }
 
     /// Compositor frame composite time in milliseconds. `-1.0` while the metrics handle is not up yet.
