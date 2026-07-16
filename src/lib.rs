@@ -15,6 +15,7 @@ use godot::prelude::*;
 
 mod ffi;
 mod gl;
+mod glasses_events;
 mod jni_bridge;
 mod native;
 mod node;

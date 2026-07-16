@@ -73,6 +73,9 @@ impl INode3D for XrealHeadTracker {
         // Re-emit glasses hot-plug events before the session check so connect/disconnect are
         // reported even while no session exists yet (e.g. started without the glasses).
         self.poll_glasses_events();
+        // Drain glasses hardware events (keys, wear sensor, brightness…) queued by the
+        // native callback on the SDK thread, and re-emit them as signals.
+        self.poll_hardware_events();
         let Some(session) = session::shared() else {
             self.tracking = false;
             return;
@@ -154,6 +157,56 @@ impl XrealHeadTracker {
         if disconnect != self.last_disconnect_count {
             self.last_disconnect_count = disconnect;
             self.signals().glasses_disconnected().emit();
+        }
+    }
+
+    /// Dispatch queued `GlassesEventData` into typed signals (main thread). Unknown action
+    /// types still reach GDScript through the catch-all `glasses_event` signal.
+    fn poll_hardware_events(&mut self) {
+        use crate::ffi as f;
+        for ev in crate::glasses_events::drain() {
+            // Raw event log — this is the Phase A device-verification instrument (one line
+            // per physical key press / wear change / brightness step; low volume).
+            godot_print!(
+                "[xreal] glasses event: type={} para={} para2={} para3={}",
+                ev.action_type, ev.para, ev.para2, ev.para3
+            );
+            match ev.action_type {
+                f::ACTION_TYPE_CLICK | f::ACTION_TYPE_DOUBLE_CLICK | f::ACTION_TYPE_LONG_PRESS => {
+                    // para = XREALKeyType, action_type = XREALClickType (same numbering as
+                    // the ACTION_CLICK/DOUBLE_CLICK/LONG_PRESS constants).
+                    self.signals().key_event().emit(ev.para as i64, ev.action_type as i64);
+                }
+                f::ACTION_TYPE_KEY_STATE => {
+                    self.signals()
+                        .key_state_changed()
+                        .emit(ev.para as i64, ev.para2 as i64);
+                }
+                f::ACTION_TYPE_PROXIMITY_WEARING_STATE => {
+                    // Mirror the Unity handler: only PUT_ON / TAKE_OFF are forwarded.
+                    if ev.para == f::WEARING_STATUS_PUT_ON || ev.para == f::WEARING_STATUS_TAKE_OFF {
+                        self.signals()
+                            .wearing_changed()
+                            .emit(ev.para == f::WEARING_STATUS_PUT_ON);
+                    }
+                }
+                f::ACTION_TYPE_INCREASE_BRIGHTNESS | f::ACTION_TYPE_DECREASE_BRIGHTNESS => {
+                    self.signals().brightness_changed().emit(ev.para as i64);
+                }
+                f::ACTION_TYPE_INCREASE_VOLUME | f::ACTION_TYPE_DECREASE_VOLUME => {
+                    self.signals().volume_changed().emit(ev.para as i64);
+                }
+                f::ACTION_TYPE_NEXT_EC_LEVEL => {
+                    self.signals().ec_level_changed().emit(ev.para as i64);
+                }
+                _ => {}
+            }
+            self.signals().glasses_event().emit(
+                ev.action_type as i64,
+                ev.para as i64,
+                ev.para2 as i64,
+                ev.para3 as f64,
+            );
         }
     }
 
@@ -259,6 +312,62 @@ impl XrealHeadTracker {
     /// Emitted when the XREAL glasses display is unplugged at runtime (`onDisplayRemoved`).
     #[signal]
     fn glasses_disconnected();
+
+    /// A physical key on the glasses was clicked. `key` is one of the `KEY_*` constants
+    /// (MULTI / INCREASE / DECREASE / MENU), `action` one of `ACTION_CLICK` /
+    /// `ACTION_DOUBLE_CLICK` / `ACTION_LONG_PRESS`.
+    #[signal]
+    fn key_event(key: i64, action: i64);
+
+    /// Raw down/up transition of a physical key: `state` is `KEY_STATE_DOWN` / `KEY_STATE_UP`.
+    #[signal]
+    fn key_state_changed(key: i64, state: i64);
+
+    /// The proximity (wear) sensor reported the glasses were put on (`true`) or taken off.
+    #[signal]
+    fn wearing_changed(wearing: bool);
+
+    /// The glasses brightness level changed (brightness rocker or system UI).
+    #[signal]
+    fn brightness_changed(level: i64);
+
+    /// The glasses volume level changed.
+    #[signal]
+    fn volume_changed(level: i64);
+
+    /// The electrochromic dimming level changed (One Pro).
+    #[signal]
+    fn ec_level_changed(level: i64);
+
+    /// Catch-all for every native glasses event, including types without a dedicated
+    /// signal (temperature, screen on/off, disconnect reason…). Values are the raw
+    /// `GlassesEventData` fields; see `XREALActionType` in `docs/input-plan.md`.
+    #[signal]
+    fn glasses_event(action_type: i64, para: i64, para2: i64, para3: f64);
+
+    // `XREALKeyType` (which physical key).
+    #[constant]
+    const KEY_MULTI: i64 = 1;
+    #[constant]
+    const KEY_INCREASE: i64 = 2;
+    #[constant]
+    const KEY_DECREASE: i64 = 3;
+    #[constant]
+    const KEY_MENU: i64 = 4;
+
+    // `XREALClickType` (how it was pressed).
+    #[constant]
+    const ACTION_CLICK: i64 = 1;
+    #[constant]
+    const ACTION_DOUBLE_CLICK: i64 = 2;
+    #[constant]
+    const ACTION_LONG_PRESS: i64 = 3;
+
+    // `XREALKeyState` (raw transitions, `key_state_changed`).
+    #[constant]
+    const KEY_STATE_DOWN: i64 = 1;
+    #[constant]
+    const KEY_STATE_UP: i64 = 2;
 
     /// Whether native head tracking fed a pose on the last frame.
     #[func]

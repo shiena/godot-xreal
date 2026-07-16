@@ -44,6 +44,16 @@ static WAITING_FOR_SESSION_READY_LOGGED: AtomicBool = AtomicBool::new(false);
 /// `UnityPluginLoad` populates process-global Unity interface pointers inside
 /// libXREALXRPlugin.so, so calling it once per process is enough.
 static UNITY_PLUGIN_LOAD_DONE: AtomicBool = AtomicBool::new(false);
+/// Master switch for glasses hardware-event delivery. **Off**: `SetGlassesEventCallback`'s
+/// first call runs an InputManager singleton init that clobbers the `lib_base + 0xdb400`
+/// DisplayManager frame descriptor (writes `1.0f`/`0x3f800000`), and the SDK render thread then
+/// SIGSEGVs calling `0x3f800000` on the first frame. Ordering does not help — our display path
+/// never repopulates the clobbered offsets. Flip to `true` only once that conflict is resolved
+/// (see the registration site in `try_start`); the rest of the input plumbing stays wired.
+const ENABLE_GLASSES_EVENT_CALLBACK: bool = true;
+/// Ensures the one-shot glasses-event registration runs at most once per process (see
+/// [`ENABLE_GLASSES_EVENT_CALLBACK`]).
+static GLASSES_EVENT_CALLBACK_REGISTERED: AtomicBool = AtomicBool::new(false);
 /// Retry runtime-dependent bootstrap at a modest cadence while the glasses / NR runtime
 /// are unavailable. This avoids spamming UnityPluginLoad/provider registration every frame.
 static SHARED_CALLS: AtomicU64 = AtomicU64::new(0);
@@ -126,6 +136,18 @@ impl XrealSession {
             if loaded {
                 UNITY_PLUGIN_LOAD_DONE.store(true, Ordering::SeqCst);
             }
+        }
+
+        // Route glasses hardware events (keys, wear sensor, brightness/volume/EC…) into the
+        // process-wide queue; XrealHeadTracker::process() drains it on the main thread.
+        //
+        // Gated off (ENABLE_GLASSES_EVENT_CALLBACK) while a startup crash is investigated.
+        if ENABLE_GLASSES_EVENT_CALLBACK
+            && !GLASSES_EVENT_CALLBACK_REGISTERED.load(Ordering::SeqCst)
+            && native.set_glasses_event_callback(crate::glasses_events::on_glasses_event)
+        {
+            GLASSES_EVENT_CALLBACK_REGISTERED.store(true, Ordering::SeqCst);
+            godot::global::godot_print!("[xreal] glasses event callback registered");
         }
 
         // Color space: Unity ColorSpace.Linear == 1; stereo/input default to 0.
@@ -342,6 +364,36 @@ impl XrealSession {
             .lock()
             .expect("xreal native mutex")
             .set_display_bypass_psensor(bypass)
+    }
+
+    /// XR-plugin tracking-state enum value, or `None` if the export is absent.
+    pub fn tracking_state(&self) -> Option<i32> {
+        self.native.lock().expect("xreal native mutex").tracking_state()
+    }
+
+    /// XR-plugin tracking-reason enum value, or `None` if the export is absent.
+    pub fn tracking_reason(&self) -> Option<i32> {
+        self.native.lock().expect("xreal native mutex").tracking_reason()
+    }
+
+    /// XR-plugin tracking-type enum value (`TrackingType`), or `None` if the export is absent.
+    pub fn tracking_type(&self) -> Option<i32> {
+        self.native.lock().expect("xreal native mutex").tracking_type()
+    }
+
+    /// Switch the tracking mode at runtime (`TrackingType`: 0=6DoF, 1=3DoF, 2=0DoF,
+    /// 3=0DoF-stab). Only reachable via [`shared`], i.e. after the session is live —
+    /// calling it during bootstrap races NativeGlasses construction (see `try_start`).
+    pub fn switch_tracking_type(&self, tracking_type: i32) -> bool {
+        self.native
+            .lock()
+            .expect("xreal native mutex")
+            .switch_tracking_type(tracking_type)
+    }
+
+    /// Current HMD clock in nanoseconds, or `None` while the perception pipe is down.
+    pub fn hmd_time_nanos(&self) -> Option<u64> {
+        self.native.lock().expect("xreal native mutex").hmd_time_nanos()
     }
 
     /// One-line diagnostic of the perception pipeline, logged (throttled) when no pose
