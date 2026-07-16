@@ -175,6 +175,7 @@ jobs:
           # Drop-in tree: extract over a Godot project, then vendor the XREAL libs (see INSTALL.md).
           mkdir -p "${NAME}/dummy" "${NAME}/target/aarch64-linux-android/release" "${NAME}/addons"
           cp godot_xreal.gdextension "${NAME}/"
+          cp LICENSE-MIT LICENSE-APACHE "${NAME}/"
           cp -r addons/godot_xreal "${NAME}/addons/"   # aar / tools are gitignored -> not in the checkout
           cp artifacts/android-lib/libgodot_xreal.so "${NAME}/target/aarch64-linux-android/release/"
           cp artifacts/dummy-stubs/* "${NAME}/dummy/"

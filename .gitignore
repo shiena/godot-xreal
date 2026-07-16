@@ -1,6 +1,7 @@
 # Rust
 /target/
-Cargo.lock
+# Cargo.lock is committed: this crate builds a final artifact (the GDExtension .so), so a
+# pinned lockfile gives reproducible CI / release builds.
 
 # Godot
 .godot/

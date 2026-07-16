@@ -1,0 +1,23 @@
+# Normalize line endings: store LF in the repo and check out LF everywhere (kills the
+# "LF will be replaced by CRLF" churn on Windows working copies).
+* text=auto eol=lf
+
+# Binary — never touch line endings.
+*.so   binary
+*.dll  binary
+*.dylib binary
+*.dll.a binary
+*.a    binary
+*.aar  binary
+*.apk  binary
+*.jar  binary
+*.bin  binary
+*.exe  binary
+*.tpz  binary
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.ttf  binary
+*.otf  binary

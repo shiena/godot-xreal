@@ -90,6 +90,9 @@ jobs:
           echo "::error::CI checks failed. See the job log (and PR comment) for details."
           exit 1
 
+      - name: Run tests
+        run: cargo test --all-features
+
   # Build the addon exactly as a release would: the real Android arm64 GDExtension (cargo-ndk, needs
   # no vendored XREAL libs — they are dlopen'd at runtime) + the 6 desktop dummy stubs (clang + lld,
   # freestanding, so all targets cross-compile from this one Linux runner).
@@ -118,6 +121,13 @@ jobs:
           export ANDROID_NDK_HOME="${ANDROID_NDK_LATEST_HOME:-$ANDROID_NDK_ROOT}"
           echo "Using preinstalled NDK: $ANDROID_NDK_HOME"
           cargo ndk -t arm64-v8a build --release
+
+      - name: Clippy (Android target)
+        run: |
+          # Lint the #[cfg(target_os = "android")] code (FFI / signal_guard / hand tracking) that the
+          # host-target clippy in the `check` job can't see.
+          export ANDROID_NDK_HOME="${ANDROID_NDK_LATEST_HOME:-$ANDROID_NDK_ROOT}"
+          cargo ndk -t arm64-v8a clippy -- -D warnings
 
       - name: Install clang + lld
         run: sudo apt-get update && sudo apt-get install -y clang lld
