@@ -10,7 +10,6 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  NDK_VERSION: r27c
 
 jobs:
   prepare:
@@ -93,20 +92,15 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
-      - name: Set up Android NDK
-        id: setup_ndk
-        uses: nttld/setup-ndk@v1
-        with:
-          ndk-version: ${{ env.NDK_VERSION }}
-          local-cache: true
-
       - name: Install cargo-ndk
         run: cargo install cargo-ndk --locked
 
       - name: Build
-        env:
-          ANDROID_NDK_HOME: ${{ steps.setup_ndk.outputs.ndk-path }}
         run: |
+          # Use the NDK preinstalled on the runner (any r27.x builds this fine — the RE offsets are
+          # runtime, vendored-lib dependent, not NDK-version dependent).
+          export ANDROID_NDK_HOME="${ANDROID_NDK_LATEST_HOME:-$ANDROID_NDK_ROOT}"
+          echo "Using preinstalled NDK: $ANDROID_NDK_HOME"
           cargo ndk -t arm64-v8a build --release
           cp target/aarch64-linux-android/release/libgodot_xreal.so .
 
