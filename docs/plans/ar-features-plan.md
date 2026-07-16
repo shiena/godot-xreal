@@ -3,7 +3,8 @@
 Status: **Plane detection + Spatial Anchor IMPLEMENTED (2026-07-16, compiles clean; on-device
 verification pending). All four features' C ABI is RE-confirmed** (codex, cross-checking the SDK C#
 `[DllImport]` sources against `llvm-nm`/AArch64 disassembly of `libXREALXRPlugin.so`). Implementation
-order: **Plane (done) → Spatial Anchor (done) → Image Tracking → Depth Mesh (shelve)**.
+order: **Plane (done) → Spatial Anchor (done) → Image Tracking (blob pipeline solved — run XREAL's
+`trackableImageTools` CLI; port pending) → Depth Mesh (shelve)**.
 
 **Device capability gate:** `IsHMDFeatureSupported(XREALSupportedFeature)` (flat export, `-> bool`) is
 the device-accurate feature check the SDK itself uses — e.g. the **Air 2 Ultra has no RGB camera**, so
@@ -151,15 +152,30 @@ verify. **Crash-hardening:** `poll_*_changes` clamps the SDK's change counts to 
 (the change pointers alias internal vectors; a stale/garbage count would drive an OOB read → SIGSEGV).
 Remaining: confirm save/restart/reload once quality reaches SUFFICIENT.
 
-## 3. Image Tracking (third — two extra prereqs)
+## 3. Image Tracking (third — blob pipeline SOLVED)
 
 Ships in **`nr_image_tracking.aar`** (`libnr_image_tracking.so`; matcher
 `libnr_aiimgtrack_algo.so`). Beyond the shared plumbing:
 1. **`assets/nr_plugins.json`** must be packed into the APK (StreamingAssets):
    `{"perception":{"versions":"diE1v4iRCoXc8G5g","plugins_64":[{"id":"nr_image_tracking_id","path":"libnr_image_tracking.so"}]}}`
-2. **Reference-image DB blob** (first `NativeView` to `InitImageTrackingDatabase`) — baked by Unity from
-   `XRReferenceImageLibrary` (`XREALImageDatabase.cs`); **format still needs RE**, or reuse XREAL's
-   baked file (`Marker~/InterMarker.bin` lead).
+2. **Reference-image DB blob** (first `NativeView` to `InitImageTrackingDatabase`) — **NOT a format to
+   RE. It is the output of XREAL's own CLI feature-extractor `trackableImageTools`**, shipped in the
+   package at `Tools~/Windows/trackableImageTools.exe` (+ `Tools~/MacOS/…`). Confirmed by reading the
+   editor build processor `Editor/Android/XREALImageLibraryBuildProcessor.cs` — `BuildDB()`:
+   - writes an **image-list config**, one line per image: `<guid:N>|<image.png>|<width_metres>`
+     (pipe-separated; images copied/re-encoded to jpg/png first);
+   - runs `trackableImageTools.exe --images_config_file <list.txt> --save_path <db.bin>` (extra tuning
+     flags exist: `-featureDensity`, `-initialization_extraction_level 0..3`, `-tracking_extraction_level
+     0..5`, thresholds; stdout prints `Detection/Tracking/Total Score`, warns if det<20/track<20/total<50);
+   - reads back `db.bin` — that IS the blob. (When "MarkerTracking" is installed it instead ships the
+     pre-baked `Marker~/InterMarker.bin`, 2.8 MB — the fixed AR-marker set, not custom images.)
+   → **So our build step = run the same `.exe` on the reference PNGs, ship the resulting `.bin`.** The
+   `guid:N` baked into the blob is the image identity returned later as `XRTrackedImage.source_image_id`.
+3. **`managedReferenceImages`** (second `NativeView` to `InitImageTrackingDatabase`) = an array of
+   **`ManagedReferenceImage` (56 B, `StructLayout.Sequential`):** `guid(Guid)@0x00`,
+   `textureGuid(Guid)@0x10`, `size(Vector2 w,h)@0x20`, `name(ptr)@0x28`, `texture(ptr)@0x30`. Maps each
+   baked `guid` back to its metadata; `name`/`texture` are Unity GCHandles → pass null from Godot. The
+   blob's guids must match these guids so the SDK correlates a detected image with its size/name.
 
 Exports (`XREALImageTrackingSubsystem.cs`): `SetImageTrackingDatabase(u64)` (`0x80c6c`; `0` disables),
 `GetImageTrackingChanges(*mut ArSubsystemChanges)` (`0x80d84`),
