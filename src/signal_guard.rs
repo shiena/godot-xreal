@@ -1,14 +1,74 @@
 //! XREAL SDK null-NativeGlasses crash workaround.
 //!
 //! `SessionManager::HandleActionCallback` (libXREALXRPlugin.so+0x849a8) reads
-//! `SessionManager+0x60` (the `NativeGlasses*`) without a null check, and calls
-//! `NativeGlasses::GetActionData(action_id)` on it.  When this pointer is null
-//! (e.g. after DestroySession or on a thread where the TSingleton is not yet
-//! initialised) the process crashes at `GetActionData+28/44` (fault addr 0x8).
+//! `SessionManager+0x60` (the `NativeGlasses*`) at +0x14 (`ldr x0,[x0,#0x60]`
+//! @0x849bc) and calls `NativeGlasses::GetActionData(action_id)` on it with **no
+//! null check**; a null `this` faults at `GetActionData+28/44` (fault addr 0x8).
 //!
-//! **Primary fix (Android)**: runtime code-patch of `HandleActionCallback+28`
-//! (`bl NativeGlasses::GetActionData` at lib+0x849c4). We replace that 4-byte
-//! BL with a BL to `null_safe_handle_action`, a small assembly trampoline that:
+//! ## Root cause (RE-confirmed, disassembly 2026-07-16)
+//!
+//! The action callback is the lambda `SessionManager::CreateSession::$_0::__invoke`
+//! @0x84c28. It resolves the process-global `SessionManager` singleton (a Meyers
+//! local static at `lib_base+0xdb400`, guard byte `lib_base+0xdb610`) and passes it
+//! as `HandleActionCallback`'s `this`:
+//!   - **Guard set (fast path)**: tail-calls `HandleActionCallback(singleton, id)`.
+//!   - **Guard NOT set (slow path @0x84c4c)**: it **lazily constructs a zeroed
+//!     singleton** (memset + a few `1.0f`/`0x3f800000` markers) and *then* calls
+//!     `HandleActionCallback` — so `+0x60` is **guaranteed null** → crash. (This
+//!     lazy-construct is also the origin of the "0xdb400 clobbered with 1.0f"
+//!     symptom noted elsewhere; 0xdb400 is this singleton, not a frame descriptor.)
+//!
+//! `CreateSession` @0x843c0 stores `[singleton+0x60] = NativeGlasses*` (@0x8454c)
+//! **before** arming this callback via `InitSetActionCallback` (@0x84574), so its own
+//! path is race-free. The pointer only reads null in two windows:
+//!   1. **SDK teardown** — `DestroySession` @0x848a0 nulls `+0x60` (@0x848bc). We
+//!      never call `DestroySession` ourselves, but the SDK does on session-loss /
+//!      pause / glasses-unplug, and a late/in-flight action callback then reads null.
+//!   2. **Pre-construction** — an action delivered before the real singleton exists
+//!      hits the lazy-zeroed slow path above (this is why calling `SwitchTrackingType`
+//!      during bootstrap crashed; see `session.rs`).
+//!
+//! ## Why neither init-ordering NOR a teardown-reorder patch replaces this
+//!
+//! Delivery is external and asynchronous: `InitSetActionCallback` registers the lambda
+//! on an `NRGlassesWrapper` (→ libnr_api / Nebula) via `[[NativeGlasses+8]+0x70]`
+//! (@0x84620), so it fires on that service's thread, independent of our Rust call
+//! order. The windows we *can* close are already closed (CreateSession sets +0x60
+//! before arming; we never call DestroySession; `SwitchTrackingType` is kept out of
+//! bootstrap — see `session.rs`).
+//!
+//! The teardown window is intrinsic to the SDK. Full lifecycle (disassembly-confirmed):
+//! register = wrapper `+0x70`, unregister = wrapper `+0x90` (`NativeGlasses::Stop`
+//! @0x8f14c), and `~NativeGlasses` @0x8dd78 calls `Stop()` first — so destruction *does*
+//! unregister. But `DestroySession` @0x848a0 runs them **inverted**: `str xzr,[+0x60]`
+//! nulls the pointer (@0x848bc) **before** releasing the NativeGlasses strong ref
+//! (@0x848cc → dtor → `Stop` → unregister). Between those, the callback is still armed
+//! while +0x60 is null → an in-flight Nebula action reads null.
+//!
+//! A "proper" fix would patch `DestroySession` to unregister before nulling +0x60, but
+//! it is **strictly worse** than the null-guard: (1) a multi-instruction reorder on an
+//! SDK teardown function vs. our one-instruction load redirect; (2) its correctness
+//! depends on wrapper `+0x90` *draining* in-flight callbacks, which lives in the
+//! obfuscated libnr_api/Nebula layer and cannot be proven statically; (3) a callback
+//! already executing on the Nebula thread is a genuine concurrent data race that only a
+//! point-of-use null-check (this patch, run on that very thread) or a lock covers.
+//! So the null-guard below is the **irreducible** correct fix — deeper RE confirms it,
+//! it does not get replaced. Do not remove it believing any reordering fixed the crash.
+//!
+//! ## This is a genuine SDK bug, not only our port
+//!
+//! The inverted teardown order lives in the shared `libXREALXRPlugin.so`, which real
+//! Unity apps drive through the *same* P/Invoke path — so the teardown race is **latent
+//! in Unity builds too** (a rare crash on quit / pause / glasses-unplug when a Nebula
+//! action lands in the window, usually masked by shutdown). We hit it more readily only
+//! because we drive the native lifecycle by hand, off the SDK's Unity-tested happy path
+//! (the *pre-construction* window in particular is largely our own out-of-order driving,
+//! e.g. an early `SwitchTrackingType`). Either way the missing null check is a real
+//! defensive gap in the SDK, not something a correct integration can fully avoid.
+//!
+//! **Primary fix (Android)**: runtime code-patch of the `ldr x0,[x0,#0x60]` at
+//! `HandleActionCallback+0x14` (lib+0x849bc). We replace that 4-byte load with a BL
+//! to `null_safe_handle_action`, a small assembly trampoline that:
 //!   - Loads NativeGlasses* from SessionManager+0x60 (replicating the original ldr).
 //!   - If non-null: returns to 0x849c0 so `mov x19,x1; bl GetActionData` runs normally.
 //!   - If null: advances lr by 12 (skipping `mov x19,x1`, `bl GetActionData`, and

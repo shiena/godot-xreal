@@ -314,6 +314,11 @@ impl XrealSession {
         // (via libnr_api.so) that race with NativeGlasses construction and cause SIGSEGV at
         // NativeGlasses::GetActionData+8 (null member deref) before the input subsystem is ready.
         // Head tracking works without this call once the 6DoF session starts via CreateSession.
+        //
+        // This is the "pre-construction" null window mapped in `crate::signal_guard` (the action
+        // lambda @0x84c28 lazily builds a zeroed SessionManager singleton with a null +0x60). Keeping
+        // SwitchTrackingType out of bootstrap closes THIS window from our side; the SDK's own
+        // DestroySession-on-teardown race is async and stays covered by the code-patch there.
         let initial_tracking_type = tracking_mode;
 
         // NOTE: display_manager_submit_frame_probe() was removed.
