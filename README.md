@@ -55,6 +55,25 @@ Not implemented: 6DoF position for the app camera, image tracking, meshing, audi
 (Image / mesh are portable without ARCore or AR Foundation and their C ABI is already RE'd — see
 [`docs/plans/ar-features-plan.md`](docs/plans/ar-features-plan.md).)
 
+## Install (prebuilt)
+
+> **Not published yet.** No prebuilt release exists until the remaining features are verified on
+> device — until then, [build from source](#build-from-source). The steps below are how it works once
+> releases are out.
+
+Most users won't build anything — grab the prebuilt addon and vendor the XREAL libraries:
+
+1. Download `godot-xreal-<version>.zip` from the
+   [Releases](https://github.com/shiena/godot-xreal/releases) page and extract it into your Godot
+   **4.7** project root. It bundles `godot_xreal.gdextension`, the Android arm64 `.so`, the desktop
+   editor stubs, and `addons/godot_xreal/` — so no Rust / cargo-ndk / clang is needed.
+2. Enable the plugin: Project → Project Settings → Plugins → "Godot XREAL".
+3. Vendor the XREAL runtime libraries (the **XREAL Import** dock is the one-click way) — see
+   [Prerequisite](#prerequisite-vendor-the-xreal-runtime-libraries) below. These stay under XREAL's
+   terms, so they are never bundled.
+
+Building from source is only for modifying the extension — see [Build (from source)](#build-from-source).
+
 ## Prerequisite: vendor the XREAL runtime libraries
 
 The XREAL native libraries are **not** included in this repo (they remain under XREAL's terms). Obtain
@@ -110,9 +129,10 @@ export plugin and compiled by the export's Gradle run.
 QNN/SNPE libs inside `nr_common.aar` are unused by this extension but ride into the APK with the
 aar.)
 
-## Build
+## Build (from source)
 
-The GDExtension is plain godot-rust — vendor the XREAL libraries first (above), then build. Full
+Only needed to modify the extension — most users install a prebuilt release (above). The GDExtension
+is plain godot-rust; vendor the XREAL libraries first (above), then build. Full
 command reference (desktop iteration, manual `cargo ndk` / Gradle steps, signing):
 [`docs/guides/build-and-release.md`](docs/guides/build-and-release.md).
 
@@ -137,7 +157,7 @@ is missing.
 
 ## Usage (MVP)
 
-1. Vendor the libraries and build/deploy — see [Build](#build) above.
+1. Install the addon — a [prebuilt release](#install-prebuilt) or [built from source](#build-from-source) — and vendor the libraries.
 2. Instance `addons/godot_xreal/xreal_rig.tscn` (an `XrealHeadTracker` with a `Camera3D`
    child) into your scene, or add an `XrealHeadTracker` and parent a `Camera3D` yourself.
 3. On device, the camera looks around with the wearer's head (3DoF).
