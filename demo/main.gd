@@ -52,6 +52,13 @@ var _cam_failed := false
 var _plane_enabled := false
 # Running count of tracked planes (added − removed), logged for on-device verification.
 var _plane_total := 0
+# Detected-plane visualization: a thin, semi-transparent box overlaid on each plane's bounds,
+# keyed by plane id. World-locked (children of Main, like the hand joints) so they sit on the real
+# surface as the head moves. On the see-through display the translucent fill reads as a tint.
+const PLANE_BOX_THICKNESS := 0.01  # metres; a slab, not a cuboid
+var _plane_boxes := {}          # plane id(String) -> MeshInstance3D
+var _plane_container: Node3D
+var _plane_mat: StandardMaterial3D
 # Phase C path B: phone IMU (via NRController state) drives the 3D pointer (_ar.phone_pointer).
 var _phone_pointer_enabled := true
 var _controller_started := false
@@ -294,6 +301,55 @@ func _on_tc_plane(on: bool) -> void:
 		_plane_enabled = false
 		if _system.has_method(&"set_plane_detection_mode"):
 			_system.set_plane_detection_mode(XREAL_PLANE_NONE)
+		_clear_plane_boxes()
+
+## Create/update the translucent box overlaying one plane's bounds. The plane's `size` is its full
+## width/height in the plane-local X/Z; `center` offsets the bounds from the pose in that same local
+## frame. Coordinate convention (local X/Z, Y-up normal) is AR-Foundation-standard but unverified on
+## device — flip here if the boxes don't sit on the real surface.
+func _update_plane_box(plane: Dictionary) -> void:
+	var id: String = plane.get("id", "")
+	if id.is_empty():
+		return
+	_ensure_plane_visual()
+	var mi: MeshInstance3D = _plane_boxes.get(id)
+	if mi == null:
+		mi = MeshInstance3D.new()
+		mi.mesh = BoxMesh.new()
+		mi.material_override = _plane_mat
+		_plane_container.add_child(mi)
+		_plane_boxes[id] = mi
+	var sz: Vector2 = plane.get("size", Vector2.ZERO)
+	(mi.mesh as BoxMesh).size = Vector3(sz.x, PLANE_BOX_THICKNESS, sz.y)
+	var center: Vector2 = plane.get("center", Vector2.ZERO)
+	var t: Transform3D = plane.get("transform", Transform3D.IDENTITY)
+	mi.transform = t.translated_local(Vector3(center.x, 0.0, center.y))
+
+func _remove_plane_box(id: String) -> void:
+	var mi: MeshInstance3D = _plane_boxes.get(id)
+	if mi:
+		mi.queue_free()
+		_plane_boxes.erase(id)
+
+func _clear_plane_boxes() -> void:
+	for id in _plane_boxes:
+		(_plane_boxes[id] as MeshInstance3D).queue_free()
+	_plane_boxes.clear()
+	_plane_total = 0
+
+## Lazily build the world-locked container (child of Main, so the boxes stay on the real surface as
+## the head moves — same reason the hand joints parent under Main) and the shared translucent material.
+func _ensure_plane_visual() -> void:
+	if _plane_container == null:
+		_plane_container = Node3D.new()
+		_plane_container.name = "PlaneVisualizer"
+		add_child(_plane_container)
+	if _plane_mat == null:
+		_plane_mat = StandardMaterial3D.new()
+		_plane_mat.albedo_color = Color(0.25, 0.7, 1.0, 0.35)
+		_plane_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		_plane_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		_plane_mat.cull_mode = BaseMaterial3D.CULL_DISABLED  # visible from both faces
 
 ## Push a toggle's on/off state onto the phone-menu controller (keeps the UI in sync when the app,
 ## not the user, changes it — e.g. a failed camera start or an unsupported plane mode).
@@ -344,14 +400,22 @@ func _process(_delta: float) -> void:
 			_camera_enabled = false
 			_set_controller_toggle("camera", false)
 	# Drive plane detection while its toggle is on: poll the change queue every frame (the SDK only
-	# produces new changes when polled) and log the running plane count for on-device verification.
+	# produces new changes when polled), overlay a translucent box on each plane's bounds, and log
+	# the running plane count for on-device verification.
 	if _plane_enabled and _system and _system.has_method(&"poll_planes"):
 		var changes: Dictionary = _system.poll_planes()
-		var added: int = (changes.get("added", []) as Array).size()
-		var removed: int = (changes.get("removed", []) as Array).size()
-		if added > 0 or removed > 0:
-			_plane_total += added - removed
-			print("[demo] planes: +%d -%d (total %d)" % [added, removed, _plane_total])
+		var added: Array = changes.get("added", [])
+		var updated: Array = changes.get("updated", [])
+		var removed: Array = changes.get("removed", [])
+		for plane in added:
+			_update_plane_box(plane)
+		for plane in updated:
+			_update_plane_box(plane)
+		for id in removed:
+			_remove_plane_box(id)
+		if added.size() > 0 or removed.size() > 0:
+			_plane_total += added.size() - removed.size()
+			print("[demo] planes: +%d ~%d -%d (total %d)" % [added.size(), updated.size(), removed.size(), _plane_total])
 	# Phase C path B: phone IMU (via NRController state) drives the 3D pointer. Godot's own IMU returns
 	# all-zero on this host, so we read accel (gravity → pitch/roll) + gyro (yaw) from the controller.
 	if _phone_pointer_enabled and _tracker and _tracker.has_method(&"is_tracking") and _tracker.is_tracking() and _system:
