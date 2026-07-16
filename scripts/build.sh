@@ -77,7 +77,7 @@ adbx() { if [ -n "$DEVICE" ]; then "$ADB" -s "$DEVICE" "$@"; else "$ADB" "$@"; f
 # stages them into the build template) — nothing to vendor for those.
 # This checks both before an export and stops with instructions if anything is missing; it never
 # downloads anything.
-REQUIRED_LIBS=(libXREALNativeSessionManager.so libXREALXRPlugin.so libVulkanSupport.so)
+REQUIRED_LIBS=(libXREALNativeSessionManager.so libXREALXRPlugin.so libVulkanSupport.so libmedia_codec.so)
 REQUIRED_ADDON_FILES=(nr_loader.aar nr_api.aar nr_common.aar nr_spatial_anchor.aar nr_image_tracking.aar \
                       GlassesDisplayPlugEvent-2.4.2.aar Log-Control-1.2.aar)
 require_vendored_libs() {

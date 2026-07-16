@@ -566,6 +566,51 @@ impl XrealSystem {
         arr
     }
 
+    // --- First-person-view streaming (libmedia_codec HW encoder; see docs/plans/fpv-streaming-plan.md).
+    //     Streams a rendered view (any device) as H.264 to a local mp4 / RTMP / RTP URL. ---
+
+    /// Start streaming the FPV to `output` — an `rtp://ip:port` / `rtmp://…` URL or a local file path
+    /// (the URL scheme picks local/RTMP/RTP). Returns whether the encoder started. Then feed the view's
+    /// GL texture each frame via [`Self::stream_push_frame`] from a `RenderingServer.call_on_render_thread`.
+    #[func]
+    fn stream_start(
+        &self,
+        output: GString,
+        width: i64,
+        height: i64,
+        bitrate: i64,
+        fps: i64,
+    ) -> bool {
+        crate::video_encoder::start(
+            &output.to_string(),
+            width as i32,
+            height as i32,
+            bitrate as i32,
+            fps as i32,
+        )
+    }
+
+    /// Feed one frame to the running stream: `gl_texture_id` from `RenderingServer.texture_get_native_handle`
+    /// on the view's texture, `timestamp_ns` in nanoseconds. **Call inside a
+    /// `RenderingServer.call_on_render_thread` callback** (the encoder reads the GL texture on the render
+    /// thread's EGL context). Returns the encoder status (`0` ok, `-1` if not streaming).
+    #[func]
+    fn stream_push_frame(&self, gl_texture_id: i64, timestamp_ns: i64) -> i64 {
+        crate::video_encoder::submit_frame(gl_texture_id as usize, timestamp_ns as u64) as i64
+    }
+
+    /// Stop + tear down the FPV stream.
+    #[func]
+    fn stream_stop(&self) {
+        crate::video_encoder::stop();
+    }
+
+    /// Whether an FPV stream is currently active.
+    #[func]
+    fn is_stream_active(&self) -> bool {
+        crate::video_encoder::is_active()
+    }
+
     // NOTE: there is no stereo-mode selector — the port is Multipass-only. Multiview is shelved and
     // no longer reachable (the force_multiview escape was removed). It renders correctly but gains
     // nothing here and shares a cross-thread crash path; see docs/archive/multiview-investigation.md.

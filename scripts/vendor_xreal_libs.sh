@@ -85,6 +85,16 @@ for lib in "${core_libs[@]}"; do
     echo "so   $lib"
 done
 
+# libmedia_codec.so lives under the Camera Features plugin path (the FPV HW encoder — see
+# docs/plans/fpv-streaming-plan.md). Copy it into jniLibs too (listed in godot_xreal.gdextension).
+media_codec_src="$pkg/Runtime/Scripts/Android/Camera Features/Plugins/Android/arm64/libmedia_codec.so"
+if [ -f "$media_codec_src" ]; then
+    cp -f "$media_codec_src" "$jni_dir/libmedia_codec.so"
+    echo "so   libmedia_codec.so"
+else
+    warn "Missing in package: ${media_codec_src#"$pkg/"}"
+fi
+
 # --- 2) 7 .aar -> addons/godot_xreal/android (shipped by export_plugin.gd _get_android_libraries;
 #        the exact file names are hardcoded there). Besides the Java/JNI layer + manifest merge,
 #        the aars carry the NR native libs at jni/arm64-v8a/ (nr_api.aar: libnr_api.so /

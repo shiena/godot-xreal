@@ -61,6 +61,8 @@ var _anchor_manager: Node3D
 var _image_manager: Node3D
 # Depth-mesh manager (demo/mesh_manager.gd), driven by the phone-menu "メッシュ" toggle.
 var _mesh_manager: Node3D
+# FPV streaming manager (demo/stream_manager.gd), driven by the phone-menu "配信" toggle.
+var _stream_manager: Node
 # Detected-plane visualization: a thin, semi-transparent box overlaid on each plane's bounds,
 # keyed by plane id. World-locked (children of Main, like the hand joints) so they sit on the real
 # surface as the head moves. On the see-through display the translucent fill reads as a tint.
@@ -182,6 +184,12 @@ func _spawn_rig() -> void:
 		_mesh_manager.set_script(load("res://demo/mesh_manager.gd"))
 		add_child(_mesh_manager)
 		_mesh_manager.setup(_system)
+		# FPV streaming manager (renders a head-locked view into a SubViewport + feeds the HW encoder).
+		_stream_manager = Node.new()
+		_stream_manager.name = "StreamManager"
+		_stream_manager.set_script(load("res://demo/stream_manager.gd"))
+		add_child(_stream_manager)
+		_stream_manager.setup(_system, _tracker)
 		# Recenter the view to the current head direction once tracking goes live.
 		if _tracker.has_signal(&"display_started"):
 			_tracker.display_started.connect(_on_display_started)
@@ -380,6 +388,18 @@ func _on_tc_mesh(on: bool) -> void:
 	if on and not enabled:
 		push_warning("[demo] depth meshing unavailable (non-Air-2-Ultra / perception down) — toggle disabled")
 		_set_controller_toggle("mesh", false)
+
+## Phone-menu "配信" toggle → start/stop first-person-view streaming (demo/stream_manager.gd).
+## Streams the rendered head view via the HW encoder to the target set in stream_manager.gd.
+func _on_tc_stream(on: bool) -> void:
+	print("[demo] stream toggle -> %s" % ("on" if on else "off"))
+	if _stream_manager == null:
+		_set_controller_toggle("stream", false)
+		return
+	var enabled: bool = _stream_manager.set_enabled(on)
+	if on and not enabled:
+		push_warning("[demo] FPV streaming unavailable (encoder / start failed) — toggle disabled")
+		_set_controller_toggle("stream", false)
 
 ## Phone-menu "配置" button → place a spatial anchor at the currently-tracked hand fingertip.
 func _on_tc_place() -> void:

@@ -32,5 +32,6 @@ macos.x86_64 = "res://dummy/libgodot_xreal_dummy.macos.x86_64.dylib"
 android.arm64 = {
 "res://jniLibs/arm64-v8a/libXREALNativeSessionManager.so" : "",
 "res://jniLibs/arm64-v8a/libXREALXRPlugin.so" : "",
-"res://jniLibs/arm64-v8a/libVulkanSupport.so" : ""
+"res://jniLibs/arm64-v8a/libVulkanSupport.so" : "",
+"res://jniLibs/arm64-v8a/libmedia_codec.so" : ""
 }

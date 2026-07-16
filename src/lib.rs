@@ -29,6 +29,7 @@ mod session;
 mod signal_guard;
 mod system;
 mod unity_plugin;
+mod video_encoder;
 
 struct GodotXrealExtension;
 

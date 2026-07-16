@@ -70,7 +70,7 @@ function Adbx { if ($Device) { & $Adb -s $Device @args } else { & $Adb @args } }
 # This checks both before an export and stops with instructions if anything is missing; it never
 # downloads anything.
 $RequiredLibs = @(
-    'libXREALNativeSessionManager.so', 'libXREALXRPlugin.so', 'libVulkanSupport.so'
+    'libXREALNativeSessionManager.so', 'libXREALXRPlugin.so', 'libVulkanSupport.so', 'libmedia_codec.so'
 )
 $RequiredAddonFiles = @(
     'nr_loader.aar', 'nr_api.aar', 'nr_common.aar', 'nr_spatial_anchor.aar', 'nr_image_tracking.aar',

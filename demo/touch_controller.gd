@@ -31,6 +31,8 @@ signal anchor_toggled(on: bool)
 signal image_toggled(on: bool)
 ## Depth-mesh mode toggle flipped (true = on).
 signal mesh_toggled(on: bool)
+## First-person-view streaming toggle flipped (true = on).
+signal stream_toggled(on: bool)
 ## Momentary "配置" button — place a spatial anchor at the hand fingertip now.
 signal place_pressed()
 
@@ -57,6 +59,7 @@ const _toggles := {
 	"anchor": "アンカー",
 	"image": "画像",
 	"mesh": "メッシュ",
+	"stream": "配信",
 }
 
 # Tabs, grouped by which glasses support each feature (per XREAL's Feature Compatibility table) so the
@@ -65,8 +68,9 @@ const _toggles := {
 #   操作  — the virtual controller (3DoF): ALL glasses (One Series / Air·Air 2·Air 2 Pro / Air 2 Ultra).
 #   カメラ — the RGB camera: XREAL One Series only (Air/Air 2/Air 2 Pro and Air 2 Ultra have no RGB cam).
 #   Air2U — perception (plane / spatial anchor / image tracking / depth mesh): Air 2 Ultra only.
+# 配信 (FPV streaming) streams the rendered view, so it works on all glasses → the 操作 tab.
 const _tabs := [
-	{"label": "操作", "items": ["trigger", "grip", "menu", "hand_l", "hand_r"]},
+	{"label": "操作", "items": ["trigger", "grip", "menu", "hand_l", "hand_r", "stream"]},
 	{"label": "カメラ", "items": ["camera"]},
 	{"label": "Air2U", "items": ["place", "plane", "anchor", "image", "mesh"]},
 ]
@@ -219,6 +223,8 @@ func _press(widget: String, pos: Vector2) -> void:
 				image_toggled.emit(on)
 			"mesh":
 				mesh_toggled.emit(on)
+			"stream":
+				stream_toggled.emit(on)
 		queue_redraw()
 		return
 	match widget:
