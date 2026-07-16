@@ -81,7 +81,14 @@ fn android_prop_i32(key: &[u8]) -> Option<i32> {
 /// `SubmitCurrentFrame → UpdateMetrics` path hits a cross-thread SIGBUS (see the doc) that is not
 /// Multiview-specific. So enabling Multiview gains nothing.
 fn stereo_rendering_mode() -> i32 {
-    0 // Multipass — the only supported mode
+    // Multipass is the only supported/working stereo mode. Multiview's right eye is blocked inside
+    // libnr_api (it imports the client swapchain GL name as GL_TEXTURE_2D, never GL_TEXTURE_2D_ARRAY,
+    // so layer 1 samples a cleared resource) and it gives no perf benefit for our two-SubViewport rig.
+    // The 2026-07-16 re-attempt confirmed the UpdateMetrics fix lets forced Multiview run *stably*, but
+    // the right eye stays black and the stubbed Unity callbacks are not the cause. See
+    // docs/archive/multiview-investigation.md and docs/archive/codex-stub-callbacks-analysis.md.
+    // To re-exercise Multiview for future libnr_api RE, return 2 here (add a debug prop if desired).
+    0
 }
 
 /// Head-tracking mode for `InitUserDefinedSettings`, resolved **once at session bootstrap** from, in
