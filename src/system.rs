@@ -214,9 +214,9 @@ impl XrealSystem {
             .unwrap_or(-1) as i64
     }
 
-    // NOTE: there is no stereo-mode selector. The port always uses Multipass — Multiview is shelved
-    // (right eye black in the NR compositor, no benefit on this rig; see docs/archive/codex-righteye-analysis.md).
-    // The Multiview code is kept and reachable only via `adb shell setprop debug.xreal.force_multiview 1`.
+    // NOTE: there is no stereo-mode selector — the port is Multipass-only. Multiview is shelved and
+    // no longer reachable (the force_multiview escape was removed). It renders correctly but gains
+    // nothing here and shares a cross-thread crash path; see docs/archive/multiview-investigation.md.
 
     /// Select the head-tracking mode applied when the native session **bootstraps** (a startup
     /// selector): `0` = 6DoF (SLAM position + orientation, no drift — the recommended mode),

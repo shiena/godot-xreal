@@ -70,21 +70,18 @@ fn android_prop_i32(key: &[u8]) -> Option<i32> {
     None
 }
 
-/// Stereo rendering mode for `InitUserDefinedSettings`. The port always uses **Multipass** (`0`): the
-/// working, complete path (both eyes + camera + tracking). Multiview (`2`) is **shelved** — the NR
-/// compositor (`libnr_api`) can't import our client `GL_TEXTURE_2D_ARRAY` so the right eye is black,
-/// and our two-SubViewport rig gets no single-pass benefit anyway (see `docs/archive/codex-righteye-analysis.md`).
+/// Stereo rendering mode for `InitUserDefinedSettings`. **The port is Multipass-only** (`0`) — the
+/// complete path (both eyes + camera + tracking). Multiview (`2`, single-pass-instanced) is **shelved
+/// and no longer reachable** (the `debug.xreal.force_multiview` escape was removed).
 ///
-/// There is no user-facing stereo-mode selector (removed on purpose). The Multiview code paths are kept
-/// and a developer can still exercise them with `adb shell setprop debug.xreal.force_multiview 1`.
+/// Full investigation: `docs/archive/multiview-investigation.md`. Summary of why it's not worth it:
+/// (1) the right eye actually renders *correctly* — the earlier "gray right eye" was an alpha-channel
+/// measurement artifact, confirmed on-device; (2) our two-SubViewport rig draws both eyes every frame
+/// regardless, so single-pass-instanced buys **zero** GPU savings here; (3) the shared
+/// `SubmitCurrentFrame → UpdateMetrics` path hits a cross-thread SIGBUS (see the doc) that is not
+/// Multiview-specific. So enabling Multiview gains nothing.
 fn stereo_rendering_mode() -> i32 {
-    if android_prop_i32(b"debug.xreal.force_multiview\0") == Some(1) {
-        godot::global::godot_warn!(
-            "[xreal] Multiview forced via debug.xreal.force_multiview (experimental: right eye is black)"
-        );
-        return 2;
-    }
-    0 // Multipass
+    0 // Multipass — the only supported mode
 }
 
 /// Head-tracking mode for `InitUserDefinedSettings`, resolved **once at session bootstrap** from, in
