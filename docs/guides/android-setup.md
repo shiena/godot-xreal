@@ -137,6 +137,14 @@ This repo already ships the wiring — the steps below are what produced the cur
    `android/build/libs/{debug,release}/` (§4 step 6). It **excludes `nractivitylife`**.
    (Add `nrdisplay` / `chameleon` jars later for Phase 2.)
 
+   > **No terminal? Use the editor dock instead of the script.** With the addon enabled, the
+   > **`XREAL 取込`** dock (left panel; `addons/godot_xreal/editor/vendor_import_dock.gd`) does the
+   > exact same vendoring from inside Godot: click *パッケージを選択…*, pick `com.xreal.xr(.tgz|.tar.gz)`
+   > (or an already-extracted `package/` folder), and it extracts (via the system `tar`) and copies the
+   > same `.so`/`.aar`/tool into place, then rescans. Only the XREAL proprietary libs — the addon's own
+   > `libgodot_xreal.so` still comes from the `cargo ndk` build above (or a prebuilt release). Keep the
+   > package version pinned to the one the Rust internal-call offsets were RE'd against.
+
    > **`Log-Control-1.2.aar` is mandatory whenever `GlassesDisplayPlugEvent` ships.** The latter's
    > `GlassesInitProvider` (a ContentProvider that auto-runs at app startup) references
    > `com.xreal.logcontrol.LogControl`; without it the app crashes *before Godot starts* with

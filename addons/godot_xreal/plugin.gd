@@ -16,14 +16,22 @@ extends EditorPlugin
 
 const ExportPluginScript := preload("res://addons/godot_xreal/export_plugin.gd")
 const ImageDbDockScript := preload("res://addons/godot_xreal/editor/image_db_dock.gd")
+const VendorImportDockScript := preload("res://addons/godot_xreal/editor/vendor_import_dock.gd")
 var _export_plugin: EditorExportPlugin
 var _image_db_dock: Control
+var _vendor_import_dock: Control
 
 func _enter_tree() -> void:
 	# Contribute the XREAL Android manifest/library requirements at export time so the Gradle
 	# build template needs no hand-edits (they survive template regeneration).
 	_export_plugin = ExportPluginScript.new()
 	add_export_plugin(_export_plugin)
+
+	# SDK vendoring dock: pick the com.xreal.xr package (.tgz/.tar.gz or an extracted folder) and copy
+	# the .so/.aar/tool into place — the in-editor analog of scripts/vendor_xreal_libs.*.
+	_vendor_import_dock = VendorImportDockScript.new()
+	_vendor_import_dock.name = "XREAL 取込"
+	add_control_to_dock(EditorPlugin.DOCK_SLOT_LEFT_UR, _vendor_import_dock)
 
 	# Image-tracking DB builder dock (runs the vendored trackableImageTools to compile the blob —
 	# the Godot analog of Unity's XREALImageLibraryBuildProcessor).
@@ -39,3 +47,7 @@ func _exit_tree() -> void:
 		remove_control_from_docks(_image_db_dock)
 		_image_db_dock.free()
 		_image_db_dock = null
+	if _vendor_import_dock:
+		remove_control_from_docks(_vendor_import_dock)
+		_vendor_import_dock.free()
+		_vendor_import_dock = null
