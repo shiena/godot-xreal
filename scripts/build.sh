@@ -78,7 +78,7 @@ adbx() { if [ -n "$DEVICE" ]; then "$ADB" -s "$DEVICE" "$@"; else "$ADB" "$@"; f
 # This checks both before an export and stops with instructions if anything is missing; it never
 # downloads anything.
 REQUIRED_LIBS=(libXREALNativeSessionManager.so libXREALXRPlugin.so libVulkanSupport.so)
-REQUIRED_ADDON_FILES=(nr_loader.aar nr_api.aar nr_common.aar nr_spatial_anchor.aar \
+REQUIRED_ADDON_FILES=(nr_loader.aar nr_api.aar nr_common.aar nr_spatial_anchor.aar nr_image_tracking.aar \
                       GlassesDisplayPlugEvent-2.4.2.aar Log-Control-1.2.aar)
 require_vendored_libs() {
     local jni_dir="$repo_root/jniLibs/arm64-v8a" addon_dir="$repo_root/addons/godot_xreal/android" missing=()

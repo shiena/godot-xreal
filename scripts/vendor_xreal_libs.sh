@@ -5,11 +5,13 @@
 #
 #   - 3 core .so       -> jniLibs/arm64-v8a/           (copied; dlopen'd by the GDExtension,
 #                                                        packed via godot_xreal.gdextension)
-#   - 6 .aar           -> addons/godot_xreal/android/  (shipped into the APK by export_plugin.gd:
+#   - 7 .aar           -> addons/godot_xreal/android/  (shipped into the APK by export_plugin.gd:
 #                                                        Java/JNI layer + manifest merge; Gradle
 #                                                        also merges each .aar's jni/arm64-v8a/*.so
 #                                                        — the NR libs — into the APK, so they are
 #                                                        NOT extracted separately)
+#   - trackableImageTools -> addons/godot_xreal/tools/ (host build tool, NOT in the APK: generates
+#                                                        the image-tracking DB blob from PNGs)
 #
 # Extraction only — the XrealBridge Java sources are compiled by the export's gradle build
 # (export_plugin.gd stages them into the build template), not here.
@@ -83,23 +85,43 @@ for lib in "${core_libs[@]}"; do
     echo "so   $lib"
 done
 
-# --- 2) 6 .aar -> addons/godot_xreal/android (shipped by export_plugin.gd _get_android_libraries;
+# --- 2) 7 .aar -> addons/godot_xreal/android (shipped by export_plugin.gd _get_android_libraries;
 #        the exact file names are hardcoded there). Besides the Java/JNI layer + manifest merge,
 #        the aars carry the NR native libs at jni/arm64-v8a/ (nr_api.aar: libnr_api.so /
 #        libnr_plugin_6dof.so / libnr_rgb_camera.so, nr_loader.aar: libnr_loader.so,
-#        nr_common.aar: libnr_libusb.so, nr_spatial_anchor.aar: libnr_spatial_anchor.so) — Gradle
+#        nr_common.aar: libnr_libusb.so, nr_spatial_anchor.aar: libnr_spatial_anchor.so, nr_image_tracking.aar: libnr_image_tracking.so) — Gradle
 #        merges those into the APK.
 #
 # Log-Control is REQUIRED whenever GlassesDisplayPlugEvent ships: its GlassesInitProvider
 # (a ContentProvider that auto-runs at app startup) references com.xreal.logcontrol.LogControl,
 # and without it the app crashes before Godot starts with
 # NoClassDefFoundError: com/xreal/logcontrol/LogControl. (Device-confirmed 2026-06-15.)
-aars=(nr_loader.aar nr_api.aar nr_common.aar nr_spatial_anchor.aar GlassesDisplayPlugEvent-2.4.2.aar Log-Control-1.2.aar)
+aars=(nr_loader.aar nr_api.aar nr_common.aar nr_spatial_anchor.aar nr_image_tracking.aar GlassesDisplayPlugEvent-2.4.2.aar Log-Control-1.2.aar)
 for aar in "${aars[@]}"; do
     if [ ! -f "$src_android/$aar" ]; then warn "Missing in package: $aar"; continue; fi
     cp -f "$src_android/$aar" "$addon_dir/$aar"
     echo "aar  $aar"
 done
+
+# --- 3) Host build tool -> addons/godot_xreal/tools/ (NOT shipped in the APK): trackableImageTools
+#        generates the image-tracking reference-image DB blob from PNGs at build time (see
+#        docs/plans/ar-features-plan.md). Only a MacOS binary exists in the POSIX package layout; on
+#        Linux there is no prebuilt tool (build the blob on a Mac/Windows host, or skip image tracking).
+tools_dir="$repo_root/addons/godot_xreal/tools"
+mkdir -p "$tools_dir"
+case "$(uname -s)" in
+    Darwin) tool_src="$pkg/Tools~/MacOS/trackableImageTools" ;;
+    *)      tool_src=""; warn "trackableImageTools: no prebuilt tool for $(uname -s) (Windows/MacOS only)" ;;
+esac
+if [ -n "$tool_src" ]; then
+    if [ -f "$tool_src" ]; then
+        cp -f "$tool_src" "$tools_dir/trackableImageTools"
+        chmod +x "$tools_dir/trackableImageTools"
+        echo "tool trackableImageTools"
+    else
+        warn "Missing in package: ${tool_src#"$pkg/"}"
+    fi
+fi
 
 # --- Final verification: everything the export needs (build.ps1/build.sh check the same lists).
 missing=()
@@ -116,5 +138,5 @@ if [ ${#missing[@]} -gt 0 ]; then
     printf '  - %s\n' "${missing[@]}"
     exit 1
 fi
-echo -e "\033[32mDone: 3 core .so -> jniLibs/arm64-v8a, 6 .aar -> addons/godot_xreal/android.\033[0m"
+echo -e "\033[32mDone: 3 core .so -> jniLibs/arm64-v8a, 7 .aar -> addons/godot_xreal/android, trackableImageTools -> addons/godot_xreal/tools.\033[0m"
 echo "(NR .so ship via the .aar; nractivitylife*.aar deliberately excluded — Unity-only launcher.)"

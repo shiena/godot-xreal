@@ -42,3 +42,7 @@ Thumbs.db
 # XREAL addon vendored binaries (AARs) — vendored locally
 # (see docs/plans/android-export-plugin-migration.md), like jniLibs/*.so.
 /addons/godot_xreal/android/*.aar
+
+# XREAL host build tools (trackableImageTools — the image-tracking DB blob generator), vendored
+# locally by scripts/vendor_xreal_libs.*; large SDK binaries, not committed.
+/addons/godot_xreal/tools/

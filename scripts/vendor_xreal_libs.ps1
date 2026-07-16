@@ -6,11 +6,13 @@
 
       - 3 core .so       -> jniLibs/arm64-v8a/           (copied; dlopen'd by the GDExtension,
                                                           packed via godot_xreal.gdextension)
-      - 6 .aar           -> addons/godot_xreal/android/  (shipped into the APK by export_plugin.gd:
+      - 7 .aar           -> addons/godot_xreal/android/  (shipped into the APK by export_plugin.gd:
                                                           Java/JNI layer + manifest merge; Gradle
                                                           also merges each .aar's jni/arm64-v8a/*.so
                                                           — the NR libs — into the APK, so they are
                                                           NOT extracted separately)
+      - trackableImageTools -> addons/godot_xreal/tools/ (host build tool, NOT in the APK: generates
+                                                          the image-tracking DB blob from PNGs)
 
     Extraction only — the XrealBridge Java sources are compiled by the export's gradle build
     (export_plugin.gd stages them into the build template), not here.
@@ -94,11 +96,11 @@ try {
         Write-Host "so   $lib"
     }
 
-    # --- 2) 6 .aar -> addons/godot_xreal/android (shipped by export_plugin.gd _get_android_libraries;
+    # --- 2) 7 .aar -> addons/godot_xreal/android (shipped by export_plugin.gd _get_android_libraries;
     #        the exact file names are hardcoded there). Besides the Java/JNI layer + manifest merge,
     #        the aars carry the NR native libs at jni/arm64-v8a/ (nr_api.aar: libnr_api.so /
     #        libnr_plugin_6dof.so / libnr_rgb_camera.so, nr_loader.aar: libnr_loader.so,
-    #        nr_common.aar: libnr_libusb.so, nr_spatial_anchor.aar: libnr_spatial_anchor.so) — Gradle merges those into the APK.
+    #        nr_common.aar: libnr_libusb.so, nr_spatial_anchor.aar: libnr_spatial_anchor.so, nr_image_tracking.aar: libnr_image_tracking.so) — Gradle merges those into the APK.
     #
     # Log-Control is REQUIRED whenever GlassesDisplayPlugEvent ships: its GlassesInitProvider
     # (a ContentProvider that auto-runs at app startup) references com.xreal.logcontrol.LogControl,
@@ -109,6 +111,7 @@ try {
         'nr_api.aar',
         'nr_common.aar',
         'nr_spatial_anchor.aar',
+        'nr_image_tracking.aar',
         'GlassesDisplayPlugEvent-2.4.2.aar',
         'Log-Control-1.2.aar'
     )
@@ -117,6 +120,19 @@ try {
         if (-not (Test-Path $src)) { Write-Warning "Missing in package: $aar"; continue }
         Copy-Item -Path $src -Destination (Join-Path $addonDir $aar) -Force
         Write-Host "aar  $aar"
+    }
+
+    # --- 3) Host build tool -> addons/godot_xreal/tools/ (NOT shipped in the APK): trackableImageTools
+    #        generates the image-tracking reference-image DB blob from PNGs at build time (see
+    #        docs/plans/ar-features-plan.md).
+    $toolsDir = Join-Path $repo 'addons/godot_xreal/tools'
+    New-Item -ItemType Directory -Force -Path $toolsDir | Out-Null
+    $toolSrc = Join-Path $XrealPackage 'Tools~/Windows/trackableImageTools.exe'
+    if (Test-Path $toolSrc) {
+        Copy-Item -Path $toolSrc -Destination (Join-Path $toolsDir 'trackableImageTools.exe') -Force
+        Write-Host "tool trackableImageTools.exe"
+    } else {
+        Write-Warning "Missing in package: Tools~/Windows/trackableImageTools.exe"
     }
 
     # --- Final verification: everything the export needs (build.ps1/build.sh check the same lists).
@@ -134,7 +150,7 @@ try {
         $missing | ForEach-Object { Write-Host "  - $_" }
         exit 1
     }
-    Write-Host "Done: 3 core .so -> jniLibs/arm64-v8a, 6 .aar -> addons/godot_xreal/android." -ForegroundColor Green
+    Write-Host "Done: 3 core .so -> jniLibs/arm64-v8a, 7 .aar -> addons/godot_xreal/android, trackableImageTools -> addons/godot_xreal/tools." -ForegroundColor Green
     Write-Host "(NR .so ship via the .aar; nractivitylife*.aar deliberately excluded — Unity-only launcher.)"
 }
 finally {
