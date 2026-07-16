@@ -47,7 +47,8 @@ XREAL のネイティブは **Android arm64 のみ** のため、対応端末（
 | **マルチレジューム** — スマホを別アプリに切替えてもグラスのアプリが継続 | ✅ | 実機確認: Home/別アプリ後もグラス側でヘッドトラッキング+カメラが更新継続。manifest 足場（`nr_features=multiResume`+`NRFakeActivity`）で成立。フローティング「戻る」ボタンは**不可**（自前オーバーレイは Godot の GL サーフェスを乱す・NR `FloatingManager` は非 Unity アプリから不可）。 |
 
 未実装: アプリカメラの 6DoF 位置、ハンド/画像/平面トラッキング、空間アンカー、メッシング、
-音声/写真キャプチャ、NRSDK の高レベル知覚機能。
+音声/写真キャプチャ、NRSDK の高レベル知覚機能。（平面/画像/アンカー/メッシュは ARCore・AR Foundation
+不要で移植可能 — 実現性調査: [`docs/ar-features-plan.md`](docs/ar-features-plan.md)。）
 
 ## ビルド
 

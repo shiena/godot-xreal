@@ -48,7 +48,8 @@ community-reverse-engineered interop, not an official API.
 | **Multi-resume** — glasses app keeps running when the phone switches apps | ✅ | Verified: after Home / another app, head tracking + camera keep updating on the glasses. From the manifest scaffolding (`nr_features=multiResume` + `NRFakeActivity`). A floating "return" button is **not** feasible (a self-overlay disturbs Godot's GL surface; the NR `FloatingManager` isn't accessible to a non-Unity app). |
 
 Not implemented: 6DoF position for the app camera, hand/image/plane tracking, spatial anchors, meshing,
-audio/photo capture, the NRSDK's higher-level perception features.
+audio/photo capture, the NRSDK's higher-level perception features. (Plane / image / anchor / mesh are
+portable without ARCore or AR Foundation — feasibility survey: [`docs/ar-features-plan.md`](docs/ar-features-plan.md).)
 
 ## Build
 
