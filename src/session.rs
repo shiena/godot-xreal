@@ -21,7 +21,10 @@
 //!   2. `XREALLoadAPI()` — construct/wire the session-manager perception singleton.
 //!      REQUIRED before any pose / `IsSessionStarted` call.
 
-use std::sync::OnceLock;
+use std::sync::{
+    atomic::{AtomicBool, AtomicU64, Ordering},
+    Mutex, OnceLock,
+};
 
 use godot::builtin::Quaternion;
 
@@ -35,6 +38,16 @@ static SESSION: OnceLock<XrealSession> = OnceLock::new();
 /// Terminal-failure latch (e.g. libraries absent on desktop). Stops further attempts and
 /// the warning is printed only once.
 static DISABLED: OnceLock<String> = OnceLock::new();
+/// Log the retryable CreateSession wait only once; it can happen every frame while the
+/// glasses display / NR service is still not ready.
+static WAITING_FOR_SESSION_READY_LOGGED: AtomicBool = AtomicBool::new(false);
+/// `UnityPluginLoad` populates process-global Unity interface pointers inside
+/// libXREALXRPlugin.so, so calling it once per process is enough.
+static UNITY_PLUGIN_LOAD_DONE: AtomicBool = AtomicBool::new(false);
+/// Retry runtime-dependent bootstrap at a modest cadence while the glasses / NR runtime
+/// are unavailable. This avoids spamming UnityPluginLoad/provider registration every frame.
+static SHARED_CALLS: AtomicU64 = AtomicU64::new(0);
+static NEXT_RUNTIME_RETRY_CALL: AtomicU64 = AtomicU64::new(0);
 
 /// Initialize (once) and return the process-global XREAL session, or `None` when it is
 /// not (yet) available.
@@ -50,13 +63,22 @@ pub fn shared() -> Option<&'static XrealSession> {
         return None;
     }
 
+    let call = SHARED_CALLS.fetch_add(1, Ordering::SeqCst).wrapping_add(1);
+    if call < NEXT_RUNTIME_RETRY_CALL.load(Ordering::SeqCst) {
+        return None;
+    }
+
     match XrealSession::try_start() {
         TryStart::Ready(session) => {
-            let _ = SESSION.set(session);
+            NEXT_RUNTIME_RETRY_CALL.store(0, Ordering::SeqCst);
+            let _ = SESSION.set(*session);
             SESSION.get()
         }
-        // Activity not published yet — stay quiet and try again next frame.
-        TryStart::WaitingForActivity => None,
+        // Activity or the XREAL session target is not ready yet; retry soon.
+        TryStart::WaitingForRuntime => {
+            NEXT_RUNTIME_RETRY_CALL.store(call.wrapping_add(60), Ordering::SeqCst);
+            None
+        }
         TryStart::Disabled(reason) => {
             godot::global::godot_warn!(
                 "[xreal] head tracking disabled: {reason} (expected on desktop/editor)"
@@ -69,22 +91,22 @@ pub fn shared() -> Option<&'static XrealSession> {
 
 /// Outcome of a single bootstrap attempt.
 enum TryStart {
-    Ready(XrealSession),
-    /// Native libraries are present but no Android Activity has been published yet.
-    WaitingForActivity,
+    Ready(Box<XrealSession>),
+    /// Native libraries are present but Android/XREAL runtime state is not ready yet.
+    WaitingForRuntime,
     /// Terminal: do not retry (libraries missing, or a bootstrap call failed).
     Disabled(String),
 }
 
 pub struct XrealSession {
-    native: XrealNative,
+    native: Mutex<XrealNative>,
 }
 
 impl XrealSession {
     /// One bootstrap attempt: load the libraries, then (once the Activity is available)
     /// create the session and wire the perception API.
     fn try_start() -> TryStart {
-        let native = match XrealNative::load() {
+        let mut native = match XrealNative::load() {
             Ok(native) => native,
             Err(err) => return TryStart::Disabled(format!("native libraries unavailable: {err}")),
         };
@@ -92,30 +114,65 @@ impl XrealSession {
         // Needs the host Activity (published into ndk_context from the Java side). Until
         // then there is nothing to create a session with — retry next frame.
         let Some(activity) = crate::jni_bridge::activity_ptr() else {
-            return TryStart::WaitingForActivity;
+            return TryStart::WaitingForRuntime;
         };
 
         // libXREALXRPlugin.so is a Unity native plugin: hand it our fake IUnityInterfaces
         // (reporting OpenGL ES 3) the way Unity's engine would via UnityPluginLoad, BEFORE
         // InitUserDefinedSettings — otherwise its DisplayManager::LoadDisplay dereferences a
         // null interface pointer and segfaults. See crate::unity_plugin.
-        native.unity_plugin_load(crate::unity_plugin::interfaces_ptr());
+        if !UNITY_PLUGIN_LOAD_DONE.load(Ordering::SeqCst) {
+            let loaded = native.unity_plugin_load(crate::unity_plugin::interfaces_ptr());
+            if loaded {
+                UNITY_PLUGIN_LOAD_DONE.store(true, Ordering::SeqCst);
+            }
+        }
 
         // Color space: Unity ColorSpace.Linear == 1; stereo/input default to 0.
+        //
+        // XREAL One/One Pro starts perception through the 6DoF path in the Unity
+        // reference app even when the MVP only consumes head rotation. Keep this
+        // aligned with Unity's InitUserDefinedSettings log before falling back to
+        // narrower tracking modes.
         let settings = UserDefinedSettings {
             color_space: 1,
+            // EXPERIMENT: Multi-pass (0) instead of Single Pass Instanced / Multiview (2).
+            // With Multiview (2) the SDK runs "single_buffer:1" and CreateTexture asks for ONE
+            // 2-layer array texture (arraylen=2), but SetSwapChainBuffers never calls our
+            // QueryTextureDesc, so our GL texture is never registered → black. Multi-pass should
+            // create two separate 2D textures and a normal multi-buffer swapchain, which is the
+            // path our SetSwapChainBuffers analysis assumes and may actually trigger QueryTextureDesc.
+            // Unity uses 2; revert if 0 fails to create the render texture.
             stereo_rendering_mode: 0,
-            tracking_type: TrackingType::Mode3Dof as i32,
+            tracking_type: TrackingType::Mode6Dof as i32,
             support_mono_mode: 0,
             unity_activity: activity,
             input_source: 0,
         };
         if !native.init_user_defined_settings(settings) {
-            return TryStart::Disabled("InitUserDefinedSettings unavailable (libXREALXRPlugin.so?)".into());
+            return TryStart::Disabled(
+                "InitUserDefinedSettings unavailable (libXREALXRPlugin.so?)".into(),
+            );
         }
         if !native.create_session(false) {
-            return TryStart::Disabled("CreateSession returned false".into());
+            if !WAITING_FOR_SESSION_READY_LOGGED.swap(true, Ordering::SeqCst) {
+                godot::global::godot_warn!(
+                    "[xreal] CreateSession returned false; waiting for XREAL display/session readiness"
+                );
+            }
+            return TryStart::WaitingForRuntime;
         }
+
+        // Unity owns this through XR SDK provider callbacks. Our fake Unity interface stores
+        // the callbacks during InitUserDefinedSettings; run initialize/start after
+        // CreateSession so XREAL can construct NativeHMD / NativePerception.
+        crate::unity_plugin::start_registered_providers();
+
+        // GfxThreadStart is deferred to the rendering thread (see unity_plugin::run_render_thread_tick).
+        // CreateSwapchainEx allocates GL textures and requires an active EGL context; the main
+        // thread has none. The first call to run_render_thread_tick() from node::process() via
+        // RenderingServer::call_on_render_thread will invoke GfxThreadStart on the rendering
+        // thread (EGL context active), which then triggers SetSwapChainBuffers + AcquireFrame.
 
         // Constructs/wires the session-manager perception singleton. REQUIRED before any
         // pose or IsSessionStarted call — those dereference what this sets up.
@@ -126,70 +183,189 @@ impl XrealSession {
         // false and no head pose is delivered.
         native.resume_session();
 
-        // Experiment: Unity's input subsystem kicks perception via SwitchTrackingType. Try
-        // it directly (1 = 3DoF) to see if perception starts without the full XR-subsystem
-        // host. Log the tracking enums so we can read the outcome.
-        let switched = native.switch_tracking_type(TrackingType::Mode3Dof as i32);
+        // SwitchTrackingType removed: it triggers action callbacks from the XREAL Nebula service
+        // (via libnr_api.so) that race with NativeGlasses construction and cause SIGSEGV at
+        // NativeGlasses::GetActionData+8 (null member deref) before the input subsystem is ready.
+        // Head tracking works without this call once the 6DoF session starts via CreateSession.
+        let initial_tracking_type = TrackingType::Mode6Dof as i32;
+
+        // NOTE: display_manager_submit_frame_probe() was removed.
+        //
+        // Calling PopulateNextFrameDesc with (lib_base + 0xdb400) sets 0xdb410 = 0xa6,
+        // which switches the XREAL SDK rendering thread's SubmitCurrentFrame path from
+        // "SetBufferViewport + NativeRendering::SubmitFrame" (normal) to
+        // "NativeRendering::DestroyFrame" (cleanup/embedded-data mode). The DestroyFrame
+        // call then crashes because DisplayManager+0x120 holds a live SDK-managed frame
+        // handle (0xb9a40998bac55c8a, MTE-tagged) — the same SIGABRT we saw before.
+        //
+        // The SDK's own rendering thread (GLThread) is already submitting frames via
+        // SubmitCurrentFrame with 0xdb410 == 0 (the SetBufferViewport+SubmitFrame path),
+        // which is what makes the Android home screen appear on the XREAL display.
+        // We must NOT interfere with that by setting 0xdb410.
+        //
+        // To get Godot content on the display: register a Godot texture as an overlay
+        // or swapchain that SetBufferViewport picks up. This requires CreateDisplayLayer
+        // or a similar compositor registration, not a PopulateNextFrameDesc call.
+        let display_submit_result = "deferred to rendering thread (run_render_thread_tick)";
+
+        let (gfx_start_registered, gfx_submit_registered, gfx_populate_registered) =
+            crate::unity_plugin::display_gfx_callback_status();
         godot::global::godot_print!(
-            "[xreal] native session created (3DoF); session_started={}, \
-             switch_tracking_type={switched}, tracking_type={:?}, tracking_state={:?}, tracking_reason={:?}",
+            "[xreal] native session created (tracking_type_request={initial_tracking_type}); \
+             session_started={}, tracking_type={:?}, \
+             tracking_state={:?}, tracking_reason={:?}, \
+             display_submit={display_submit_result:?}, gfx_callbacks=({}, {}, {})",
             native.is_session_started(),
             native.tracking_type(),
             native.tracking_state(),
-            native.tracking_reason()
+            native.tracking_reason(),
+            gfx_start_registered,
+            gfx_submit_registered,
+            gfx_populate_registered
         );
-        TryStart::Ready(Self { native })
+        TryStart::Ready(Box::new(Self {
+            native: Mutex::new(native),
+        }))
     }
 
     /// Whether the native session reports it has started. Safe: only reachable via
     /// [`shared`], i.e. after the singleton has been constructed.
     pub fn is_session_started(&self) -> bool {
-        self.native.is_session_started()
+        self.native
+            .lock()
+            .expect("xreal native mutex")
+            .is_session_started()
     }
 
     /// Native plugin version string, or `None` if unavailable.
     pub fn plugin_version(&self) -> Option<String> {
-        self.native.get_plugin_version()
+        self.native
+            .lock()
+            .expect("xreal native mutex")
+            .get_plugin_version()
     }
 
     /// Connected `XREALDeviceType` enum value, or `None` if unavailable.
     pub fn device_type(&self) -> Option<i32> {
-        self.native.get_device_type()
+        self.native
+            .lock()
+            .expect("xreal native mutex")
+            .get_device_type()
     }
 
-    /// The current head rotation as a Godot quaternion, or `None` when no fresh pose is
-    /// available this frame.
-    pub fn head_rotation(&self) -> Option<Quaternion> {
-        let time_ns = self.native.hmd_time_nanos()?;
-        let mut pose = NrPose::default();
+    /// Start the lower NRRendering pipeline (swapchain + GL textures + viewports).
+    /// Must be called on the rendering thread (EGL context required for GL texture allocation).
+    pub fn start_nr_rendering(&self) -> Result<(), i32> {
         self.native
+            .lock()
+            .expect("xreal native mutex")
+            .nr_rendering_start_persistent()
+    }
+
+    /// Submit one frame to the NR compositor.
+    /// Returns the swapchain buffer index (maps to gl_texture_ids[index]).
+    pub fn submit_nr_frame(&self) -> Result<u32, i32> {
+        self.native
+            .lock()
+            .expect("xreal native mutex")
+            .nr_frame_submit()
+    }
+
+    /// Whether the direct NR rendering/compositor API was resolved from libnr_loader.so.
+    pub fn nr_rendering_available(&self) -> bool {
+        self.native
+            .lock()
+            .expect("xreal native mutex")
+            .nr_rendering_available()
+    }
+
+    /// Number of direct NR rendering symbols resolved from libnr_loader.so.
+    pub fn nr_rendering_symbol_count(&self) -> usize {
+        self.native
+            .lock()
+            .expect("xreal native mutex")
+            .nr_rendering_symbol_count()
+    }
+
+    /// RE probe for the lower compositor path. Creates and immediately destroys an
+    /// NRRendering handle; it does not start presentation or submit frames.
+    pub fn nr_rendering_smoke_create_destroy(&self) -> i32 {
+        match self
+            .native
+            .lock()
+            .expect("xreal native mutex")
+            .nr_rendering_smoke_create_destroy()
+        {
+            Ok(()) => 0,
+            Err(status) => status,
+        }
+    }
+
+    /// RE probe for the lower compositor path. Creates, starts, stops, and destroys an
+    /// NRRendering handle without submitting frames.
+    pub fn nr_rendering_smoke_start_stop(&self) -> i32 {
+        match self
+            .native
+            .lock()
+            .expect("xreal native mutex")
+            .nr_rendering_smoke_start_stop()
+        {
+            Ok(()) => 0,
+            Err(status) => status,
+        }
+    }
+
+    /// The current native pose and Godot rotation, or `None` when no fresh pose is
+    /// available this frame.
+    pub fn head_pose(&self) -> Option<(NrPose, Quaternion)> {
+        let native = self.native.lock().expect("xreal native mutex");
+        let time_ns = native.hmd_time_nanos()?;
+        let mut pose = NrPose::default();
+        native
             .get_head_pose_at_time(time_ns, &mut pose)
-            .then(|| pose.to_godot_quaternion())
+            .then(|| (pose, pose.to_godot_quaternion()))
     }
 
     /// Re-center the 3DoF view.
     pub fn recenter(&self) {
-        self.native.recenter_glasses();
+        self.native
+            .lock()
+            .expect("xreal native mutex")
+            .recenter_glasses();
+    }
+
+    /// Keep the glasses display on by bypassing the proximity (wear) sensor auto-off. Returns the
+    /// SDK status (or `None` if unsupported). No-ops inside the SDK until `NativeGlasses` is ready,
+    /// so callers should invoke it a few times after the session goes live.
+    pub fn set_display_bypass_psensor(&self, bypass: bool) -> Option<i32> {
+        self.native
+            .lock()
+            .expect("xreal native mutex")
+            .set_display_bypass_psensor(bypass)
     }
 
     /// One-line diagnostic of the perception pipeline, logged (throttled) when no pose
     /// arrives, so we can see WHERE it breaks: is the session started, does the HMD clock
     /// tick, does the pose query succeed, and are the values non-zero.
     pub fn diagnostics(&self) -> String {
-        let started = self.native.is_session_started();
-        let (sm_time, xp_time) = self.native.hmd_time_probe();
-        let time = self.native.hmd_time_nanos();
+        let native = self.native.lock().expect("xreal native mutex");
+        let started = native.is_session_started();
+        let (sm_time, xp_time) = native.hmd_time_probe();
+        let time = native.hmd_time_nanos();
         let mut pose = NrPose::default();
         let pose_ok = match time {
-            Some(t) => self.native.get_head_pose_at_time(t, &mut pose),
+            Some(t) => native.get_head_pose_at_time(t, &mut pose),
             None => false,
         };
         format!(
             "session_started={started}, hmd_time(sm)={sm_time:?}, hmd_time(xrplugin)={xp_time:?}, \
              pose_ok={pose_ok}, track_state={:?}, track_reason={:?}, pose=[{:.3}, {:.3}, {:.3}, {:.3}]",
-            self.native.tracking_state(),
-            self.native.tracking_reason(),
-            pose.qx, pose.qy, pose.qz, pose.qw
+            native.tracking_state(),
+            native.tracking_reason(),
+            pose.qx,
+            pose.qy,
+            pose.qz,
+            pose.qw
         )
     }
 }

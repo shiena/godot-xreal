@@ -13,6 +13,14 @@ jniLibs
 *.dll
 *.so
 *.dylib
+*.apk
+
+# Local device-test artifacts / scratch
+/log
+/log-unity
+/godot_xreal_external.png
+/android_old/
+/.cargo/
 
 # Release-only addon payload (assembled in CI, shipped in the release zip)
 /addons/godot_gsplat/bin/

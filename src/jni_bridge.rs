@@ -58,7 +58,9 @@ pub extern "system" fn Java_com_godot_game_XrealBridge_nativeRegisterActivity<'l
     }
 
     let Ok(vm) = env.get_java_vm() else { return };
-    let Ok(global) = env.new_global_ref(&activity) else { return };
+    let Ok(global) = env.new_global_ref(&activity) else {
+        return;
+    };
 
     let vm_ptr = vm.get_java_vm_pointer() as *mut c_void;
     let activity_ptr = global.as_raw() as *mut c_void;

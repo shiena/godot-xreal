@@ -14,10 +14,12 @@
 use godot::prelude::*;
 
 mod ffi;
+mod gl;
 mod jni_bridge;
 mod native;
 mod node;
 mod session;
+mod signal_guard;
 mod system;
 mod unity_plugin;
 

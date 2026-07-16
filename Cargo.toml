@@ -27,6 +27,8 @@ ndk-context = "0.1"
 # them into ndk-context, since Godot does not populate it. Used only by the JNI entry
 # point in src/jni_bridge.rs.
 jni = "0.21"
+# Signal handling for SIGSEGV guard (NativeGlasses null-crash workaround).
+libc = "0.2"
 
 [profile.dev]
 opt-level = 0
