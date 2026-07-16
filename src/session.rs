@@ -90,6 +90,39 @@ fn stereo_rendering_mode() -> i32 {
     DEFAULT
 }
 
+/// Head-tracking mode for `InitUserDefinedSettings`, resolved **once at session bootstrap** from the
+/// Android system property `debug.xreal.tracking_type` (`adb shell setprop debug.xreal.tracking_type 1`),
+/// else the default.
+///
+/// `0` = MODE_6DOF (SLAM position + horizon-stabilized orientation — the compact `NrPose` we read has
+/// **roll always 0**; a head tilt leaks into pitch, see `docs/roll-tracking-investigation.md`),
+/// `1` = MODE_3DOF (pure IMU orientation — expected to carry real roll), `2` = MODE_0DOF.
+/// Defaults to MODE_6DOF. Set before the XR rig starts; it is read once at `try_start`.
+fn tracking_mode() -> i32 {
+    const DEFAULT: i32 = TrackingType::Mode6Dof as i32;
+
+    #[cfg(target_os = "android")]
+    {
+        let mut buf = [0u8; 92]; // PROP_VALUE_MAX
+        let key = b"debug.xreal.tracking_type\0";
+        let n = unsafe {
+            libc::__system_property_get(
+                key.as_ptr() as *const libc::c_char,
+                buf.as_mut_ptr() as *mut libc::c_char,
+            )
+        };
+        if n > 0 {
+            if let Ok(s) = std::str::from_utf8(&buf[..n as usize]) {
+                if let Ok(v) = s.trim().parse::<i32>() {
+                    return v;
+                }
+            }
+        }
+    }
+
+    DEFAULT
+}
+
 /// The created session (success latch). `XrealNative` is `Send + Sync` (the `libloading`
 /// handles and the resolved `extern "C"` function pointers all are), so it lives in a
 /// `static`.
@@ -216,8 +249,10 @@ impl XrealSession {
         // aligned with Unity's InitUserDefinedSettings log before falling back to
         // narrower tracking modes.
         let stereo_mode = stereo_rendering_mode();
+        let tracking_mode = tracking_mode();
         godot::global::godot_print!(
-            "[xreal] stereo_rendering_mode = {stereo_mode} (0=Multipass, 2=Multiview)"
+            "[xreal] stereo_rendering_mode = {stereo_mode} (0=Multipass, 2=Multiview), \
+             tracking_type = {tracking_mode} (0=6DoF, 1=3DoF, 2=0DoF)"
         );
         let settings = UserDefinedSettings {
             color_space: 1,
@@ -226,7 +261,7 @@ impl XrealSession {
             // Instanced (one 2-layer array texture, matches LayeredClient's StereoRendering: 2 —
             // the reference app's head-locked peek window; still WIP: NR swapchain registration).
             stereo_rendering_mode: stereo_mode,
-            tracking_type: TrackingType::Mode6Dof as i32,
+            tracking_type: tracking_mode,
             support_mono_mode: 0,
             unity_activity: activity,
             input_source: 0,
@@ -269,7 +304,7 @@ impl XrealSession {
         // (via libnr_api.so) that race with NativeGlasses construction and cause SIGSEGV at
         // NativeGlasses::GetActionData+8 (null member deref) before the input subsystem is ready.
         // Head tracking works without this call once the 6DoF session starts via CreateSession.
-        let initial_tracking_type = TrackingType::Mode6Dof as i32;
+        let initial_tracking_type = tracking_mode;
 
         // NOTE: display_manager_submit_frame_probe() was removed.
         //
