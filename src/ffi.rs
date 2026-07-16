@@ -117,9 +117,9 @@ pub type FnGetHeadPoseAtTime = unsafe extern "C" fn(u64, *mut NrPose) -> i32;
 /// **64-byte / 16-float** block straight from `NativePerception::GetHeadPose`'s struct
 /// return — i.e. the *display* subsystem's HMD pose, the exact source the compositor
 /// reprojects the glasses layer with (so driving the eye cameras from it should yield a
-/// head-locked peek window). Returns 1 on success. The internal layout of the 16 floats
-/// (quaternion offset/order, or a 4×4 matrix) is pinned by an on-device log before we
-/// convert it; see `docs/archive/glasses-display-position.md`.
+/// head-locked peek window). Returns 1 on success. Device-pinned layout of the 16 floats:
+/// a **4×4 row-major transform** (rotation 3×3 upper-left, position in floats 12/13/14);
+/// see the RE map in `docs/archive/multiview-investigation.md`.
 pub type FnGetHeadPoseDisplay = unsafe extern "C" fn(u64, *mut [f32; 16]) -> i32;
 
 /// `void XREALLoadAPI(void)` — wires the session-manager perception delegate; must run

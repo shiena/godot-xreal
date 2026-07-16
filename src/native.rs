@@ -1302,8 +1302,8 @@ impl XrealNative {
 
     /// Fetch the **display** subsystem head pose (libXREALXRPlugin.so `GetHeadPoseAtTime`) as the
     /// raw 16-float block it writes — the pose the compositor reprojects with. `None` when the
-    /// export is absent or the query fails. The 16-float layout (quaternion offset/order vs 4×4
-    /// matrix) is decoded caller-side after an on-device pin-down; see `docs/archive/glasses-display-position.md`.
+    /// export is absent or the query fails. The 16-float layout (a 4×4 row-major transform,
+    /// device-pinned) is decoded caller-side; see the RE map in `docs/archive/multiview-investigation.md`.
     pub fn head_pose_display(&self, time_ns: u64) -> Option<[f32; 16]> {
         let f = self.xp_get_head_pose?;
         let mut raw = [0.0_f32; 16];
