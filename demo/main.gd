@@ -65,6 +65,8 @@ var _mesh_manager: Node3D
 var _stream_manager: Node
 # Photo capture manager (demo/capture_manager.gd), driven by the phone-menu "撮影" button.
 var _capture_manager: Node
+# Frame-blend (mixed-reality) manager (demo/blend_manager.gd), driven by the phone-menu "合成撮影" button.
+var _blend_manager: Node
 # Detected-plane visualization: a thin, semi-transparent box overlaid on each plane's bounds,
 # keyed by plane id. World-locked (children of Main, like the hand joints) so they sit on the real
 # surface as the head moves. On the see-through display the translucent fill reads as a tint.
@@ -198,6 +200,12 @@ func _spawn_rig() -> void:
 		_capture_manager.set_script(load("res://demo/capture_manager.gd"))
 		add_child(_capture_manager)
 		_capture_manager.setup(_system)
+		# Frame-blend (mixed-reality) manager — composites the AR scene over the camera for a blended photo.
+		_blend_manager = Node.new()
+		_blend_manager.name = "BlendManager"
+		_blend_manager.set_script(load("res://demo/blend_manager.gd"))
+		add_child(_blend_manager)
+		_blend_manager.setup(_system, _tracker)
 		# Recenter the view to the current head direction once tracking goes live.
 		if _tracker.has_signal(&"display_started"):
 			_tracker.display_started.connect(_on_display_started)
@@ -249,9 +257,11 @@ func _setup_camera_feed() -> void:
 	# eye SubViewports (shared world). Its corner position/size are set in ar_scene.tscn.
 	if _tracker and _cam_panel.get_parent() != _tracker:
 		_cam_panel.reparent(_tracker, false)
-	# Hand the live feed to the photo-capture manager (撮影 reads its Y/CbCr textures).
+	# Hand the live feed to the photo-capture + frame-blend managers (they read its Y/CbCr textures).
 	if _capture_manager:
 		_capture_manager.set_feed(_cam_feed)
+	if _blend_manager:
+		_blend_manager.set_feed(_cam_feed)
 
 ## Set up the runtime side of the phone touch controller ($PhoneScreen — its layout and signal
 ## wiring are static in phone_screen.tscn / main.tscn; it only renders on the phone's root
@@ -426,6 +436,11 @@ func _on_tc_image_cycle() -> void:
 func _on_tc_capture() -> void:
 	if _capture_manager:
 		_capture_manager.capture_photo()
+
+## Phone-menu "合成撮影" button → capture a blended camera+AR (mixed-reality) photo (demo/blend_manager.gd).
+func _on_tc_blend() -> void:
+	if _blend_manager:
+		_blend_manager.capture_blended()
 
 ## Create/update the translucent box overlaying one plane's bounds. The plane's `size` is its full
 ## width/height in the plane-local X/Z; `center` offsets the bounds from the pose in that same local

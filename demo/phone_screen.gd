@@ -35,6 +35,8 @@ signal place_pressed()
 signal image_cycle_pressed()
 ## Momentary "撮影" button — capture a photo from the RGB camera.
 signal capture_pressed()
+## Momentary "合成撮影" button — capture a blended camera+AR (mixed-reality) photo.
+signal blend_pressed()
 
 func _ready() -> void:
 	var c: Control = $TouchController
@@ -53,6 +55,7 @@ func _ready() -> void:
 	c.place_pressed.connect(place_pressed.emit)
 	c.image_cycle_pressed.connect(image_cycle_pressed.emit)
 	c.capture_pressed.connect(capture_pressed.emit)
+	c.blend_pressed.connect(blend_pressed.emit)
 
 ## Forward a programmatic toggle-state change to the touch controller (see its set_toggle).
 func set_toggle(name: String, on: bool) -> void:

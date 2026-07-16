@@ -39,6 +39,8 @@ signal place_pressed()
 signal image_cycle_pressed()
 ## Momentary "撮影" button — capture a photo from the RGB camera.
 signal capture_pressed()
+## Momentary "合成撮影" button — capture a blended camera+AR (mixed-reality) photo.
+signal blend_pressed()
 
 ## Backdrop fill. Opaque by default so the phone shows only the controller (the glasses-bound
 ## 3D preview behind it is hidden); set a translucent alpha to let the 3D show through instead.
@@ -54,6 +56,7 @@ const _buttons := {
 	"place": "配置",
 	"image_cycle": "画像切替",
 	"capture": "撮影",
+	"blend": "合成撮影",
 }
 
 # Toggle buttons (name -> label). Unlike the momentary buttons above they hold an on/off state
@@ -78,7 +81,7 @@ const _toggles := {
 # is gated the same way (main.gd / stream_manager.gd) to avoid a freeze on the camera-less Air 2 Ultra.
 const _tabs := [
 	{"label": "操作", "items": ["trigger", "grip", "menu", "hand_l", "hand_r"]},
-	{"label": "カメラ", "items": ["camera", "capture", "stream"]},
+	{"label": "カメラ", "items": ["camera", "capture", "blend", "stream"]},
 	{"label": "Air2U", "items": ["place", "plane", "anchor", "image", "image_cycle", "mesh"]},
 ]
 
@@ -253,6 +256,8 @@ func _press(widget: String, pos: Vector2) -> void:
 			image_cycle_pressed.emit()
 		"capture":
 			capture_pressed.emit()
+		"blend":
+			blend_pressed.emit()
 	queue_redraw()
 
 func _release(widget: String) -> void:
