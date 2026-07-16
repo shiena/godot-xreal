@@ -4,6 +4,7 @@
 //! process-global [`crate::session`] (shared with the head-tracker node) and reports
 //! `is_available() == false` on desktop/editor or when the session failed to start.
 
+use godot::builtin::{VarArray, VarDictionary};
 use godot::classes::IRefCounted;
 use godot::prelude::*;
 
@@ -221,6 +222,84 @@ impl XrealSystem {
             .unwrap_or(-1) as i64
     }
 
+    // --- Plane detection (see docs/plans/ar-features-plan.md). Needs a live 6DoF session. ---
+
+    /// `PlaneDetectionMode` flags for [`Self::set_plane_detection_mode`] / [`Self::poll_planes`].
+    #[constant]
+    const PLANE_NONE: i64 = crate::ffi::plane_detection_mode::NONE as i64;
+    #[constant]
+    const PLANE_HORIZONTAL: i64 = crate::ffi::plane_detection_mode::HORIZONTAL as i64;
+    #[constant]
+    const PLANE_VERTICAL: i64 = crate::ffi::plane_detection_mode::VERTICAL as i64;
+    #[constant]
+    const PLANE_BOTH: i64 = crate::ffi::plane_detection_mode::BOTH as i64;
+
+    /// Whether the plane-detection C ABI resolved (false on desktop / older devices).
+    #[func]
+    fn is_plane_detection_available(&self) -> bool {
+        session::shared()
+            .map(XrealSession::plane_detection_available)
+            .unwrap_or(false)
+    }
+
+    /// Enable plane detection (`PLANE_HORIZONTAL | PLANE_VERTICAL` flags). Needs a live 6DoF session;
+    /// returns the SDK bool (false when unavailable). Call after `is_session_started()`.
+    #[func]
+    fn set_plane_detection_mode(&self, mode: i64) -> bool {
+        session::shared()
+            .map(|s| s.set_plane_detection_mode(mode as i32))
+            .unwrap_or(false)
+    }
+
+    /// Current `PlaneDetectionMode` flags, or `-1` when unavailable.
+    #[func]
+    fn get_plane_detection_mode(&self) -> i64 {
+        session::shared()
+            .and_then(XrealSession::plane_detection_mode)
+            .unwrap_or(-1) as i64
+    }
+
+    /// Poll detected-plane changes since the last call. Returns
+    /// `{ "added": Array, "updated": Array, "removed": Array }` where each added/updated entry is a
+    /// `Dictionary { id: String, transform: Transform3D, center: Vector2, size: Vector2, alignment: int }`
+    /// and `removed` is an array of id strings. Call once per frame (drives the SDK's change queue).
+    #[func]
+    fn poll_planes(&self) -> VarDictionary {
+        let mut added = VarArray::new();
+        let mut updated = VarArray::new();
+        let mut removed = VarArray::new();
+        if let Some(changes) = session::shared().and_then(XrealSession::poll_plane_changes) {
+            for p in &changes.added {
+                added.push(&plane_to_dict(p).to_variant());
+            }
+            for p in &changes.updated {
+                updated.push(&plane_to_dict(p).to_variant());
+            }
+            for id in &changes.removed {
+                removed.push(&trackable_id_to_gstring(*id).to_variant());
+            }
+        }
+        let mut d = VarDictionary::new();
+        d.set(&"added".to_variant(), &added.to_variant());
+        d.set(&"updated".to_variant(), &updated.to_variant());
+        d.set(&"removed".to_variant(), &removed.to_variant());
+        d
+    }
+
+    /// Boundary polygon (plane-local points) of a detected plane, by its id string from `poll_planes`.
+    #[func]
+    fn get_plane_boundary(&self, id: GString) -> PackedVector2Array {
+        let tid = gstring_to_trackable_id(&id);
+        let verts = session::shared()
+            .map(|s| s.plane_boundary(tid))
+            .unwrap_or_default();
+        let mut out = PackedVector2Array::new();
+        for v in &verts {
+            out.push(Vector2::new(v[0], v[1]));
+        }
+        out
+    }
+
     // NOTE: there is no stereo-mode selector — the port is Multipass-only. Multiview is shelved and
     // no longer reachable (the force_multiview escape was removed). It renders correctly but gains
     // nothing here and shares a cross-thread crash path; see docs/archive/multiview-investigation.md.
@@ -339,4 +418,41 @@ impl XrealSystem {
     fn get_render_metrics_diagnostics(&self) -> GString {
         GString::from(crate::metrics::diagnostics().as_str())
     }
+}
+
+// --- Plane-detection conversions (Unity → Godot) ---
+
+/// Convert a Unity-space plane pose to a Godot `Transform3D`: position `(x, -y, -z)`, quaternion
+/// `(-x, -y, z, w)` — the same convention as the head/hand poses (`src/hand_tracking.rs`). The exact
+/// axis signs are pending on-device verification with real planes.
+fn unity_pose_to_transform(pose: &crate::ffi::UnityPose) -> Transform3D {
+    let p = pose.position;
+    let r = pose.rotation;
+    let quat = Quaternion::new(r[0], -r[1], -r[2], r[3]);
+    Transform3D::new(Basis::from_quaternion(quat), Vector3::new(p[0], -p[1], -p[2]))
+}
+
+/// 128-bit `TrackableId` → a stable 32-hex-char string (round-trips via [`gstring_to_trackable_id`]).
+fn trackable_id_to_gstring(id: crate::ffi::TrackableId) -> GString {
+    GString::from(format!("{:016x}{:016x}", id.sub_id_1, id.sub_id_2).as_str())
+}
+
+/// Parse a 32-hex-char id string (from `poll_planes`) back into a `TrackableId`.
+fn gstring_to_trackable_id(s: &GString) -> crate::ffi::TrackableId {
+    let s = s.to_string();
+    crate::ffi::TrackableId {
+        sub_id_1: s.get(0..16).and_then(|h| u64::from_str_radix(h, 16).ok()).unwrap_or(0),
+        sub_id_2: s.get(16..32).and_then(|h| u64::from_str_radix(h, 16).ok()).unwrap_or(0),
+    }
+}
+
+/// A detected plane → a GDScript `Dictionary`.
+fn plane_to_dict(p: &crate::native::PlaneSample) -> VarDictionary {
+    let mut d = VarDictionary::new();
+    d.set(&"id".to_variant(), &trackable_id_to_gstring(p.id).to_variant());
+    d.set(&"transform".to_variant(), &unity_pose_to_transform(&p.pose).to_variant());
+    d.set(&"center".to_variant(), &Vector2::new(p.center[0], p.center[1]).to_variant());
+    d.set(&"size".to_variant(), &Vector2::new(p.size[0], p.size[1]).to_variant());
+    d.set(&"alignment".to_variant(), &(p.alignment as i64).to_variant());
+    d
 }

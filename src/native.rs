@@ -36,12 +36,69 @@ use crate::ffi::{
     FnDisposeRgbCameraDataHandle, FnStartRgbCameraCapture, FnStopRgbCameraCapture,
     FnTryAcquireLatestImage, FnTryGetRgbCameraDataPlane, NrSize2i,
 };
+use crate::ffi::{
+    bounded_plane, ArSubsystemChanges, FnGetPlaneBoundaryVertexCount, FnGetPlaneBoundaryVertexData,
+    FnGetPlaneDetectionChanges, FnGetPlaneDetectionMode, FnSetPlaneDetectionMode, TrackableId,
+    UnityPose,
+};
 
 const SESSION_LIB: &str = "libXREALNativeSessionManager.so";
 const PLUGIN_LIB: &str = "libXREALXRPlugin.so";
 const NR_LOADER_LIB: &str = "libnr_loader.so";
 const GLES_LIB: &str = "libGLESv3.so";
 const EGL_LIB: &str = "libEGL.so";
+
+/// A detected plane sampled from the plane-detection changes. The `pose` is **Unity space** — convert
+/// on the Godot side (`(x, -y, -z)` / quaternion `(-x, -y, z, w)`). `center`/`size` are plane-local.
+#[derive(Clone, Copy, Debug)]
+pub struct PlaneSample {
+    pub id: TrackableId,
+    pub pose: UnityPose,
+    pub center: [f32; 2],
+    pub size: [f32; 2],
+    pub alignment: i32,
+}
+
+/// Added / updated / removed planes from one [`XrealNative::poll_plane_changes`] call.
+pub struct PlaneChanges {
+    pub added: Vec<PlaneSample>,
+    pub updated: Vec<PlaneSample>,
+    pub removed: Vec<TrackableId>,
+}
+
+/// Read `count` `BoundedPlane`s from a native array of `stride`-byte elements, pulling the stable
+/// leading fields at the [`bounded_plane`] offsets. `ptr` must be valid for `count * stride` bytes.
+fn read_planes(ptr: *const c_void, count: i32, stride: usize) -> Vec<PlaneSample> {
+    if ptr.is_null() || count <= 0 {
+        return Vec::new();
+    }
+    let base = ptr as *const u8;
+    (0..count as usize)
+        .map(|i| unsafe {
+            let e = base.add(i * stride);
+            PlaneSample {
+                id: std::ptr::read_unaligned(e.add(bounded_plane::TRACKABLE_ID) as *const TrackableId),
+                pose: std::ptr::read_unaligned(e.add(bounded_plane::POSE) as *const UnityPose),
+                center: std::ptr::read_unaligned(e.add(bounded_plane::CENTER) as *const [f32; 2]),
+                size: std::ptr::read_unaligned(e.add(bounded_plane::SIZE) as *const [f32; 2]),
+                alignment: std::ptr::read_unaligned(e.add(bounded_plane::ALIGNMENT) as *const i32),
+            }
+        })
+        .collect()
+}
+
+/// Read `count` removed `TrackableId`s (AR Foundation packs the removed array as `TrackableId[]`,
+/// 16 bytes each — not full `BoundedPlane`s).
+fn read_removed_ids(ptr: *const c_void, count: i32) -> Vec<TrackableId> {
+    if ptr.is_null() || count <= 0 {
+        return Vec::new();
+    }
+    let base = ptr as *const u8;
+    let stride = std::mem::size_of::<TrackableId>();
+    (0..count as usize)
+        .map(|i| unsafe { std::ptr::read_unaligned(base.add(i * stride) as *const TrackableId) })
+        .collect()
+}
 
 type FnGlGenTextures = unsafe extern "C" fn(i32, *mut u32);
 type FnGlDeleteTextures = unsafe extern "C" fn(i32, *const u32);
@@ -85,6 +142,13 @@ pub struct XrealNative {
     get_tracking_reason: Option<FnQueryInt>,
     get_tracking_type: Option<FnQueryInt>,
     switch_tracking_type: Option<FnSwitchTrackingType>,
+
+    // Plane detection (libXREALXRPlugin.so, flat C ABI; see docs/plans/ar-features-plan.md). Needs 6DoF.
+    get_plane_detection_mode: Option<FnGetPlaneDetectionMode>,
+    set_plane_detection_mode: Option<FnSetPlaneDetectionMode>,
+    get_plane_detection_changes: Option<FnGetPlaneDetectionChanges>,
+    get_plane_boundary_vertex_count: Option<FnGetPlaneBoundaryVertexCount>,
+    get_plane_boundary_vertex_data: Option<FnGetPlaneBoundaryVertexData>,
 
     // RGB camera (libXREALXRPlugin.so, flat C ABI; see docs/plans/camera-feed-plan.md). Poll path.
     rgb_start_capture: Option<FnStartRgbCameraCapture>,
@@ -1068,6 +1132,23 @@ impl XrealNative {
                 .as_ref()
                 .and_then(|l| l.get(b"SwitchTrackingType\0").ok().map(|s| *s));
 
+            // Plane detection exports (libXREALXRPlugin.so). See docs/plans/ar-features-plan.md.
+            let get_plane_detection_mode: Option<FnGetPlaneDetectionMode> = plugin_lib
+                .as_ref()
+                .and_then(|l| l.get(b"GetPlaneDetectionMode\0").ok().map(|s| *s));
+            let set_plane_detection_mode: Option<FnSetPlaneDetectionMode> = plugin_lib
+                .as_ref()
+                .and_then(|l| l.get(b"SetPlaneDetectionMode\0").ok().map(|s| *s));
+            let get_plane_detection_changes: Option<FnGetPlaneDetectionChanges> = plugin_lib
+                .as_ref()
+                .and_then(|l| l.get(b"GetPlaneDetectionChanges\0").ok().map(|s| *s));
+            let get_plane_boundary_vertex_count: Option<FnGetPlaneBoundaryVertexCount> = plugin_lib
+                .as_ref()
+                .and_then(|l| l.get(b"GetPlaneBoundaryVertexCount\0").ok().map(|s| *s));
+            let get_plane_boundary_vertex_data: Option<FnGetPlaneBoundaryVertexData> = plugin_lib
+                .as_ref()
+                .and_then(|l| l.get(b"GetPlaneBoundaryVertexData\0").ok().map(|s| *s));
+
             // RGB camera exports (libXREALXRPlugin.so). See docs/plans/camera-feed-plan.md.
             let rgb_start_capture: Option<FnStartRgbCameraCapture> = plugin_lib
                 .as_ref()
@@ -1193,6 +1274,11 @@ impl XrealNative {
                 get_tracking_reason,
                 get_tracking_type,
                 switch_tracking_type,
+                get_plane_detection_mode,
+                set_plane_detection_mode,
+                get_plane_detection_changes,
+                get_plane_boundary_vertex_count,
+                get_plane_boundary_vertex_data,
                 rgb_start_capture,
                 rgb_stop_capture,
                 rgb_try_acquire_latest,
@@ -1337,6 +1423,74 @@ impl XrealNative {
             Some(f) => unsafe { f(tracking_type) },
             None => false,
         }
+    }
+
+    // --- Plane detection (libXREALXRPlugin.so; see docs/plans/ar-features-plan.md). Needs a 6DoF session. ---
+
+    /// Whether the plane-detection C ABI resolved (libXREALXRPlugin.so present + symbols).
+    pub fn plane_detection_available(&self) -> bool {
+        self.set_plane_detection_mode.is_some() && self.get_plane_detection_changes.is_some()
+    }
+
+    /// Current `PlaneDetectionMode` flags (`ffi::plane_detection_mode`), or `None` if the export is absent.
+    pub fn plane_detection_mode(&self) -> Option<i32> {
+        self.get_plane_detection_mode.map(|f| unsafe { f() })
+    }
+
+    /// Enable horizontal/vertical plane detection (`ffi::plane_detection_mode` flags). Returns the SDK
+    /// bool (or `false` if the export is absent). Detection needs a live 6DoF session.
+    pub fn set_plane_detection_mode(&self, mode: i32) -> bool {
+        match self.set_plane_detection_mode {
+            Some(f) => unsafe { f(mode) },
+            None => false,
+        }
+    }
+
+    /// Poll the plane added/updated/removed changes since the last call. Copies the data out of the
+    /// SDK's (transient) arrays immediately. `None` when the export is absent.
+    pub fn poll_plane_changes(&self) -> Option<PlaneChanges> {
+        let f = self.get_plane_detection_changes?;
+        let mut changes = ArSubsystemChanges::default();
+        unsafe { f(&mut changes) };
+        let stride = changes.element_size as usize;
+        // A stride smaller than the fields we read means an unexpected layout — bail rather than
+        // read out of bounds (expected element_size == `bounded_plane::ELEMENT_SIZE`).
+        if stride < bounded_plane::TRACKING_STATE + 4 {
+            if changes.added_count != 0 || changes.updated_count != 0 {
+                godot::global::godot_warn!(
+                    "[xreal] plane changes: element_size={stride} < expected {}; skipping parse",
+                    bounded_plane::ELEMENT_SIZE
+                );
+            }
+            // Removed ids are just TrackableIds (16 B), still safe to read.
+            return Some(PlaneChanges {
+                added: Vec::new(),
+                updated: Vec::new(),
+                removed: read_removed_ids(changes.removed_ptr, changes.removed_count),
+            });
+        }
+        Some(PlaneChanges {
+            added: read_planes(changes.added_ptr, changes.added_count, stride),
+            updated: read_planes(changes.updated_ptr, changes.updated_count, stride),
+            removed: read_removed_ids(changes.removed_ptr, changes.removed_count),
+        })
+    }
+
+    /// The boundary polygon (plane-local `Vector2`s) of a detected plane, or empty if unavailable.
+    pub fn plane_boundary(&self, id: TrackableId) -> Vec<[f32; 2]> {
+        let (Some(count_fn), Some(data_fn)) = (
+            self.get_plane_boundary_vertex_count,
+            self.get_plane_boundary_vertex_data,
+        ) else {
+            return Vec::new();
+        };
+        let n = unsafe { count_fn(id) };
+        if n <= 0 {
+            return Vec::new();
+        }
+        let mut verts = vec![[0.0_f32; 2]; n as usize];
+        unsafe { data_fn(id, verts.as_mut_ptr() as *mut c_void) };
+        verts
     }
 
     /// Whether the RGB-camera C ABI is available (libXREALXRPlugin.so present + symbols resolved).

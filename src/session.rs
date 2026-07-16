@@ -576,6 +576,46 @@ impl XrealSession {
             .switch_tracking_type(tracking_type)
     }
 
+    /// Whether the plane-detection C ABI resolved (see `docs/plans/ar-features-plan.md`).
+    pub fn plane_detection_available(&self) -> bool {
+        self.native
+            .lock()
+            .expect("xreal native mutex")
+            .plane_detection_available()
+    }
+
+    /// Current `PlaneDetectionMode` flags, or `None` if the export is absent.
+    pub fn plane_detection_mode(&self) -> Option<i32> {
+        self.native
+            .lock()
+            .expect("xreal native mutex")
+            .plane_detection_mode()
+    }
+
+    /// Enable horizontal/vertical plane detection (needs a live 6DoF session).
+    pub fn set_plane_detection_mode(&self, mode: i32) -> bool {
+        self.native
+            .lock()
+            .expect("xreal native mutex")
+            .set_plane_detection_mode(mode)
+    }
+
+    /// Poll the plane added/updated/removed changes since the last call.
+    pub fn poll_plane_changes(&self) -> Option<crate::native::PlaneChanges> {
+        self.native
+            .lock()
+            .expect("xreal native mutex")
+            .poll_plane_changes()
+    }
+
+    /// Boundary polygon (plane-local `Vector2`s) of a detected plane.
+    pub fn plane_boundary(&self, id: crate::ffi::TrackableId) -> Vec<[f32; 2]> {
+        self.native
+            .lock()
+            .expect("xreal native mutex")
+            .plane_boundary(id)
+    }
+
     /// Current HMD clock in nanoseconds, or `None` while the perception pipe is down.
     pub fn hmd_time_nanos(&self) -> Option<u64> {
         self.native

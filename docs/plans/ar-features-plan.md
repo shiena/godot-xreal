@@ -1,131 +1,157 @@
-# AR features (Plane / Image / Anchor / Mesh): feasibility survey
+# AR features (Plane / Image / Anchor / Mesh): confirmed C ABI + plan
 
-Status: **survey only, nothing implemented.** Findings from reading the vendored **XREAL SDK for
-Unity 3.1.0** package sources + `llvm-nm`/`strings` on the vendored `libXREALXRPlugin.so`
-(2026-07-14). Recommended implementation order: **Plane Detection → Spatial Anchor →
-Image Tracking → Depth Mesh (shelve)**.
+Status: **Plane detection IMPLEMENTED (2026-07-16, compiles clean; on-device verification pending).
+All four features' C ABI is RE-confirmed** (codex, cross-checking the SDK C# `[DllImport]` sources
+against `llvm-nm`/AArch64 disassembly of `libXREALXRPlugin.so`). Implementation order:
+**Plane (done) → Spatial Anchor → Image Tracking → Depth Mesh (shelve)**.
 
-## TL;DR
+Every AR export is a flat C `T` symbol (`LibName = "XREALXRPlugin"`) — the **same dlsym pattern** as
+the RGB camera / hand tracking already in `src/ffi.rs`. All 21 exports confirmed present.
 
-| Feature | Native path | Portable to Godot? | Extra runtime payload |
-|---|---|---|---|
-| Plane Detection | flat C exports in `libXREALXRPlugin.so` | ✅ same pattern as head tracking | none found (likely inside `nr_plugin_6dof`) |
-| Spatial Anchor | flat C exports in `libXREALXRPlugin.so` | ✅ same pattern | `nr_spatial_anchor.aar` (`libnr_spatial_anchor.so`, 12.9 MB) |
-| Image Tracking | flat C exports + a reference-image database | ✅ but DB format needs RE | `nr_image_tracking.aar` (`libnr_image_tracking.so`, 10.9 MB) + `nr_plugins.json` + DB |
-| Depth Mesh | Unity-native `IUnityXRMeshInterface` provider | ⚠️ hard — needs Unity XR SDK emulation | `nr_meshing.aar` (`libnr_meshing.so`, 28.9 MB) |
+**Universal thunk pattern (verified for all 21):** each flat export saves its args, calls
+`TSingleton<InputManager>::GetInstance()` (`0x47a10`, `this`→x0), shifts the caller's args up one
+register (x0→x1, …; x8 sret preserved), and tail-calls the `InputManager::` method. So **the flat-C
+signature = the demangled internal minus the leading `this`**, with identical register usage — exactly
+like `GetHandJointsPose` (`src/hand_tracking.rs`).
 
-**No ARCore anywhere.** `package.json` depends only on `com.unity.xr.management` +
-`com.unity.xr.core-utils`; zero grep hits for `arcore` / `com.google.ar` in `Runtime/` and
-`Editor/`. The "requires AR Foundation" in XREAL's Unity docs is a **C# frontend compile guard**:
-every AR-feature C# file starts with `#if XR_ARFOUNDATION` (planes, images, anchors, mesh
-extensions alike), because the providers extend AR Foundation base classes (`XRPlaneSubsystem`
-etc.). The detection engines are XREAL's own native code; Godot bypasses the C# layer entirely.
+**No ARCore.** `package.json` depends only on `com.unity.xr.management` + `.core-utils`; the
+"requires AR Foundation" is a C# `#if XR_ARFOUNDATION` frontend guard. The detection engines are
+XREAL's own native code; Godot bypasses the C# layer entirely.
 
-## Shared plumbing: the changes struct
+## Shared structs & enums (repr(C), device-confirmed offsets)
 
-Planes, images and anchors all poll the same shape
-(`Runtime/Scripts/Android/AR Features/XREALPlaneSubsystem.cs:86`):
+### `ARSubsystemChanges` — the changes-poll out-struct (**48 bytes**)
+```rust
+#[repr(C)] pub struct ArSubsystemChanges {
+    added_ptr:   *mut c_void, // 0x00 -> [added_count] element structs
+    added_count:   i32,       // 0x08  (pad 0x0c)
+    updated_ptr: *mut c_void, // 0x10 -> [updated_count] element structs
+    updated_count: i32,       // 0x18  (pad 0x1c)
+    removed_ptr: *mut c_void, // 0x20 -> [removed_count] TrackableId  (16 B each, NOT the element!)
+    removed_count: i32,       // 0x28
+    element_size:  i32,       // 0x2c  runtime-validate == 104 / 80 / 72 (plane / image / anchor)
+}
+```
+- **removed** is a `TrackableId[]` (16 B) — all three internals compute `removed_count = bytes >> 4`
+  (÷16), *not* the element stride.
+- Pointers alias InputManager's internal cached vectors → **copy out before the next `Get*Changes`**.
+- `element_size` is a compile-time constant baked in the `.so`; assert it.
 
-```c
-struct ARSubsystemChanges {
-    void* addedPtr;   int addedCount;
-    void* updatedPtr; int updatedCount;
-    void* removedPtr; int removedCount;
-    int   elementSize;   // stride — runtime validation for our repr(C) structs
-};
+### `TrackableId` (**16 B**, by value in 2 GPRs), `Guid` (**16 B**, opaque blob), `UnityPose` (**28 B**)
+```rust
+#[repr(C)] pub struct TrackableId { sub_id_1: u64, sub_id_2: u64 }  // planes: sub_id_1=0, sub_id_2=native id
+#[repr(C)] pub struct Guid { lo: u64, hi: u64 }                     // .NET Guid; persistence key
+#[repr(C)] pub struct UnityPose { position: [f32;3], rotation: [f32;4] }  // pos@0, rot(x,y,z,w)@0xc
+```
+- **`UnityPose` (28 B, non-HFA) is passed INDIRECTLY** on AArch64 (hidden pointer). In Rust `extern
+  "C"`, declare it **by value** — Rust does the indirect pass to match the thunk.
+- `NativeView { data: *mut c_void, count: i32 }` (16 B, 2 GPRs) — image DB init.
+
+### Coordinate systems (all features)
+Returned poses are already **Unity space** (the SDK bakes the NR→Unity flip). Convert to this port's
+display space with the **same conversion the hand tracker uses** (`src/hand_tracking.rs:221`):
+**position `(x, -y, -z)`, quaternion `(x, -y, -z, w)`** (the extra Y-negation compensates this port's
+inverted-Y eye cameras). Boundary vertices already have **Y negated by the SDK**. Axis signs pending
+on-device verification (as head/hand poses were).
+
+## 1. Plane Detection — IMPLEMENTED
+
+Native path is in the already-shipped 6DoF core (`nr_plugin_6dof`) — **no extra `.aar`**. Internally
+gated on `IsFeatureSupported(1)`; no-op until 6DoF perception is up.
+
+| Flat C signature | C# DllImport (`XREALPlaneSubsystem.cs`) | internal symbol |
+|---|---|---|
+| `GetPlaneDetectionMode() -> i32` | `:97` | `0x806c0` |
+| `SetPlaneDetectionMode(i32) -> bool` (masks `& 0x3`) | `:100` | `0x806fc` |
+| `GetPlaneDetectionChanges(*mut ArSubsystemChanges)` | `:103` | `0x80748` |
+| `GetPlaneBoundaryVertexCount(TrackableId) -> i32` | `:106` | `0x80ac8` |
+| `GetPlaneBoundaryVertexData(TrackableId, *mut Vector2)` | `:109` | `0x80b20` |
+
+`PlaneDetectionMode` flags: `1` horizontal, `2` vertical, `3` both (pass 3 to enable). Boundary data
+is `count` × `Vector2(x, -y)` (Y already negated), plane-local.
+
+**`BoundedPlane` element — 104 bytes (`element_size = 0x68`), SDK write offsets (note `center`
+precedes `pose` here, unlike stock AR Foundation):**
+```
+trackable_id @0x00 (16)  | subsumed_by @0x10 (16, ={u64::MAX,u64::MAX})
+center       @0x20 (8)   | pose        @0x28 (28: pos@0x28, rot@0x34, Unity space)
+size         @0x44 (8)   | alignment   @0x4c (4: 100=horizontal / 200=vertical)
+tracking_state @0x50 (4: 2=Tracking) | native_ptr @0x58 (8) | classification @0x60 (4)
 ```
 
-The elements are AR Foundation's public blittable structs (`BoundedPlane`, `XRTrackedImage`,
-`XRAnchor` — layouts in Unity's open ARSubsystems source), so the Rust `repr(C)` mirrors can be
-written from public code, validated at runtime via `elementSize`. Implement the poll once, reuse
-for all three.
+**Shipped implementation:** `src/ffi.rs` (`TrackableId`, `UnityPose`, `ArSubsystemChanges`,
+`bounded_plane` offsets, `plane_detection_mode`, 5 fn-pointer types) → `src/native.rs`
+(`plane_detection_mode` / `set_plane_detection_mode` / `poll_plane_changes` — reads the element array
+by `element_size` stride at the offsets above and copies out immediately; `plane_boundary`) →
+`src/session.rs` wrappers → `src/system.rs` `XrealSystem`: `is_plane_detection_available()`,
+`set_plane_detection_mode(mode)`, `get_plane_detection_mode()`, `poll_planes() -> Dictionary`
+(`{added, updated, removed}`; each plane `{id, transform, center, size, alignment}`),
+`get_plane_boundary(id) -> PackedVector2Array`, `PLANE_NONE/HORIZONTAL/VERTICAL/BOTH` constants.
 
-## Plane Detection (do first)
+**On-device verification TODO:** 6DoF session (not 3DoF — conflicts with the RGB camera); call
+`set_plane_detection_mode(PLANE_BOTH)`; look at a floor/wall; confirm `poll_planes().added` populates,
+`element_size == 104`, plane transforms sit on the real surface (adjust the coordinate flip if not),
+and `alignment` reads 100/200.
 
-C# provider: `XREALPlaneSubsystem.cs` — 113 lines of pure marshalling. Exports (all confirmed
-present in our vendored `libXREALXRPlugin.so`):
+## 2. Spatial Anchor (next)
 
-```
-GetPlaneDetectionMode() -> PlaneDetectionMode
-SetPlaneDetectionMode(PlaneDetectionMode) -> bool     // horizontal / vertical / both
-GetPlaneDetectionChanges(out ARSubsystemChanges)      // elements: BoundedPlane
-GetPlaneBoundaryVertexCount(TrackableId) -> int
-GetPlaneBoundaryVertexData(TrackableId, void* boundary)
-```
+Ships in **`nr_spatial_anchor.aar`** (`libnr_spatial_anchor.so`) — add to `export_plugin.gd` +
+`vendor_xreal_libs`. No `nr_plugins.json` entry (loaded directly once the `.so` is present). Needs
+6DoF. Exports (`XREALAnchorSubsystem.cs`, thunks `0x481c4`–`0x4833c`):
 
-Needs 6DoF. No extra `.aar` found — plane detection appears to live in the already-shipped
-`nr_plugin_6dof`. Godot surface sketch: `XrealSystem.set_plane_detection_mode()` + a
-`planes_changed(added, updated, removed)` signal or an `XrealPlaneTracker` node emitting
-per-plane data (pose, size, boundary polygon).
+| Flat C signature | internal |
+|---|---|
+| `SetAnchorMappingFileDirectory(*const c_char)` | `0x81678` |
+| `SetTrackableAnchorEnabled(bool)` | `0x81680` |
+| `AcquireNewTrackableAnchor(UnityPose, *mut XRAnchor) -> bool` | `0x816b4` |
+| `GetTrackableAnchorChanges(*mut ArSubsystemChanges)` | `0x81fe0` |
+| `SaveTrackableAnchor(TrackableId, *mut Guid) -> bool` | `0x819f8` |
+| `LoadTrackableAnchor(Guid, *mut XRAnchor) -> bool` | `0x81c4c` |
+| `RemoveTrackableAnchor(TrackableId) -> bool` | `0x81fac` |
+| `RemapTrackableAnchor(TrackableId) -> bool` | `0x819c8` |
+| `EstimateTrackableAnchorQuality(TrackableId, UnityPose, *mut i32) -> bool` | `0x818a4` |
 
-## Spatial Anchor (second)
+**`XRAnchor` element — 72 bytes (`element_size = 0x48`):** `trackable_id@0x00`, `pose@0x10`,
+`tracking_state@0x2c`, `native_ptr@0x30`, `session_id(Guid)@0x38`. Quality enum:
+`INSUFFICIENT=0 / SUFFICIENT=1 / GOOD=2`. Init: `SetTrackableAnchorEnabled(true)` →
+`SetAnchorMappingFileDirectory(writable_dir)`; `EstimateTrackableAnchorQuality` ≥ SUFFICIENT before
+`SaveTrackableAnchor`. Saved-anchor enumeration is pure C# file-listing (no native call).
 
-C# provider: `XREALAnchorSubsystem.cs` (+ `XREALAnchorManagerExtension.cs`). All 9 exports
-confirmed in our vendored lib:
+## 3. Image Tracking (third — two extra prereqs)
 
-```
-SetTrackableAnchorEnabled(bool)
-SetAnchorMappingFileDirectory(string path)            // persistence dir (must be writable)
-AcquireNewTrackableAnchor(Pose, out XRAnchor) -> bool // create at pose
-GetTrackableAnchorChanges(out ARSubsystemChanges)     // elements: XRAnchor
-SaveTrackableAnchor(TrackableId, ref Guid) -> bool    // persist -> guid
-LoadTrackableAnchor(Guid, out XRAnchor) -> bool
-RemoveTrackableAnchor(TrackableId) -> bool
-RemapTrackableAnchor(TrackableId) -> bool
-EstimateTrackableAnchorQuality(TrackableId, Pose, ref XREALAnchorEstimateQuality) -> bool
-```
+Ships in **`nr_image_tracking.aar`** (`libnr_image_tracking.so`; matcher
+`libnr_aiimgtrack_algo.so`). Beyond the shared plumbing:
+1. **`assets/nr_plugins.json`** must be packed into the APK (StreamingAssets):
+   `{"perception":{"versions":"diE1v4iRCoXc8G5g","plugins_64":[{"id":"nr_image_tracking_id","path":"libnr_image_tracking.so"}]}}`
+2. **Reference-image DB blob** (first `NativeView` to `InitImageTrackingDatabase`) — baked by Unity from
+   `XRReferenceImageLibrary` (`XREALImageDatabase.cs`); **format still needs RE**, or reuse XREAL's
+   baked file (`Marker~/InterMarker.bin` lead).
 
-Marshalling known: `Pose` = Vector3 + Quaternion (28 B), `Guid` = 16 B by value,
-`TrackableId` = 128-bit. The saved-anchor-id enumeration in C# just lists files in the mapping
-dir (no native call). Needs 6DoF (anchors bind to the SLAM map — check
-`EstimateTrackableAnchorQuality` before saving). Ship `nr_spatial_anchor.aar` like the other 5
-(add to `export_plugin.gd` + `vendor_xreal_libs.ps1`/`.sh`).
+Exports (`XREALImageTrackingSubsystem.cs`): `SetImageTrackingDatabase(u64)` (`0x80c6c`; `0` disables),
+`GetImageTrackingChanges(*mut ArSubsystemChanges)` (`0x80d84`),
+`InitImageTrackingDatabase(NativeView, NativeView) -> u64` (`0x811f4`),
+`GetReferenceImage(u64, i32) -> ManagedReferenceImage` (`0x81294`, **56 B by value → x8 sret**),
+`GetReferenceImageCount(u64) -> i32` (`0x81408`), `ReleaseImageTrackingDatabase(u64)` (`0x81524`).
+**`XRTrackedImage` element — 80 bytes (`0x50`):** `trackable_id@0x00`, `source_image_id(Guid)@0x10`,
+`pose@0x20`, `size@0x3c`, `tracking_state@0x44`, `native_ptr@0x48`.
 
-## Image Tracking (third — one extra RE chunk)
+## 4. Depth Mesh (shelve)
 
-C# provider: `XREALImageTrackingSubsystem.cs` + `XREALImageDatabase.cs`. Exports confirmed:
+Mesh geometry does **not** use flat C exports — it goes through Unity's engine `XRMeshSubsystem` with a
+native provider registered via `IUnityXRMeshInterface` (`InputManager::GetMeshInfos`/`AcquireMesh` take
+engine-supplied allocators). Using it from Godot means emulating that interface (feasible, different
+class of work). Ships in `nr_meshing.aar`. The **only** flat export is per-vertex labels:
+`GetMeshLabels(TrackableId, *mut *mut u8, *mut i32) -> bool` (`0x80564`) → SDK-owned array of
+`NRMeshingVertexSemanticLabel` (`u8` enum: Background=0, Wall=1, Building=2, Floor=4, Ceiling=5,
+Highway=6, Sidewalk=7, Grass=8, Door=10, Table=11). → shelve until Plane/Anchor/Image are done.
 
-```
-InitImageTrackingDatabase / SetImageTrackingDatabase(IntPtr) / ReleaseImageTrackingDatabase
-GetImageTrackingChanges(out ARSubsystemChanges)       // elements: XRTrackedImage
-GetReferenceImage / GetReferenceImageCount
-```
+## Gotchas (all features)
 
-Two extra requirements beyond the shared plumbing:
-
-1. **Reference-image database format** — whatever `SetImageTrackingDatabase(IntPtr)` consumes.
-   `XREALImageDatabase.cs` + `Marker~/InterMarker.bin` are the leads; Unity bakes it at edit
-   time, so Godot needs either a converter or reuse of XREAL's baked file.
-2. **`nr_plugins.json`** — the Editor `MarkerTrackingTool.cs` copies
-   `{"perception":{"versions":"…","plugins_64":[{"id":"nr_image_tracking_id","path":"libnr_image_tracking.so"}]}}`
-   into `StreamingAssets` (= APK `assets/`). That is how the perception pipeline is told to load
-   the feature plugin. In Godot: pack the same file into APK assets (an `.aar` can carry an
-   `assets/` dir, or extend the export plugin).
-
-## Depth Mesh (shelve)
-
-The odd one out. Only supplementary flat export:
-`GetMeshLabels(TrackableId, out label*, out count)` (per-vertex semantic labels,
-`XREALMeshSubsystemExtensions.cs`). The mesh data itself does **not** go through flat C exports:
-
-- Unity uses the **engine-built-in `XRMeshSubsystem`** (`XREALXRLoader.cs:192`,
-  `CreateSubsystem<XRMeshSubsystemDescriptor>("XREAL Meshing")`).
-- `libXREALXRPlugin.so` contains `UnityXRMeshDataAllocator` / `UnityXRMeshInfoAllocator` /
-  `UnityXRMeshDescriptor` symbols → the plugin registers a native mesh provider through Unity's
-  XR SDK plugin interface (`IUnityXRMeshInterface`), and the **Unity engine** pulls meshes via
-  `GetMeshInfos` / `AcquireMesh` callbacks with engine-supplied allocators.
-
-Using it from Godot means emulating that interface: pass a fake `IUnityInterfaces` to
-`UnityPluginLoad`, hand out a fake `IUnityXRMeshInterface`, capture the registered provider
-callback table, then drive `GetMeshInfos`/`AcquireMesh` ourselves with our own allocators. The
-headers (`IUnityXRMeshing.h`) are public, so it is feasible, but it is a different class of work
-from the flat-ABI ports and `UnityPluginLoad` may drag in side effects. The alternative route
-(obfuscated NR proc table via `NRGetProcAddr`) is against this project's approach. → shelve until
-Plane/Anchor/Image are done.
-
-## Open question (all features)
-
-How the feature `.so` get loaded/registered: `nr_plugins.json` covers image tracking, but nothing
-equivalent was found for meshing/anchor in the SDK sources, and `libnr_loader.so` / `libnr_api.so`
-carry no plaintext hints (lower layer is obfuscated). To be RE'd at implementation time — worst
-case `System.loadLibrary` them ourselves and mirror a working Unity APK's layout.
+1. **By-value struct ABI (AAPCS64):** `TrackableId`/`Guid`/`NativeView` (16 B) → 2 GPRs; declare
+   `#[repr(C)]` by value. `UnityPose` (28 B, non-HFA) → **indirect** (declare by value; Rust passes a
+   pointer). `GetReferenceImage` returns 56 B → **x8 sret** (declare `-> ManagedReferenceImage`).
+2. **Validate `element_size`** == 104 / 80 / 72 before trusting `added/updated`.
+3. **`removed` is `TrackableId[]`**, not the element struct (`removed_count = bytes >> 4`).
+4. **Changes pointers alias internal buffers** — copy out before the next poll.
+5. **Coordinate flip:** poses are Unity-space; apply `(x,-y,-z)` / quat `(x,-y,-z,w)` (hand-tracker
+   convention). Verify axis signs on device.

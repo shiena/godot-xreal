@@ -200,6 +200,94 @@ pub type FnTryGetRgbCameraDataPlane =
 /// `DisposeRGBCameraDataHandle(frameHandle)` — free a frame acquired by [`FnTryAcquireLatestImage`].
 pub type FnDisposeRgbCameraDataHandle = unsafe extern "C" fn(i32);
 
+// --- Plane detection (libXREALXRPlugin.so, flat C ABI; see docs/plans/ar-features-plan.md) ---
+//
+// Source: `XREALPlaneSubsystem.cs` `[DllImport]` + demangled `InputManager::*` internals. Needs a
+// 6DoF session. Poses are in **Unity space** (left-handed) and need the same conversion the head/hand
+// poses use (`(x, -y, -z)` / quaternion `(-x, -y, z, w)`).
+
+/// AR Foundation `TrackableId` — a 128-bit id (`m_SubId1`, `m_SubId2`). Passed **by value** (16 bytes,
+/// AArch64 x0/x1) into the boundary/anchor calls.
+#[repr(C)]
+#[derive(Clone, Copy, Default, PartialEq, Eq, Hash, Debug)]
+pub struct TrackableId {
+    pub sub_id_1: u64,
+    pub sub_id_2: u64,
+}
+
+/// Unity `Pose` — position (`Vector3`) then rotation (`Quaternion` x,y,z,w). 28 bytes, no padding.
+#[repr(C)]
+#[derive(Clone, Copy, Default, Debug)]
+pub struct UnityPose {
+    pub position: [f32; 3],
+    pub rotation: [f32; 4],
+}
+
+/// `ARSubsystemChanges` (`XREALPlaneSubsystem.cs:86`) — the added/updated/removed poll shape shared by
+/// plane / image / anchor. The pointers index native arrays of `element_size`-byte elements and are
+/// valid only until the next poll; copy out immediately.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct ArSubsystemChanges {
+    pub added_ptr: *const c_void,
+    pub added_count: i32,
+    pub updated_ptr: *const c_void,
+    pub updated_count: i32,
+    pub removed_ptr: *const c_void,
+    pub removed_count: i32,
+    /// Native element stride — used to walk the arrays by offset (robust to AR Foundation version
+    /// differences in trailing struct fields).
+    pub element_size: i32,
+}
+
+impl Default for ArSubsystemChanges {
+    fn default() -> Self {
+        Self {
+            added_ptr: std::ptr::null(),
+            added_count: 0,
+            updated_ptr: std::ptr::null(),
+            updated_count: 0,
+            removed_ptr: std::ptr::null(),
+            removed_count: 0,
+            element_size: 0,
+        }
+    }
+}
+
+/// Field offsets within this SDK build's `BoundedPlane` element (**device-confirmed write offsets**,
+/// element_size = **104**; note `center` precedes `pose` here, unlike stock AR Foundation):
+/// `[trackableId:16][subsumedById:16][center:8][pose:28][size:8][alignment:4][trackingState:4]…`
+/// `alignment` is `100` (horizontal) / `200` (vertical). See `docs/plans/ar-features-plan.md`.
+pub mod bounded_plane {
+    pub const TRACKABLE_ID: usize = 0x00;
+    pub const CENTER: usize = 0x20;
+    pub const POSE: usize = 0x28;
+    pub const SIZE: usize = 0x44;
+    pub const ALIGNMENT: usize = 0x4c;
+    pub const TRACKING_STATE: usize = 0x50;
+    /// Expected `ArSubsystemChanges::element_size` for a `BoundedPlane` (assert at runtime).
+    pub const ELEMENT_SIZE: i32 = 104;
+}
+
+/// `PlaneDetectionMode` (AR Foundation, `[Flags]`): bit 0 = horizontal, bit 1 = vertical.
+pub mod plane_detection_mode {
+    pub const NONE: i32 = 0;
+    pub const HORIZONTAL: i32 = 1;
+    pub const VERTICAL: i32 = 2;
+    pub const BOTH: i32 = 3;
+}
+
+/// `PlaneDetectionMode GetPlaneDetectionMode()` — the active detection-mode flags.
+pub type FnGetPlaneDetectionMode = unsafe extern "C" fn() -> i32;
+/// `bool SetPlaneDetectionMode(PlaneDetectionMode)` — enable horizontal/vertical detection.
+pub type FnSetPlaneDetectionMode = unsafe extern "C" fn(i32) -> bool;
+/// `void GetPlaneDetectionChanges(out ARSubsystemChanges)` — added/updated/removed `BoundedPlane`s.
+pub type FnGetPlaneDetectionChanges = unsafe extern "C" fn(*mut ArSubsystemChanges);
+/// `int GetPlaneBoundaryVertexCount(TrackableId)` — boundary-polygon vertex count.
+pub type FnGetPlaneBoundaryVertexCount = unsafe extern "C" fn(TrackableId) -> i32;
+/// `void GetPlaneBoundaryVertexData(TrackableId, void* out)` — writes `count` `Vector2`s (plane-local).
+pub type FnGetPlaneBoundaryVertexData = unsafe extern "C" fn(TrackableId, *mut c_void);
+
 /// `GlassesEventData` from `XREALCallbackHandler.cs`, delivered **by value** to the
 /// callback registered with `SetGlassesEventCallback` (libXREALXRPlugin.so export,
 /// C# `[DllImport] SetGlassesEventCallback(XREALGlassesEventCallback)`).

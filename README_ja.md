@@ -48,10 +48,11 @@ XREAL Air 2 Ultra）で実機確認。以下はすべてコミュニティによ
 | **オンスクリーン・タッチコントローラ**（スマホ画面） | ✅（デモ） | アプリ層の Godot UI（`demo/touch_controller.gd`）: カスタマイズ可能なタッチパッド+ボタン→シグナル、スマホ振動ハプティクス。スマホにコントローラ・グラスに 3D を表示（画面分離）。ネイティブ非依存で SDK の `XREALVirtualController` に相当。 |
 | **スマホ 3D ポインター**（ホスト IMU） | ✅（デモ） | スマホを傾けてグラス内に 3D レイを飛ばす（`demo/phone_pointer.gd`）。姿勢は `XrealSystem.poll_controller()` が露出する NRController の生 IMU（`accel`→ピッチ/ロール, `gyro`→ヨー）を GDScript で融合。本機では NRController の**融合ポーズ**も Godot 内蔵 `Input.get_gyroscope()` も空だったため。レイキャストで当たったオブジェクトをハイライト・トリガーで選択、オンスクリーンの左右手切替でレイの原点を切替、gyro ドリフトはバイアス学習+デッドゾーンで抑制。`recenter` で正面リセット。 |
 | **マルチレジューム** — スマホを別アプリに切替えてもグラスのアプリが継続（描画も） | ✅ | **Unity SDK がフローティングウインドウ（復帰ボタン）で行う所を、本移植では代わりに auto-enter Picture-in-Picture で実装。** 背景化するとアプリはスマホ隅の小タイル（pause だが可視）になり、Godot の GL スレッド + Surface が生存 → グラスがライブ描画継続。タイルタップで全画面復帰。`XrealBridge.enableAutoEnterPiP`（`demo/main.gd` から駆動）、manifest 足場 `nr_features=multiResume`+`NRFakeActivity`。**実機検証済み**: submit カウンタが背景化後も進行（PiP 前は凍結）。なぜ PiP か（フローティングウインドウ / foreground service / SurfaceView 付け替えでない理由）は `docs/plans/background-render-plan.md`。（先にフローティング「戻る」ボタンを実装したが*復帰*専用で描画維持できず、PiP に差し替えて除去: `docs/archive/codex-floatingmanager-analysis.md`） |
+| **平面検出** → GDScript | ✅ 移植済み（実機検証待ち） | 水平/垂直の平面検出を `XrealSystem.set_plane_detection_mode()` + `poll_planes()`（追加/更新/削除、ポーズ・サイズ・alignment 付き）+ `get_plane_boundary()` で提供。`libXREALXRPlugin.so` のフラット C export（追加 AAR 不要）、6DoF 必須。4 つの AR 機能の C ABI は RE 確定済み — [`docs/plans/ar-features-plan.md`](docs/plans/ar-features-plan.md)。 |
 
-未実装: アプリカメラの 6DoF 位置、画像/平面トラッキング、空間アンカー、メッシング、
-音声/写真キャプチャ、NRSDK の高レベル知覚機能。（平面/画像/アンカー/メッシュは ARCore・AR Foundation
-不要で移植可能 — 実現性調査: [`docs/plans/ar-features-plan.md`](docs/plans/ar-features-plan.md)。）
+未実装: アプリカメラの 6DoF 位置、画像トラッキング、空間アンカー、メッシング、音声/写真
+キャプチャ。（画像/アンカー/メッシュは ARCore・AR Foundation 不要で移植可能、C ABI も RE 済み —
+[`docs/plans/ar-features-plan.md`](docs/plans/ar-features-plan.md)。）
 
 ## ビルド
 
