@@ -31,6 +31,8 @@ signal mesh_toggled(on: bool)
 signal stream_toggled(on: bool)
 ## Momentary "配置" button — place a spatial anchor at the hand fingertip.
 signal place_pressed()
+## Momentary "画像切替" button — cycle the active image-tracking set.
+signal image_cycle_pressed()
 
 func _ready() -> void:
 	var c: Control = $TouchController
@@ -47,6 +49,7 @@ func _ready() -> void:
 	c.mesh_toggled.connect(mesh_toggled.emit)
 	c.stream_toggled.connect(stream_toggled.emit)
 	c.place_pressed.connect(place_pressed.emit)
+	c.image_cycle_pressed.connect(image_cycle_pressed.emit)
 
 ## Forward a programmatic toggle-state change to the touch controller (see its set_toggle).
 func set_toggle(name: String, on: bool) -> void:

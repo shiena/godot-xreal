@@ -31,24 +31,33 @@ if (-not (Test-Path $tool)) {
     throw "trackableImageTools.exe not found at $tool — run scripts/vendor_xreal_libs.ps1 first."
 }
 
-# Image-list config: one `<guid:N>|<image path>|<width>` line per image (the CLI's --images_config_file).
-$lines = foreach ($img in $m.images) {
-    $imgPath = Join-Path $dir $img.image
-    if (-not (Test-Path $imgPath)) { throw "Image not found: $imgPath (referenced by $($m.blob))" }
-    '{0}|{1}|{2}' -f $img.guid, (Resolve-Path $imgPath).Path, $img.width
-}
-$listPath = Join-Path ([System.IO.Path]::GetTempPath()) "imglist_$([guid]::NewGuid().ToString('n')).txt"
-($lines -join "`n") | Set-Content -NoNewline -Path $listPath -Encoding utf8
+# Normalize to a list of sets (a legacy { blob, images } manifest = one set); build each set's blob.
+$sets = if ($m.PSObject.Properties.Name -contains 'sets') { $m.sets } else { @($m) }
+if (-not $sets -or $sets.Count -eq 0) { throw "No sets in manifest $manifestPath" }
 
-$blobPath = Join-Path $dir $m.blob
-try {
-    & $tool --images_config_file $listPath --save_path $blobPath
-} finally {
-    Remove-Item $listPath -ErrorAction SilentlyContinue
-}
+foreach ($set in $sets) {
+    $setName = if ($set.PSObject.Properties.Name -contains 'name') { $set.name } else { 'default' }
+    if (-not $set.images -or $set.images.Count -eq 0) { Write-Warning "Set '$setName' has no images — skipped."; continue }
 
-if ((Test-Path $blobPath) -and (Get-Item $blobPath).Length -gt 0) {
-    Write-Host "Built $($m.blob) ($((Get-Item $blobPath).Length) bytes) from $($m.images.Count) image(s)." -ForegroundColor Green
-} else {
-    throw "Blob build failed (no output at $blobPath)."
+    # Image-list config: one `<guid:N>|<image path>|<width>` line per image.
+    $lines = foreach ($img in $set.images) {
+        $imgPath = Join-Path $dir $img.image
+        if (-not (Test-Path $imgPath)) { throw "Image not found: $imgPath (set '$setName')" }
+        '{0}|{1}|{2}' -f $img.guid, (Resolve-Path $imgPath).Path, $img.width
+    }
+    $listPath = Join-Path ([System.IO.Path]::GetTempPath()) "imglist_$([guid]::NewGuid().ToString('n')).txt"
+    ($lines -join "`n") | Set-Content -NoNewline -Path $listPath -Encoding utf8
+
+    $blobPath = Join-Path $dir $set.blob
+    try {
+        & $tool --images_config_file $listPath --save_path $blobPath
+    } finally {
+        Remove-Item $listPath -ErrorAction SilentlyContinue
+    }
+
+    if ((Test-Path $blobPath) -and (Get-Item $blobPath).Length -gt 0) {
+        Write-Host "Built set '$setName' -> $($set.blob) ($((Get-Item $blobPath).Length) bytes, $($set.images.Count) image(s))." -ForegroundColor Green
+    } else {
+        throw "Blob build failed for set '$setName' (no output at $blobPath)."
+    }
 }

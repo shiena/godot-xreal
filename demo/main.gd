@@ -406,6 +406,11 @@ func _on_tc_place() -> void:
 	if _anchor_manager:
 		_anchor_manager.place_at_fingertip()
 
+## Phone-menu "画像切替" button → cycle the active image-tracking set (demo/image_manager.gd).
+func _on_tc_image_cycle() -> void:
+	if _image_manager:
+		_image_manager.cycle_set()
+
 ## Create/update the translucent box overlaying one plane's bounds. The plane's `size` is its full
 ## width/height in the plane-local X/Z; `center` offsets the bounds from the pose in that same local
 ## frame. Coordinate convention (local X/Z, Y-up normal) is AR-Foundation-standard but unverified on

@@ -160,8 +160,16 @@ offsets (device-confirmed: element_size=80, id@0x00/source_image_id@0x10/pose@0x
 wrappers → `system.rs` `XrealSystem`: `is_image_tracking_available()`,
 `init_image_database(blob, image_guids, image_sizes) -> handle`, `set_image_database(handle)`,
 `poll_images() -> {added, updated, removed}`, `image_reference_count(handle)`,
-`release_image_database(handle)`). `nr_image_tracking.aar` + `trackableImageTools` are vendored. Still
-TODO: pack `assets/nr_plugins.json`, generate + ship a DB blob, and a demo visualizer.
+`release_image_database(handle)`). `nr_image_tracking.aar` + `trackableImageTools` are vendored, and
+`assets/nr_plugins.json` is packed by the export plugin.
+
+**Multiple sets + switching** (each set = one blob of N images = one AR-Foundation `XRReferenceImageLibrary`):
+`demo/image_tracking/reference.json` lists `sets` (name / blob / images); `demo/image_manager.gd` calls
+`init_image_database` for every set and `set_image_database(handle)` to switch (phone-menu "画像" toggle
+enables the first, "画像切替" cycles). **Editor dock** `addons/godot_xreal/editor/image_db_dock.gd`
+(added by `plugin.gd`, the Godot analog of Unity's `XREALImageLibraryBuildProcessor`): manage sets +
+per-image width/guid and run the vendored `trackableImageTools` to compile each set's blob;
+`scripts/build_image_db.ps1` does the same headless. Blobs/images gitignored, manifest committed.
 
 
 Ships in **`nr_image_tracking.aar`** (`libnr_image_tracking.so`; matcher

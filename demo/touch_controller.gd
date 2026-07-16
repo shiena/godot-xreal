@@ -35,6 +35,8 @@ signal mesh_toggled(on: bool)
 signal stream_toggled(on: bool)
 ## Momentary "配置" button — place a spatial anchor at the hand fingertip now.
 signal place_pressed()
+## Momentary "画像切替" button — cycle the active image-tracking set.
+signal image_cycle_pressed()
 
 ## Backdrop fill. Opaque by default so the phone shows only the controller (the glasses-bound
 ## 3D preview behind it is hidden); set a translucent alpha to let the 3D show through instead.
@@ -48,6 +50,7 @@ const _buttons := {
 	"hand_l": "◀ 左手",
 	"hand_r": "右手 ▶",
 	"place": "配置",
+	"image_cycle": "画像切替",
 }
 
 # Toggle buttons (name -> label). Unlike the momentary buttons above they hold an on/off state
@@ -73,7 +76,7 @@ const _toggles := {
 const _tabs := [
 	{"label": "操作", "items": ["trigger", "grip", "menu", "hand_l", "hand_r"]},
 	{"label": "カメラ", "items": ["camera", "stream"]},
-	{"label": "Air2U", "items": ["place", "plane", "anchor", "image", "mesh"]},
+	{"label": "Air2U", "items": ["place", "plane", "anchor", "image", "image_cycle", "mesh"]},
 ]
 
 # Layout, filled by _layout() from the current size.
@@ -243,6 +246,8 @@ func _press(widget: String, pos: Vector2) -> void:
 			hand_selected.emit(true)
 		"place":
 			place_pressed.emit()
+		"image_cycle":
+			image_cycle_pressed.emit()
 	queue_redraw()
 
 func _release(widget: String) -> void:

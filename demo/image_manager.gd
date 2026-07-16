@@ -1,73 +1,106 @@
 extends Node3D
-## Image-tracking demo / on-device verification (Air 2 Ultra). Driven by the phone-menu "画像" toggle
-## (main.gd). On first enable it loads the reference-image DB blob (built by scripts/build_image_db.ps1
-## from demo/image_tracking/reference.json), activates it, and overlays a world-locked quad on each
-## tracked image at its reported pose/size. Display/print one of the manifest's images for the glasses
-## to see (default: demo/image_tracking/reference.jpg — the XREAL logo).
+## Image-tracking demo / on-device verification (Air 2 Ultra). Driven by the phone-menu "画像" toggle +
+## "画像切替" button (main.gd). On first enable it loads EVERY set in demo/image_tracking/reference.json
+## (each set = one blob built by scripts/build_image_db.* / the editor dock from its images), builds a
+## database per set (XrealSystem.init_image_database), activates the first, and overlays a world-locked
+## quad on each tracked image. "画像切替" cycles the active set (set_image_database). Display/print one of
+## the active set's images for the glasses to see.
 ##
 ## World-locked: child of Main (like the hand joints / anchors), so a marker sits on the real image as
-## the head moves. OFF hides the markers but keeps the database active so ON restores them.
+## the head moves. OFF hides the markers but keeps the databases active so ON restores them.
 
 const MANIFEST := "res://demo/image_tracking/reference.json"
 
 var _system: Object                 # XrealSystem, injected by main.gd via setup()
-var _initialized := false           # database loaded + activated once
+var _initialized := false           # sets loaded + registered once
 var _enabled := false
-var _handle := 0                    # active image-DB handle (0 = none)
+var _sets := []                     # [{name: String, handle: int}] — one registered DB per set
+var _active_set := -1               # index into _sets of the currently-active set
 var _markers := {}                  # image id(String) -> MeshInstance3D
 
 ## Injected once by main.gd after the rig spawns.
 func setup(system: Object) -> void:
 	_system = system
 
-## Toggle image-tracking mode. Returns the resulting state (false if the ABI/blob is unavailable, so
+## Toggle image-tracking mode. Returns the resulting state (false if the ABI/sets are unavailable, so
 ## the phone-menu toggle can flip itself back off).
 func set_enabled(on: bool) -> bool:
 	if not _system or not _system.has_method(&"is_image_tracking_available") or not _system.is_image_tracking_available():
 		return false
 	if on:
 		if not _initialized:
-			if not _load_database():
+			if not _load_sets():
 				return false
 			_initialized = true
 		_enabled = true
 		visible = true
 	else:
 		_enabled = false
-		visible = false  # keep the DB active; just hide the markers
+		visible = false  # keep the databases active; just hide the markers
 	return _enabled
 
-## Load the manifest + blob, build the tracking database, and activate it.
-func _load_database() -> bool:
-	if not FileAccess.file_exists(MANIFEST):
-		push_warning("[image] manifest missing: %s" % MANIFEST)
+## Load every set in the manifest, register a database for each, and activate the first.
+func _load_sets() -> bool:
+	var data := _read_manifest()
+	var sets: Array = data.get("sets", [])
+	# Backward-compat: a bare { blob, images } manifest is treated as one "default" set.
+	if sets.is_empty() and data.has("images"):
+		sets = [{"name": "default", "blob": data.get("blob", "reference.bin"), "images": data["images"]}]
+	for s in sets:
+		var handle := _init_set(s)
+		if handle != 0:
+			_sets.append({"name": str(s.get("name", "?")), "handle": handle})
+	if _sets.is_empty():
+		push_warning("[image] no image sets loaded (build the blobs — editor dock / build_image_db)")
 		return false
-	var mf := FileAccess.open(MANIFEST, FileAccess.READ)
-	var data = JSON.parse_string(mf.get_as_text())
-	mf.close()
-	if typeof(data) != TYPE_DICTIONARY:
-		push_warning("[image] bad manifest %s" % MANIFEST)
-		return false
-	var blob_path := MANIFEST.get_base_dir().path_join(str(data.get("blob", "reference.bin")))
+	_activate(0)
+	print("[image] %d set(s) loaded; active='%s'" % [_sets.size(), _sets[0].name])
+	return true
+
+## Build + register one set's database. Returns its handle (0 on failure).
+func _init_set(s: Dictionary) -> int:
+	var name := str(s.get("name", "?"))
+	var blob_path := MANIFEST.get_base_dir().path_join(str(s.get("blob", "")))
 	if not FileAccess.file_exists(blob_path):
-		push_warning("[image] DB blob missing: %s — run scripts/build_image_db.ps1" % blob_path)
-		return false
+		push_warning("[image] set '%s' blob missing: %s — build it (editor dock / build_image_db)" % [name, blob_path])
+		return 0
 	var bf := FileAccess.open(blob_path, FileAccess.READ)
 	var blob := bf.get_buffer(bf.get_length())
 	bf.close()
 	var guids := PackedStringArray()
 	var sizes := PackedVector2Array()
-	for img in data.get("images", []):
+	for img in s.get("images", []):
 		guids.append(str(img.get("guid", "")))
 		var w := float(img.get("width", 0.1))
 		sizes.append(Vector2(w, w))
-	_handle = _system.init_image_database(blob, guids, sizes)
-	if _handle == 0:
-		push_warning("[image] init_image_database failed (needs 6DoF + nr_plugins.json + backend)")
-		return false
-	_system.set_image_database(_handle)
-	print("[image] database ready handle=%d refs=%d images=%d" % [_handle, _system.image_reference_count(_handle), guids.size()])
-	return true
+	var handle: int = _system.init_image_database(blob, guids, sizes)
+	if handle == 0:
+		push_warning("[image] set '%s' init_image_database failed (needs 6DoF + nr_plugins.json + backend)" % name)
+	return handle
+
+## Activate a set (switch the tracking DB) and clear the previous set's markers.
+func _activate(index: int) -> void:
+	if index < 0 or index >= _sets.size():
+		return
+	_active_set = index
+	_system.set_image_database(_sets[index].handle)
+	_clear_markers()  # a different set tracks different images
+	print("[image] active set -> '%s' (handle=%d)" % [_sets[index].name, _sets[index].handle])
+
+## Cycle to the next set (phone-menu "画像切替" button). No-op with 0/1 set.
+func cycle_set() -> void:
+	if _sets.size() <= 1:
+		return
+	_activate((_active_set + 1) % _sets.size())
+
+func _read_manifest() -> Dictionary:
+	if not FileAccess.file_exists(MANIFEST):
+		push_warning("[image] manifest missing: %s" % MANIFEST)
+		return {}
+	var mf := FileAccess.open(MANIFEST, FileAccess.READ)
+	var data = JSON.parse_string(mf.get_as_text())
+	mf.close()
+	return data if typeof(data) == TYPE_DICTIONARY else {}
 
 func _process(_delta: float) -> void:
 	if not _enabled or not _system:
@@ -120,9 +153,15 @@ func _remove_marker(id: String) -> void:
 		mi.queue_free()
 		_markers.erase(id)
 
+func _clear_markers() -> void:
+	for id in _markers:
+		(_markers[id] as MeshInstance3D).queue_free()
+	_markers.clear()
+
 func _exit_tree() -> void:
-	# Deactivate + free the database on clean shutdown.
-	if _handle != 0 and _system:
+	# Deactivate + free every registered database on clean shutdown.
+	if _system and not _sets.is_empty():
 		_system.set_image_database(0)
-		_system.release_image_database(_handle)
-		_handle = 0
+		for s in _sets:
+			_system.release_image_database(s.handle)
+		_sets.clear()
