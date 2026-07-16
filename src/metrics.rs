@@ -36,6 +36,15 @@ type FnCreate = unsafe extern "C" fn(*mut u64) -> i32;
 type FnOneHandle = unsafe extern "C" fn(u64) -> i32;
 type FnGetI32 = unsafe extern "C" fn(u64, *mut i32) -> i32;
 type FnGetU64 = unsafe extern "C" fn(u64, *mut u64) -> i32;
+type FnSetFeature = unsafe extern "C" fn(u64, i32, i32) -> i32;
+
+/// `NRMetricsFeature` bitmask values (RE'd from the XREAL Unity SDK's exported
+/// `EnableTearedFrameCount` / `EnableRenderBackColor`, which forward to
+/// `DisplayManager::EnableTearedFrameCount(bool)` @libXREALXRPlugin.so:0x6dbd0 →
+/// `NativeMetrics::SetFeatureEnable(1, enable)` and `EnableRenderBackColor` → `SetFeatureEnable(2, ...)`).
+/// `TearedFrameCount` is a metric we read; `RenderBackColor` (2) is a debug *rendering* feature, not a
+/// metric, so we do not enable it. Composite time / latency are not feature-gated.
+const NR_METRICS_FEATURE_TEARED_FRAME_COUNT: i32 = 1;
 
 struct Metrics {
     _lib: Library, // keep libnr_loader.so mapped for the fn-pointers' lifetime
@@ -93,6 +102,14 @@ fn start_locked(slot: &mut Option<Metrics>) -> String {
             return format!("[xreal] NRMetricsStart failed (result={sr})");
         }
 
+        // Enable the TearedFrameCount feature so `NRMetricsGetTearedFrameCount` returns a real value
+        // instead of an error — the same thing the Unity SDK does via its exported
+        // `EnableTearedFrameCount(true)` (→ `NativeMetrics::SetFeatureEnable(1, true)`).
+        let set_feature_enable = lib.get::<FnSetFeature>(b"NRMetricsSetFeatureEnable\0").ok().map(|f| *f);
+        let teared_feature = set_feature_enable
+            .map(|f| f(handle, NR_METRICS_FEATURE_TEARED_FRAME_COUNT, 1))
+            .unwrap_or(-1);
+
         *slot = Some(Metrics {
             stop: lib.get::<FnOneHandle>(b"NRMetricsStop\0").ok().map(|f| *f),
             destroy: lib.get::<FnOneHandle>(b"NRMetricsDestroy\0").ok().map(|f| *f),
@@ -128,7 +145,9 @@ fn start_locked(slot: &mut Option<Metrics>) -> String {
             _lib: lib,
             handle,
         });
-        format!("[xreal] render metrics started (handle={handle:#x})")
+        format!(
+            "[xreal] render metrics started (handle={handle:#x}, TearedFrameCount enable={teared_feature})"
+        )
     }
 }
 
