@@ -8,8 +8,9 @@
 //! Symbols are resolved once and the owning [`libloading::Library`] handles are kept
 //! alive in the struct for the lifetime of the resolved function pointers.
 
-// Desktop never loads the `.so`, so this FFI module's items are dead there; keep the lint on Android.
-#![cfg_attr(not(target_os = "android"), allow(dead_code))]
+// FFI module: retains RE bindings/probes kept for completeness (unused on the active path), and
+// desktop never loads the `.so`. Allow dead code on both targets.
+#![allow(dead_code)]
 
 use libloading::Library;
 

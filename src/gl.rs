@@ -12,8 +12,9 @@
 //! On desktop the `dlopen` fails and every entry point returns `None`/does nothing, matching the
 //! rest of the crate's "native libs absent → no-op" behaviour.
 
-// Desktop has no `.so` — every entry point here is a dummy no-op there; keep the lint on Android.
-#![cfg_attr(not(target_os = "android"), allow(dead_code))]
+// GL helpers: some entry points (e.g. delete_texture) are retained for completeness/unused, and on
+// desktop every entry point is a dummy no-op. Allow dead code on both targets.
+#![allow(dead_code)]
 
 use std::ffi::c_void;
 use std::sync::atomic::{AtomicU32, Ordering};

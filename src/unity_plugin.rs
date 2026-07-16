@@ -17,8 +17,9 @@
 //! **RE / unverified**, recovered from `libXREALXRPlugin.so` AArch64 disassembly and
 //! relocation tables; see `docs/reference/reverse-engineering.md`.
 
-// Desktop never drives the Unity provider path, so these items are dead there; keep the lint on Android.
-#![cfg_attr(not(target_os = "android"), allow(dead_code))]
+// Retains RE'd Unity provider layouts + the shelved texture-provider experiment as reference (unused
+// on the active path), and desktop never drives this path. Allow dead code on both targets.
+#![allow(dead_code)]
 
 use std::ffi::{c_char, c_void, CStr};
 use std::ptr;

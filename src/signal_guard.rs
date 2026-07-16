@@ -83,8 +83,9 @@
 //! may terminate the process before our handler runs.  The code-patch is the
 //! primary mechanism.
 
-// The code patches / offsets here run only on Android; on desktop they are dead. Keep the lint on Android.
-#![cfg_attr(not(target_os = "android"), allow(dead_code, unused_imports))]
+// The patches/offsets here run only on Android; this module also retains the (now unused on Android)
+// SIGSEGV-handler mitigation path as reference — `patch_*` superseded it. Allow dead code on both.
+#![allow(dead_code, unused_imports)]
 
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
@@ -111,21 +112,21 @@ const OFFSET_CRASH: usize = 0x8e238; // ldr x8, [x20, #0x8] — actual faulting 
 const OFFSET_CRASH_M4: usize = 0x8e234; // PC as reported by libsigchain (−4 offset)
 const OFFSET_EPILOGUE: usize = 0x8e3ec; // ldp x0,x1,[sp,#0x50]; … ret
 
-/// AArch64 trampoline that adds a null check before `NativeGlasses::GetActionData`.
-///
-/// Called via a patched BL at `HandleActionCallback+20` (lib+0x849bc).
-/// This REPLACES `ldr x0, [x0, #0x60]` (the original load of NativeGlasses* from
-/// SessionManager+0x60).
-///
-/// ABI contract at the patch site (0x849bc, before our wrapper):
-///   x0  = SessionManager* (HandleActionCallback's `this`)
-///   x1  = action_id
-///   x30 = 0x849c0 (HandleActionCallback+0x18, the `mov x19, x1` instruction)
-///
-/// Non-null path: ret → x30=0x849c0; `mov x19,x1; bl GetActionData; mov x21,x0` run normally.
-/// Null path: x30 += 12 → 0x849cc (= `adrp x0, 0x2b000` in LogHelper setup).
-///   Skipped: `mov x19,x1` (0x849c0), `bl GetActionData` (0x849c4), `mov x21,x0` (0x849c8).
-///   x21 = 0 prevents stale action-data in the subsequent LogHelper::Info call.
+// AArch64 trampoline that adds a null check before `NativeGlasses::GetActionData`.
+//
+// Called via a patched BL at `HandleActionCallback+20` (lib+0x849bc).
+// This REPLACES `ldr x0, [x0, #0x60]` (the original load of NativeGlasses* from
+// SessionManager+0x60).
+//
+// ABI contract at the patch site (0x849bc, before our wrapper):
+//   x0  = SessionManager* (HandleActionCallback's `this`)
+//   x1  = action_id
+//   x30 = 0x849c0 (HandleActionCallback+0x18, the `mov x19, x1` instruction)
+//
+// Non-null path: ret → x30=0x849c0; `mov x19,x1; bl GetActionData; mov x21,x0` run normally.
+// Null path: x30 += 12 → 0x849cc (= `adrp x0, 0x2b000` in LogHelper setup).
+//   Skipped: `mov x19,x1` (0x849c0), `bl GetActionData` (0x849c4), `mov x21,x0` (0x849c8).
+//   x21 = 0 prevents stale action-data in the subsequent LogHelper::Info call.
 #[cfg(target_os = "android")]
 core::arch::global_asm!(
     ".global null_safe_handle_action",
@@ -156,7 +157,7 @@ extern "C" {
 pub fn patch_handle_action_callback(lib_base: usize) {
     let patch_addr = lib_base + 0x849bc; // ldr x0,[x0,#0x60] = load NativeGlasses*
 
-    let wrapper_addr = null_safe_handle_action as usize;
+    let wrapper_addr = null_safe_handle_action as *const () as usize;
     let byte_offset = wrapper_addr as i64 - patch_addr as i64;
     let word_offset = byte_offset >> 2;
     let page_size: usize = 4096;
@@ -386,7 +387,7 @@ pub fn install(lib_base: usize) {
         use libc::{SA_NODEFER, SA_RESTART, SA_SIGINFO};
         unsafe {
             let mut sa: libc::sigaction = std::mem::zeroed();
-            sa.sa_sigaction = sigsegv_handler as usize;
+            sa.sa_sigaction = sigsegv_handler as *const () as usize;
             sa.sa_flags = SA_SIGINFO | SA_RESTART | SA_NODEFER;
             libc::sigemptyset(&mut sa.sa_mask);
             let ret = libc::sigaction(libc::SIGSEGV, &sa, std::ptr::null_mut());
