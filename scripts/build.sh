@@ -67,13 +67,13 @@ adbx() { if [ -n "$DEVICE" ]; then "$ADB" -s "$DEVICE" "$@"; else "$ADB" "$@"; f
 
 # The XREAL runtime pieces the APK must bundle. They are NOT in this repo — you vendor them from
 # the XREAL SDK for Unity (see README / the guide printed below):
-#   - 8 .so in jniLibs/arm64-v8a (packed via godot_xreal.gdextension [dependencies])
+#   - 3 core .so in jniLibs/arm64-v8a (packed via godot_xreal.gdextension [dependencies])
 #   - 5 .aar + the compiled xreal_bridge.jar in addons/godot_xreal/android (shipped into the APK
-#     by the addon's export_plugin.gd: Java/JNI layer + manifest merge)
+#     by the addon's export_plugin.gd: Java/JNI layer + manifest merge; the aars also carry the
+#     NR native libs, which Gradle merges into the APK)
 # This checks both before an export and stops with instructions if anything is missing; it never
 # downloads anything.
-REQUIRED_LIBS=(libXREALNativeSessionManager.so libXREALXRPlugin.so libVulkanSupport.so \
-               libnr_api.so libnr_libusb.so libnr_loader.so libnr_plugin_6dof.so libnr_rgb_camera.so)
+REQUIRED_LIBS=(libXREALNativeSessionManager.so libXREALXRPlugin.so libVulkanSupport.so)
 REQUIRED_ADDON_FILES=(nr_loader.aar nr_api.aar nr_common.aar \
                       GlassesDisplayPlugEvent-2.4.2.aar Log-Control-1.2.aar xreal_bridge.jar)
 require_vendored_libs() {
@@ -92,8 +92,9 @@ Vendor them once from a local copy of the package (nothing is downloaded):
   1. Obtain the XREAL SDK for Unity package `com.xreal.xr.tar.gz` and extract it (-> a `package/` dir).
   2. Run  pwsh scripts/vendor_xreal_libs.ps1 -XrealPackage <...>/package
      which stages everything:
-       - 8 .so  -> jniLibs/arm64-v8a/          (3 core libs copied + 5 NR libs extracted from the .aar)
-       - 5 .aar -> addons/godot_xreal/android/ (shipped by the addon's export plugin)
+       - 3 core .so -> jniLibs/arm64-v8a/      (dlopen'd by the GDExtension)
+       - 5 .aar -> addons/godot_xreal/android/ (shipped by the addon's export plugin; they also
+         carry the NR native libs, which Gradle merges into the APK)
        - xreal_bridge.jar -> addons/godot_xreal/android/ (compiled from the committed Java source;
          needs a JDK `javac` + an Android SDK platform android.jar)
 See the README "Prerequisite: vendor the XREAL runtime libraries" and docs/build-and-release.md.

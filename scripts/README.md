@@ -12,8 +12,9 @@ workarounds that bite every time — the Godot export hang, and the force-stop-b
 requirement (relaunching a not-fully-dead instance leaves the glasses black).
 
 `vendor_xreal_libs.ps1` is the one-time prerequisite: it stages every XREAL runtime piece
-(8 `.so` → `jniLibs/arm64-v8a/`, 5 `.aar` + the compiled `xreal_bridge.jar` →
-`addons/godot_xreal/android/`) out of a local copy of the SDK package.
+(3 core `.so` → `jniLibs/arm64-v8a/`, 5 `.aar` + the compiled `xreal_bridge.jar` →
+`addons/godot_xreal/android/`; the aars also carry the NR native libs into the APK) out of a
+local copy of the SDK package.
 
 ## Prerequisites (assumed installed and on PATH)
 
@@ -22,7 +23,7 @@ requirement (relaunching a not-fully-dead instance leaves the glasses black).
 - **Godot 4.7-stable** (console binary) — template match; 4.8.dev fails with a version mismatch.
   The scripts call `godot` by default; override with `-Godot` / `$env:GODOT` (PS) or `GODOT=…` (sh)
   if it isn't on PATH under that name.
-- **XREAL runtime pieces vendored** — the 8 native `.so` in `jniLibs/arm64-v8a/` plus the 5 `.aar`
+- **XREAL runtime pieces vendored** — the 3 core `.so` in `jniLibs/arm64-v8a/` plus the 5 `.aar`
   and the compiled `xreal_bridge.jar` in `addons/godot_xreal/android/`; none are in the repo.
   `vendor_xreal_libs.ps1 -XrealPackage <…>/package` stages all of them from a local copy of the
   XREAL SDK for Unity (`com.xreal.xr.tar.gz`). The `-Export` / `--export` stage checks for them and

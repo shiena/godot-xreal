@@ -4,10 +4,13 @@
     Vendor everything the Android export needs out of the Unity `com.xreal.xr` package,
     in one go (all destinations are git-ignored):
 
-      - 3 core .so       -> jniLibs/arm64-v8a/           (copied; dlopen'd by the GDExtension)
-      - 5 NR .so         -> jniLibs/arm64-v8a/           (extracted from the package's .aar)
+      - 3 core .so       -> jniLibs/arm64-v8a/           (copied; dlopen'd by the GDExtension,
+                                                          packed via godot_xreal.gdextension)
       - 5 .aar           -> addons/godot_xreal/android/  (shipped into the APK by export_plugin.gd:
-                                                          Java/JNI layer + manifest merge)
+                                                          Java/JNI layer + manifest merge; Gradle
+                                                          also merges each .aar's jni/arm64-v8a/*.so
+                                                          — the NR libs — into the APK, so they are
+                                                          NOT extracted separately)
       - xreal_bridge.jar -> addons/godot_xreal/android/  (compiled from the committed Java source;
                                                           needs a JDK `javac` + an Android SDK
                                                           platform `android.jar`)
@@ -57,31 +60,11 @@ foreach ($lib in $coreLibs) {
     Write-Host "so   $lib"
 }
 
-# --- 2) 5 NR .so -> jniLibs/arm64-v8a, extracted from the package's .aar (an .aar is a zip;
-#        the libs live at jni/arm64-v8a/<lib> inside it)
-$aarLibs = @{
-    'nr_api.aar'    = @('libnr_api.so', 'libnr_plugin_6dof.so', 'libnr_rgb_camera.so')
-    'nr_loader.aar' = @('libnr_loader.so')
-    'nr_common.aar' = @('libnr_libusb.so')   # also holds many QNN/SNPE libs — those are NOT needed
-}
-Add-Type -AssemblyName System.IO.Compression.FileSystem
-foreach ($aar in $aarLibs.Keys) {
-    $src = Join-Path $srcAndroid $aar
-    if (-not (Test-Path $src)) { Write-Warning "Missing in package: $aar"; continue }
-    $zip = [System.IO.Compression.ZipFile]::OpenRead($src)
-    try {
-        foreach ($lib in $aarLibs[$aar]) {
-            $entry = $zip.GetEntry("jni/arm64-v8a/$lib")
-            if (-not $entry) { Write-Warning "${aar}: entry jni/arm64-v8a/$lib not found"; continue }
-            [System.IO.Compression.ZipFileExtensions]::ExtractToFile($entry, (Join-Path $jniDir $lib), $true)
-            Write-Host "so   $lib  (from $aar)"
-        }
-    }
-    finally { $zip.Dispose() }
-}
-
-# --- 3) 5 .aar -> addons/godot_xreal/android (shipped by export_plugin.gd _get_android_libraries;
-#        the exact file names are hardcoded there).
+# --- 2) 5 .aar -> addons/godot_xreal/android (shipped by export_plugin.gd _get_android_libraries;
+#        the exact file names are hardcoded there). Besides the Java/JNI layer + manifest merge,
+#        the aars carry the NR native libs at jni/arm64-v8a/ (nr_api.aar: libnr_api.so /
+#        libnr_plugin_6dof.so / libnr_rgb_camera.so, nr_loader.aar: libnr_loader.so,
+#        nr_common.aar: libnr_libusb.so) — Gradle merges those into the APK.
 #
 # Log-Control is REQUIRED whenever GlassesDisplayPlugEvent ships: its GlassesInitProvider
 # (a ContentProvider that auto-runs at app startup) references com.xreal.logcontrol.LogControl,
@@ -101,7 +84,7 @@ foreach ($aar in $aars) {
     Write-Host "aar  $aar"
 }
 
-# --- 4) xreal_bridge.jar -> addons/godot_xreal/android, compiled from the committed Java source.
+# --- 3) xreal_bridge.jar -> addons/godot_xreal/android, compiled from the committed Java source.
 #        Needs javac/jar (a JDK) and an Android SDK platform android.jar for the classpath.
 $jarOut = Join-Path $addonDir 'xreal_bridge.jar'
 if (-not $SkipJar) {
@@ -147,7 +130,7 @@ if (-not $SkipJar) {
 
 # --- Final verification: everything the export needs (build.ps1/build.sh check the same lists).
 $missing = @()
-foreach ($lib in ($coreLibs + ($aarLibs.Values | ForEach-Object { $_ }))) {
+foreach ($lib in $coreLibs) {
     if (-not (Test-Path (Join-Path $jniDir $lib))) { $missing += "jniLibs/arm64-v8a/$lib" }
 }
 foreach ($f in ($aars + 'xreal_bridge.jar')) {
@@ -160,5 +143,5 @@ if ($missing) {
     $missing | ForEach-Object { Write-Host "  - $_" }
     exit 1
 }
-Write-Host "Done: 8 .so -> jniLibs/arm64-v8a, 5 .aar + xreal_bridge.jar -> addons/godot_xreal/android." -ForegroundColor Green
-Write-Host "(nractivitylife*.aar deliberately excluded — Unity-only launcher.)"
+Write-Host "Done: 3 core .so -> jniLibs/arm64-v8a, 5 .aar + xreal_bridge.jar -> addons/godot_xreal/android." -ForegroundColor Green
+Write-Host "(NR .so ship via the .aar; nractivitylife*.aar deliberately excluded — Unity-only launcher.)"

@@ -68,31 +68,27 @@ pwsh scripts/vendor_xreal_libs.ps1 -XrealPackage <…>/package
 このスクリプトが Android エクスポートに必要なものをすべて配置します（配置先はすべて git 管理外。
 ダウンロードは行わず、パッケージは自分で用意します）:
 
-**8 個の `.so` → `jniLibs/arm64-v8a/`** — `godot_xreal.gdextension` の `[dependencies]` 経由で
-APK に同梱され、起動時に `dlopen` されます:
+**コア 3 個の `.so` → `jniLibs/arm64-v8a/`** — `Runtime/Plugins/Android/arm64-v8a/` からコピー。
+`godot_xreal.gdextension` の `[dependencies]` 経由で APK に同梱され、起動時に `dlopen` されます:
 
-| `.so` | コピー元（`package/` 内） |
+| `.so` | 役割 |
 |---|---|
-| `libXREALNativeSessionManager.so` | `Runtime/Plugins/Android/arm64-v8a/`（そのままコピー） |
-| `libXREALXRPlugin.so` | `Runtime/Plugins/Android/arm64-v8a/`（そのままコピー） |
-| `libVulkanSupport.so` | `Runtime/Plugins/Android/arm64-v8a/`（そのままコピー） |
-| `libnr_api.so` | `nr_api.aar` 内 `jni/arm64-v8a/` から抽出（`.aar` は zip） |
-| `libnr_plugin_6dof.so` | `nr_api.aar` から抽出 |
-| `libnr_rgb_camera.so` | `nr_api.aar` から抽出 |
-| `libnr_loader.so` | `nr_loader.aar` から抽出 |
-| `libnr_libusb.so` | `nr_common.aar` から抽出 |
+| `libXREALNativeSessionManager.so` | セッション / ヘッドポーズの C ABI |
+| `libXREALXRPlugin.so` | XR-plugin コンポジタ / 表示の C ABI |
+| `libVulkanSupport.so` | 上記2つが必要とするサポート lib |
 
 **5 個の `.aar` → `addons/godot_xreal/android/`** — アドオンのエクスポートプラグイン
 （`export_plugin.gd`）が APK に取り込みます: グラスに必要な Java/JNI 層+manifest エントリを
-担います。コピー元はすべて `Runtime/Plugins/Android/` 直下:
+担います。さらに NR 系ネイティブ lib（`jni/arm64-v8a/*.so`）も内包しており、Gradle が APK に
+マージするため**別途抽出は不要**です。コピー元はすべて `Runtime/Plugins/Android/` 直下:
 
-| `.aar` | 役割 |
-|---|---|
-| `nr_loader.aar` | NR ローダの Java 層 |
-| `nr_api.aar` | NR API の Java 層 |
-| `nr_common.aar` | NR 共通層 |
-| `GlassesDisplayPlugEvent-2.4.2.aar` | グラス検出 `GlassesInitProvider` |
-| `Log-Control-1.2.aar` | 上記が参照する `LogControl` — **必須**（欠けると Godot 起動前にクラッシュ） |
+| `.aar` | 役割 | APK に届くネイティブ lib |
+|---|---|---|
+| `nr_loader.aar` | NR ローダの Java 層 | `libnr_loader.so` |
+| `nr_api.aar` | NR API の Java 層 | `libnr_api.so` / `libnr_plugin_6dof.so` / `libnr_rgb_camera.so` |
+| `nr_common.aar` | NR 共通層 | `libnr_libusb.so`（+ QNN/SNPE 系） |
+| `GlassesDisplayPlugEvent-2.4.2.aar` | グラス検出 `GlassesInitProvider` | — |
+| `Log-Control-1.2.aar` | 上記が参照する `LogControl` — **必須**（欠けると Godot 起動前にクラッシュ） | — |
 
 **`xreal_bridge.jar` → `addons/godot_xreal/android/`** — SDK 由来では*なく*、コミット済みの
 Java ソース（`addons/godot_xreal/android/src/`）からスクリプトがビルド。JDK（`javac`）と
@@ -100,14 +96,15 @@ Android SDK の platform `android.jar` が必要です（ビルド済み jar が
 スキップ可）。
 
 **`nractivitylife*.aar` はコピー禁止** — ランチャーが Unity 専用のため Godot アプリでは起動不能に
-なります。`nr_common.aar` 内の QNN/SNPE 系 `.so` も不要です。
+なります。（`nr_common.aar` 内の QNN/SNPE 系 `.so` は本拡張では未使用ですが、`.aar` ごと APK に
+入ります。）
 
 ### ビルド & インストール
 
 ツールチェーンが `PATH` にある前提（Rust の `aarch64-linux-android` ターゲット、`cargo-ndk`、
 `ANDROID_NDK_HOME`、Godot 4.7-stable バイナリ、`adb`）で、`scripts/build.sh`（または `scripts/build.ps1`）
 が Android の4段階 — cargo-ndk ビルド → Godot APK エクスポート → `adb install` → 起動 — をまとめて
-実行します。実行前に上記の事前準備（8 個の `.so` とアドオンの `.aar`/`.jar` の両方）を再チェックし、
+実行します。実行前に上記の事前準備（コア 3 個の `.so` とアドオンの `.aar`/`.jar` の両方）を再チェックし、
 欠けていれば同じ入手手順を表示します。
 
 ```bash
