@@ -21,6 +21,10 @@ signal touchpad_moved(value: Vector2)
 signal touchpad_released()
 ## Right/left hand toggle for the 3D pointer beam origin (true = right hand).
 signal hand_selected(is_right: bool)
+## Camera preview toggle flipped (true = on). Independent of the plane toggle.
+signal camera_toggled(on: bool)
+## Plane-detection toggle flipped (true = on). Independent of the camera toggle.
+signal plane_toggled(on: bool)
 
 ## Backdrop fill. Opaque by default so the phone shows only the controller (the glasses-bound
 ## 3D preview behind it is hidden); set a translucent alpha to let the 3D show through instead.
@@ -35,13 +39,22 @@ const _buttons := {
 	"hand_r": "右手 ▶",
 }
 
+# Toggle buttons (name -> label). Unlike the momentary buttons above they hold an on/off state
+# (highlighted while on) and fire once on press. Used for the camera / plane-detection switches;
+# main.gd drives the actual XrealSystem calls and can push state back via set_toggle().
+const _toggles := {
+	"camera": "カメラ",
+	"plane": "平面検出",
+}
+
 # Layout, filled by _layout() from the current size.
 var _pad_rect: Rect2
 var _button_rects := {}
 
 # Live state.
 var _finger_widget := {}      # touch index -> widget name ("touchpad" / button name)
-var _pressed := {}            # widget name -> bool (for highlight)
+var _pressed := {}            # widget name -> bool (momentary press highlight)
+var _toggle_on := {}          # toggle name -> bool (persistent on/off)
 var _pad_value := Vector2.ZERO
 
 func _ready() -> void:
@@ -55,7 +68,9 @@ func _ready() -> void:
 
 func _layout() -> void:
 	var s := size
-	var n := _buttons.size()
+	# Momentary buttons first, then the toggles, in one stacked column.
+	var names: Array = _buttons.keys() + _toggles.keys()
+	var n := names.size()
 	_button_rects.clear()
 	if s.y > s.x:
 		# Portrait: touchpad on top, buttons stacked below.
@@ -68,7 +83,7 @@ func _layout() -> void:
 		var bw := s.x * 0.82
 		var bx := (s.x - bw) * 0.5
 		var by := top
-		for name in _buttons:
+		for name in names:
 			_button_rects[name] = Rect2(bx, by, bw, bh)
 			by += bh + gap
 	else:
@@ -80,7 +95,7 @@ func _layout() -> void:
 		var gap := s.y * 0.04
 		var bh := minf(s.y * 0.16, (s.y * 0.94 - gap * (n - 1)) / n)
 		var by := (s.y - (bh * n + gap * (n - 1))) * 0.5
-		for name in _buttons:
+		for name in names:
 			_button_rects[name] = Rect2(bx, by, bw, bh)
 			by += bh + gap
 	queue_redraw()
@@ -113,6 +128,17 @@ func _input(event: InputEvent) -> void:
 func _press(widget: String, pos: Vector2) -> void:
 	_pressed[widget] = true
 	_vibrate(20)
+	if _toggles.has(widget):
+		# Toggle: flip persistent state on press, fire the matching signal.
+		var on := not bool(_toggle_on.get(widget, false))
+		_toggle_on[widget] = on
+		match widget:
+			"camera":
+				camera_toggled.emit(on)
+			"plane":
+				plane_toggled.emit(on)
+		queue_redraw()
+		return
 	match widget:
 		"touchpad":
 			_update_pad(pos)
@@ -174,8 +200,8 @@ func _draw() -> void:
 	_draw_label(font, font_size, _pad_rect, "TOUCHPAD", Color(1, 1, 1, 0.5),
 		_pad_rect.position.y + _pad_rect.size.y - font_size * 1.2)
 
-	# Buttons.
-	for name in _button_rects:
+	# Momentary buttons.
+	for name in _buttons:
 		var r: Rect2 = _button_rects[name]
 		var on := _pressed.has(name)
 		draw_rect(r, Color(0.9, 0.9, 0.9, 0.28) if on else Color(0.5, 0.5, 0.5, 0.16))
@@ -183,6 +209,26 @@ func _draw() -> void:
 		_draw_label(font, font_size, r, _buttons[name], Color.WHITE,
 			r.position.y + (r.size.y + font_size) * 0.5 - font_size * 0.3)
 
+	# Toggle buttons: green while on, gray while off; a lighter flash while the finger is down.
+	for name in _toggles:
+		var r: Rect2 = _button_rects[name]
+		var on := bool(_toggle_on.get(name, false))
+		var fill := Color(0.2, 0.7, 0.4, 0.45) if on else Color(0.5, 0.5, 0.5, 0.16)
+		if _pressed.has(name):
+			fill.a += 0.15
+		draw_rect(r, fill)
+		draw_rect(r, Color(0.5, 1.0, 0.7, 0.95) if on else Color(1, 1, 1, 0.6), false, 3.0)
+		_draw_label(font, font_size, r, "%s: %s" % [_toggles[name], "ON" if on else "OFF"],
+			Color.WHITE, r.position.y + (r.size.y + font_size) * 0.5 - font_size * 0.3)
+
 func _draw_label(font: Font, font_size: int, r: Rect2, text: String, color: Color, y: float) -> void:
 	draw_string(font, Vector2(r.position.x, y), text, HORIZONTAL_ALIGNMENT_CENTER,
 		r.size.x, font_size, color)
+
+## Programmatically set a toggle's on/off state without emitting its signal — keeps the UI in
+## sync when the app changes it (e.g. reflecting a camera start that failed, or a plane mode the
+## device rejected). No-op for unknown names.
+func set_toggle(name: String, on: bool) -> void:
+	if _toggles.has(name):
+		_toggle_on[name] = on
+		queue_redraw()

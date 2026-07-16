@@ -31,6 +31,12 @@ const XREAL_KEY_MULTI := 1
 const XREAL_KEY_MENU := 4
 const XREAL_ACTION_LONG_PRESS := 3
 
+# XrealSystem plane-detection mode flags and tracking types, mirrored locally (same reason).
+const XREAL_PLANE_NONE := 0
+const XREAL_PLANE_BOTH := 3   # horizontal | vertical
+const XREAL_TRACKING_6DOF := 0
+const XREAL_TRACKING_3DOF := 1
+
 var _tracker: Node3D
 var _system: Object
 var _extension_loaded := false
@@ -41,6 +47,11 @@ var _camera_enabled := false
 # Set once the RGB capture fails to start (wedged glasses camera), so _process stops re-attempting
 # setup — a hard failure isn't retried; re-plug the glasses and relaunch to recover.
 var _cam_failed := false
+# Plane detection on/off, driven by the phone-menu "平面検出" toggle. Needs a live 6DoF session
+# (Air 2 Ultra); independent of the camera toggle. See docs/plans/ar-features-plan.md.
+var _plane_enabled := false
+# Running count of tracked planes (added − removed), logged for on-device verification.
+var _plane_total := 0
 # Phase C path B: phone IMU (via NRController state) drives the 3D pointer (_ar.phone_pointer).
 var _phone_pointer_enabled := true
 var _controller_started := false
@@ -76,11 +87,13 @@ func _ready() -> void:
 		push_error("[demo] godot_xreal GDExtension not loaded — XrealSystem/XrealHeadTracker missing. Build the Android .so (cargo ndk) and check the .gdextension paths.")
 	_spawn_rig()
 	if not _camera_enabled:
-		# No camera this run — drop the (hidden) preview panel.
-		_cam_panel.queue_free()
-		_cam_panel = null
+		# No camera at boot — keep the (hidden) preview panel so the phone-menu camera toggle
+		# can still bring it up at runtime (rather than freeing it here).
+		_cam_panel.visible = false
 	if bool(ProjectSettings.get_setting("xreal/enable_touch_controller", true)):
 		_setup_touch_controller()
+		# Reflect the boot camera state on the phone-menu toggle (plane starts off).
+		_set_controller_toggle("camera", _camera_enabled)
 	else:
 		$PhoneScreen.queue_free()
 		_cursor.queue_free()
@@ -236,6 +249,55 @@ func _on_tc_menu() -> void:
 	if _phone_pointer:
 		_phone_pointer.recenter()
 
+## Phone-menu "カメラ" toggle → start/stop the XREAL RGB camera feed at runtime. The camera shares
+## the tracking camera with 6DoF SLAM, so turning it on forces 3DoF (the camera and head tracking
+## can then coexist — same rule as the boot path). Independent of the plane toggle.
+func _on_tc_camera(on: bool) -> void:
+	if on:
+		_cam_failed = false
+		_camera_enabled = true
+		if _system and _system.has_method(&"switch_tracking_type"):
+			_system.switch_tracking_type(XREAL_TRACKING_3DOF)
+		# The lazy setup in _process creates the feed on the next tracked frame.
+	else:
+		_camera_enabled = false
+		if _cam_feed:
+			if _cam_feed.is_active():
+				_cam_feed.set_active(false)
+			CameraServer.remove_feed(_cam_feed)
+			_cam_feed = null
+		if _cam_panel:
+			_cam_panel.visible = false
+
+## Phone-menu "平面検出" toggle → enable/disable plane detection at runtime. Needs a live 6DoF
+## session (Air 2 Ultra), so turning it on switches tracking to 6DoF. Unavailable on devices
+## without the plane C ABI (e.g. One Pro): the toggle flips itself back off.
+func _on_tc_plane(on: bool) -> void:
+	if not _system:
+		_set_controller_toggle("plane", false)
+		return
+	if on:
+		if _system.has_method(&"switch_tracking_type"):
+			_system.switch_tracking_type(XREAL_TRACKING_6DOF)
+		var ok := false
+		if _system.has_method(&"set_plane_detection_mode"):
+			ok = bool(_system.set_plane_detection_mode(XREAL_PLANE_BOTH))
+		_plane_enabled = ok
+		if not ok:
+			push_warning("[demo] plane detection unavailable on this device — toggle disabled")
+			_set_controller_toggle("plane", false)
+	else:
+		_plane_enabled = false
+		if _system.has_method(&"set_plane_detection_mode"):
+			_system.set_plane_detection_mode(XREAL_PLANE_NONE)
+
+## Push a toggle's on/off state onto the phone-menu controller (keeps the UI in sync when the app,
+## not the user, changes it — e.g. a failed camera start or an unsupported plane mode).
+func _set_controller_toggle(name: String, on: bool) -> void:
+	var ps := get_node_or_null(^"PhoneScreen")
+	if ps and ps.has_method(&"set_toggle"):
+		ps.set_toggle(name, on)
+
 ## Reveal the phone-IMU 3D pointer (demo/phone_pointer.gd — defined in ar_scene.tscn,
 ## hidden until the NRController has started so no beam shows before it can be driven).
 func _setup_phone_pointer() -> void:
@@ -272,6 +334,20 @@ func _process(_delta: float) -> void:
 	if _camera_enabled and not _cam_failed and _cam_feed == null and _tracker and _tracker.has_method(&"is_tracking") \
 			and _tracker.is_tracking():
 		_setup_camera_feed()
+		if _cam_failed:
+			# Start failed (wedged glasses camera, or unsupported as on Air 2 Ultra) — reflect the
+			# phone-menu camera toggle back to off so its state matches reality.
+			_camera_enabled = false
+			_set_controller_toggle("camera", false)
+	# Drive plane detection while its toggle is on: poll the change queue every frame (the SDK only
+	# produces new changes when polled) and log the running plane count for on-device verification.
+	if _plane_enabled and _system and _system.has_method(&"poll_planes"):
+		var changes: Dictionary = _system.poll_planes()
+		var added: int = (changes.get("added", []) as Array).size()
+		var removed: int = (changes.get("removed", []) as Array).size()
+		if added > 0 or removed > 0:
+			_plane_total += added - removed
+			print("[demo] planes: +%d -%d (total %d)" % [added, removed, _plane_total])
 	# Phase C path B: phone IMU (via NRController state) drives the 3D pointer. Godot's own IMU returns
 	# all-zero on this host, so we read accel (gravity → pitch/roll) + gyro (yaw) from the controller.
 	if _phone_pointer_enabled and _tracker and _tracker.has_method(&"is_tracking") and _tracker.is_tracking() and _system:

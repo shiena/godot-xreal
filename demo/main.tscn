@@ -50,4 +50,6 @@ text = "Recenter (3DoF)"
 [connection signal="touchpad_moved" from="PhoneScreen" to="." method="_on_tc_touchpad"]
 [connection signal="touchpad_released" from="PhoneScreen" to="." method="_on_tc_touchpad_released"]
 [connection signal="trigger_changed" from="PhoneScreen" to="." method="_on_tc_trigger"]
+[connection signal="camera_toggled" from="PhoneScreen" to="." method="_on_tc_camera"]
+[connection signal="plane_toggled" from="PhoneScreen" to="." method="_on_tc_plane"]
 [connection signal="pressed" from="UI/Panel/Margin/VBox/Recenter" to="." method="_on_recenter_pressed"]

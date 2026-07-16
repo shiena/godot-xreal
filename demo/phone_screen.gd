@@ -17,6 +17,10 @@ signal touchpad_moved(value: Vector2)
 signal touchpad_released()
 ## Right/left hand toggle for the 3D pointer beam origin (true = right hand).
 signal hand_selected(is_right: bool)
+## Camera preview toggle flipped (true = on).
+signal camera_toggled(on: bool)
+## Plane-detection toggle flipped (true = on).
+signal plane_toggled(on: bool)
 
 func _ready() -> void:
 	var c: Control = $TouchController
@@ -26,3 +30,9 @@ func _ready() -> void:
 	c.touchpad_moved.connect(touchpad_moved.emit)
 	c.touchpad_released.connect(touchpad_released.emit)
 	c.hand_selected.connect(hand_selected.emit)
+	c.camera_toggled.connect(camera_toggled.emit)
+	c.plane_toggled.connect(plane_toggled.emit)
+
+## Forward a programmatic toggle-state change to the touch controller (see its set_toggle).
+func set_toggle(name: String, on: bool) -> void:
+	($TouchController as Control).set_toggle(name, on)
