@@ -53,5 +53,6 @@ text = "Recenter (3DoF)"
 [connection signal="camera_toggled" from="PhoneScreen" to="." method="_on_tc_camera"]
 [connection signal="plane_toggled" from="PhoneScreen" to="." method="_on_tc_plane"]
 [connection signal="anchor_toggled" from="PhoneScreen" to="." method="_on_tc_anchor"]
+[connection signal="image_toggled" from="PhoneScreen" to="." method="_on_tc_image"]
 [connection signal="place_pressed" from="PhoneScreen" to="." method="_on_tc_place"]
 [connection signal="pressed" from="UI/Panel/Margin/VBox/Recenter" to="." method="_on_recenter_pressed"]

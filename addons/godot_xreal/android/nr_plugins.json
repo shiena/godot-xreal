@@ -1,0 +1,11 @@
+{
+    "perception": {
+        "versions": "diE1v4iRCoXc8G5g",
+        "plugins_64": [
+            {
+                "id": "nr_image_tracking_id",
+                "path": "libnr_image_tracking.so"
+            }
+        ]
+    }
+}

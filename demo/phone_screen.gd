@@ -23,6 +23,8 @@ signal camera_toggled(on: bool)
 signal plane_toggled(on: bool)
 ## Spatial-anchor mode toggle flipped (true = on).
 signal anchor_toggled(on: bool)
+## Image-tracking mode toggle flipped (true = on).
+signal image_toggled(on: bool)
 ## Momentary "配置" button — place a spatial anchor at the hand fingertip.
 signal place_pressed()
 
@@ -37,6 +39,7 @@ func _ready() -> void:
 	c.camera_toggled.connect(camera_toggled.emit)
 	c.plane_toggled.connect(plane_toggled.emit)
 	c.anchor_toggled.connect(anchor_toggled.emit)
+	c.image_toggled.connect(image_toggled.emit)
 	c.place_pressed.connect(place_pressed.emit)
 
 ## Forward a programmatic toggle-state change to the touch controller (see its set_toggle).

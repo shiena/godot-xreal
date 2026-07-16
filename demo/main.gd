@@ -57,6 +57,8 @@ var _plane_total := 0
 var _ar_diag_frames := 0
 # Spatial-anchor manager (demo/anchor_manager.gd), driven by the phone-menu "アンカー" toggle + "配置".
 var _anchor_manager: Node3D
+# Image-tracking manager (demo/image_manager.gd), driven by the phone-menu "画像" toggle.
+var _image_manager: Node3D
 # Detected-plane visualization: a thin, semi-transparent box overlaid on each plane's bounds,
 # keyed by plane id. World-locked (children of Main, like the hand joints) so they sit on the real
 # surface as the head moves. On the see-through display the translucent fill reads as a tint.
@@ -164,6 +166,13 @@ func _spawn_rig() -> void:
 		_anchor_manager.set_script(load("res://demo/anchor_manager.gd"))
 		add_child(_anchor_manager)
 		_anchor_manager.setup(_system)
+		# Image-tracking manager (also world-locked under Main). Loads the reference-image DB + overlays
+		# a quad on each tracked image — enabled from the phone-menu 画像 toggle.
+		_image_manager = Node3D.new()
+		_image_manager.name = "ImageManager"
+		_image_manager.set_script(load("res://demo/image_manager.gd"))
+		add_child(_image_manager)
+		_image_manager.setup(_system)
 		# Recenter the view to the current head direction once tracking goes live.
 		if _tracker.has_signal(&"display_started"):
 			_tracker.display_started.connect(_on_display_started)
@@ -337,6 +346,19 @@ func _on_tc_anchor(on: bool) -> void:
 	if on and not enabled:
 		push_warning("[demo] spatial anchors unavailable on this device — toggle disabled")
 		_set_controller_toggle("anchor", false)
+
+## Phone-menu "画像" toggle → enable/disable image tracking (demo/image_manager.gd). Loads the
+## reference-image DB blob and overlays a quad on each tracked image. Unavailable without the image
+## ABI / DB blob: the toggle flips itself back off.
+func _on_tc_image(on: bool) -> void:
+	print("[demo] image toggle -> %s" % ("on" if on else "off"))
+	if _image_manager == null:
+		_set_controller_toggle("image", false)
+		return
+	var enabled: bool = _image_manager.set_enabled(on)
+	if on and not enabled:
+		push_warning("[demo] image tracking unavailable (device / DB blob) — toggle disabled")
+		_set_controller_toggle("image", false)
 
 ## Phone-menu "配置" button → place a spatial anchor at the currently-tracked hand fingertip.
 func _on_tc_place() -> void:

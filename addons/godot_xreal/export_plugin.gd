@@ -23,6 +23,11 @@ const JAVA_SRC_ROOT := ANDROID_DIR + "src/"
 ## The template's main source set root (its own GodotApp.java lives under it, standard AGP
 ## layout). Matches the default gradle_build/gradle_build_directory ("").
 const GRADLE_JAVA_ROOT := "res://android/build/src/main/java/"
+## nr_plugins.json must land in the APK's `assets/` (Android StreamingAssets) for the NR perception
+## loader to find + load the image-tracking backend .so. Staged into the gradle template's assets
+## source set for the export's Gradle run (and removed again in _export_end), like the Java sources.
+const NR_PLUGINS_JSON := ANDROID_DIR + "nr_plugins.json"
+const GRADLE_ASSETS_ROOT := "res://android/build/src/main/assets/"
 
 func _get_name() -> String:
 	return "godot_xreal_android"
@@ -67,6 +72,7 @@ func _get_android_libraries(_platform: EditorExportPlatform, _debug: bool) -> Pa
 	])
 
 var _copied_java := PackedStringArray()
+var _copied_assets := PackedStringArray()
 
 ## .java files under root, as paths relative to root (recursive, package dirs preserved).
 func _collect_java_sources(root: String, rel: String, out: PackedStringArray) -> void:
@@ -100,6 +106,18 @@ func _export_begin(features: PackedStringArray, _is_debug: bool, _path: String, 
 			continue
 		_copied_java.append(dst)
 
+	# Stage nr_plugins.json into the gradle assets so it ends up at the APK's assets/nr_plugins.json
+	# (the NR perception loader reads it to load the image-tracking backend). Optional: only if present.
+	if FileAccess.file_exists(NR_PLUGINS_JSON):
+		var asset_dst := GRADLE_ASSETS_ROOT + "nr_plugins.json"
+		var aerr := DirAccess.make_dir_recursive_absolute(asset_dst.get_base_dir())
+		if aerr == OK:
+			aerr = DirAccess.copy_absolute(NR_PLUGINS_JSON, asset_dst)
+		if aerr == OK:
+			_copied_assets.append(asset_dst)
+		else:
+			push_error("godot_xreal: failed to stage nr_plugins.json into the gradle assets (error %d)" % aerr)
+
 ## Remove the staged sources again — the build template must stay pristine (Godot wipes it on
 ## regeneration, and stale copies would shadow renamed/deleted addon sources). Package dirs we
 ## introduced are pruned too (remove fails harmlessly on non-empty dirs like com/godot/game).
@@ -110,3 +128,6 @@ func _export_end() -> void:
 		while dir.length() > GRADLE_JAVA_ROOT.length() and DirAccess.remove_absolute(dir) == OK:
 			dir = dir.get_base_dir()
 	_copied_java.clear()
+	for f in _copied_assets:
+		DirAccess.remove_absolute(f)
+	_copied_assets.clear()
