@@ -18,6 +18,10 @@ requirement (relaunching a not-fully-dead instance leaves the glasses black).
 - **Godot 4.7-stable** (console binary) — template match; 4.8.dev fails with a version mismatch.
   The scripts call `godot` by default; override with `-Godot` / `$env:GODOT` (PS) or `GODOT=…` (sh)
   if it isn't on PATH under that name.
+- **XREAL runtime `.so` vendored into `jniLibs/arm64-v8a/`** — the 8 native libraries from the XREAL
+  SDK for Unity (`com.xreal.xr.tar.gz`); they are not in the repo. The `-Export` / `--export` stage
+  checks for them and prints the acquisition steps if any is missing. See the main
+  [README](../README.md#vendoring-the-xreal-runtime-libraries-required).
 
 ## Usage
 
