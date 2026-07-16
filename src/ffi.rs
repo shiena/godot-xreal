@@ -359,6 +359,61 @@ pub type FnRemapTrackableAnchor = unsafe extern "C" fn(TrackableId) -> bool;
 pub type FnEstimateTrackableAnchorQuality =
     unsafe extern "C" fn(TrackableId, UnityPose, *mut i32) -> bool;
 
+// --- Image tracking (libXREALXRPlugin.so flat C exports; see docs/plans/ar-features-plan.md) --------
+// Source: `XREALImageTrackingSubsystem.cs` / `XREALImageDatabase.cs` + disassembly. Needs a 6DoF
+// session AND the vendored `nr_image_tracking.aar` backend + an `assets/nr_plugins.json` entry + a
+// reference-image DB blob built by the `trackableImageTools` CLI. The changes-poll reuses
+// [`ArSubsystemChanges`]; `removed` is `TrackableId[]`.
+
+/// `NativeView { void* data; int count; }` (16 B) — a pointer + length view over a managed buffer,
+/// passed **by value** (2 GPRs: `data` in the first, `count` in the low 32 bits of the second).
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct NativeView {
+    pub data: *const c_void,
+    pub count: i32,
+}
+
+/// `ManagedReferenceImage` (56 B, `StructLayout.Sequential`) — one entry of the second `NativeView`
+/// into [`FnInitImageTrackingDatabase`], mapping a baked image `guid` to its metadata. `name`/`texture`
+/// are Unity `GCHandle`/pointer fields → pass null from Godot; `guid` must match the blob's baked guid.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct ManagedReferenceImage {
+    pub guid: Guid,
+    pub texture_guid: Guid,
+    pub size: [f32; 2],
+    pub name: *const c_void,
+    pub texture: *const c_void,
+}
+
+/// Field offsets within this SDK build's `XRTrackedImage` element (`element_size = 80`), DEVICE-CONFIRMED
+/// by disassembling `TrackableChanges<…XRTrackedImage>::GetTrackableChanges`' element writer:
+/// `[trackableId:16][sourceImageId(Guid):16][pose:28 (pos@0x20, rot@0x2c)][size:8][trackingState:4][ptr:8]`.
+pub mod xr_tracked_image {
+    pub const TRACKABLE_ID: usize = 0x00;
+    pub const SOURCE_IMAGE_ID: usize = 0x10;
+    pub const POSE: usize = 0x20;
+    pub const SIZE: usize = 0x3c;
+    pub const TRACKING_STATE: usize = 0x44;
+    /// Expected `ArSubsystemChanges::element_size` for an `XRTrackedImage` (assert at runtime).
+    pub const ELEMENT_SIZE: i32 = 80;
+}
+
+/// `void SetImageTrackingDatabase(u64 handle)` — activate the database from
+/// [`FnInitImageTrackingDatabase`] (pass `0` to disable image tracking).
+pub type FnSetImageTrackingDatabase = unsafe extern "C" fn(u64);
+/// `void GetImageTrackingChanges(out ARSubsystemChanges)` — added/updated/removed `XRTrackedImage`s.
+pub type FnGetImageTrackingChanges = unsafe extern "C" fn(*mut ArSubsystemChanges);
+/// `u64 InitImageTrackingDatabase(NativeView database, NativeView managedReferenceImages)` — build a
+/// tracking DB from the blob + metadata; returns an opaque handle for the calls below. The two 16-byte
+/// `NativeView`s are passed by value in GPR pairs (device-confirmed).
+pub type FnInitImageTrackingDatabase = unsafe extern "C" fn(NativeView, NativeView) -> u64;
+/// `int GetReferenceImageCount(u64 handle)` — number of reference images in a database.
+pub type FnGetReferenceImageCount = unsafe extern "C" fn(u64) -> i32;
+/// `void ReleaseImageTrackingDatabase(u64 handle)` — free a database.
+pub type FnReleaseImageTrackingDatabase = unsafe extern "C" fn(u64);
+
 /// `GlassesEventData` from `XREALCallbackHandler.cs`, delivered **by value** to the
 /// callback registered with `SetGlassesEventCallback` (libXREALXRPlugin.so export,
 /// C# `[DllImport] SetGlassesEventCallback(XREALGlassesEventCallback)`).

@@ -152,7 +152,17 @@ verify. **Crash-hardening:** `poll_*_changes` clamps the SDK's change counts to 
 (the change pointers alias internal vectors; a stale/garbage count would drive an OOB read → SIGSEGV).
 Remaining: confirm save/restart/reload once quality reaches SUFFICIENT.
 
-## 3. Image Tracking (third — blob pipeline SOLVED)
+## 3. Image Tracking — BINDING IMPLEMENTED (blob pipeline solved; demo/on-device pending)
+
+**Rust binding shipped** (`src/ffi.rs`: `NativeView`, `ManagedReferenceImage` (56 B), `xr_tracked_image`
+offsets (device-confirmed: element_size=80, id@0x00/source_image_id@0x10/pose@0x20/size@0x3c/state@0x44),
+5 fn-pointer types → `native.rs` dlsym + `ImageSample`/`ImageChanges` + `read_image_at` → `session.rs`
+wrappers → `system.rs` `XrealSystem`: `is_image_tracking_available()`,
+`init_image_database(blob, image_guids, image_sizes) -> handle`, `set_image_database(handle)`,
+`poll_images() -> {added, updated, removed}`, `image_reference_count(handle)`,
+`release_image_database(handle)`). `nr_image_tracking.aar` + `trackableImageTools` are vendored. Still
+TODO: pack `assets/nr_plugins.json`, generate + ship a DB blob, and a demo visualizer.
+
 
 Ships in **`nr_image_tracking.aar`** (`libnr_image_tracking.so`; matcher
 `libnr_aiimgtrack_algo.so`). Beyond the shared plumbing:

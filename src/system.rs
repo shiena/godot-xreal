@@ -458,6 +458,85 @@ impl XrealSystem {
             .unwrap_or(-1)
     }
 
+    // --- Image tracking (see docs/plans/ar-features-plan.md). Needs a live 6DoF session + the
+    //     vendored nr_image_tracking.aar backend + assets/nr_plugins.json + a DB blob. ---
+
+    /// Whether the image-tracking C ABI resolved (false on desktop / when the backend is absent).
+    #[func]
+    fn is_image_tracking_available(&self) -> bool {
+        session::shared()
+            .map(XrealSession::image_tracking_available)
+            .unwrap_or(false)
+    }
+
+    /// Build a tracking database from a reference-image DB `blob` (produced by `trackableImageTools`)
+    /// plus, per image, its baked `image_guids` (32-hex, aligned with `image_sizes`) and physical
+    /// `image_sizes` (metres). Returns the DB handle (`0` on failure). Pass it to
+    /// [`Self::set_image_database`] to activate, and keep it for [`Self::release_image_database`].
+    #[func]
+    fn init_image_database(
+        &self,
+        blob: PackedByteArray,
+        image_guids: PackedStringArray,
+        image_sizes: PackedVector2Array,
+    ) -> i64 {
+        let refs = build_managed_refs(&image_guids, &image_sizes);
+        session::shared()
+            .and_then(|s| s.init_image_database(blob.as_slice(), &refs))
+            .map(|h| h as i64)
+            .unwrap_or(0)
+    }
+
+    /// Activate a database from [`Self::init_image_database`] (pass `0` to disable image tracking).
+    #[func]
+    fn set_image_database(&self, handle: i64) {
+        if let Some(s) = session::shared() {
+            s.set_image_database(handle as u64);
+        }
+    }
+
+    /// Number of reference images in a database, or `0` when unavailable.
+    #[func]
+    fn image_reference_count(&self, handle: i64) -> i64 {
+        session::shared()
+            .map(|s| s.image_reference_count(handle as u64) as i64)
+            .unwrap_or(0)
+    }
+
+    /// Free a database from [`Self::init_image_database`].
+    #[func]
+    fn release_image_database(&self, handle: i64) {
+        if let Some(s) = session::shared() {
+            s.release_image_database(handle as u64);
+        }
+    }
+
+    /// Poll tracked-image changes since the last call: `{ "added": Array, "updated": Array,
+    /// "removed": Array }` (each added/updated entry a `Dictionary { id, source_image, transform,
+    /// size, tracking_state }`; `removed` an array of id strings). Call once per frame.
+    #[func]
+    fn poll_images(&self) -> VarDictionary {
+        let mut added = VarArray::new();
+        let mut updated = VarArray::new();
+        let mut removed = VarArray::new();
+        if let Some(ch) = session::shared().and_then(|s| s.poll_image_changes()) {
+            for im in &ch.added {
+                added.push(&image_to_dict(im).to_variant());
+            }
+            for im in &ch.updated {
+                updated.push(&image_to_dict(im).to_variant());
+            }
+            for id in &ch.removed {
+                removed.push(&trackable_id_to_gstring(*id).to_variant());
+            }
+        }
+        let mut d = VarDictionary::new();
+        d.set(&"added".to_variant(), &added.to_variant());
+        d.set(&"updated".to_variant(), &updated.to_variant());
+        d.set(&"removed".to_variant(), &removed.to_variant());
+        d
+    }
+
     // NOTE: there is no stereo-mode selector — the port is Multipass-only. Multiview is shelved and
     // no longer reachable (the force_multiview escape was removed). It renders correctly but gains
     // nothing here and shares a cross-thread crash path; see docs/archive/multiview-investigation.md.
@@ -689,6 +768,52 @@ fn anchor_to_dict(a: &crate::native::AnchorSample) -> VarDictionary {
     d.set(
         &"session_id".to_variant(),
         &guid_to_gstring(a.session_id).to_variant(),
+    );
+    d
+}
+
+/// Build the `ManagedReferenceImage` metadata array from GDScript-side per-image guids + physical
+/// sizes (metres). The guids must match the ones baked into the DB blob; `name`/`texture` are null.
+fn build_managed_refs(
+    guids: &PackedStringArray,
+    sizes: &PackedVector2Array,
+) -> Vec<crate::ffi::ManagedReferenceImage> {
+    let g = guids.as_slice();
+    let s = sizes.as_slice();
+    let n = g.len().min(s.len());
+    (0..n)
+        .map(|i| crate::ffi::ManagedReferenceImage {
+            guid: gstring_to_guid(&g[i]),
+            texture_guid: crate::ffi::Guid::default(),
+            size: [s[i].x, s[i].y],
+            name: std::ptr::null(),
+            texture: std::ptr::null(),
+        })
+        .collect()
+}
+
+/// A tracked reference image → a GDScript `Dictionary`.
+fn image_to_dict(im: &crate::native::ImageSample) -> VarDictionary {
+    let mut d = VarDictionary::new();
+    d.set(
+        &"id".to_variant(),
+        &trackable_id_to_gstring(im.id).to_variant(),
+    );
+    d.set(
+        &"source_image".to_variant(),
+        &guid_to_gstring(im.source_image).to_variant(),
+    );
+    d.set(
+        &"transform".to_variant(),
+        &unity_pose_to_transform(&im.pose).to_variant(),
+    );
+    d.set(
+        &"size".to_variant(),
+        &Vector2::new(im.size[0], im.size[1]).to_variant(),
+    );
+    d.set(
+        &"tracking_state".to_variant(),
+        &(im.tracking_state as i64).to_variant(),
     );
     d
 }

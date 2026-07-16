@@ -714,6 +714,61 @@ impl XrealSession {
             .estimate_anchor_quality(id, pose)
     }
 
+    // --- Image tracking (see docs/plans/ar-features-plan.md). Needs a live 6DoF session +
+    //     the nr_image_tracking.aar backend + assets/nr_plugins.json + a DB blob. ---
+
+    /// Whether the image-tracking C ABI resolved.
+    pub fn image_tracking_available(&self) -> bool {
+        self.native
+            .lock()
+            .expect("xreal native mutex")
+            .image_tracking_available()
+    }
+
+    /// Build a tracking database from a blob + per-image metadata; returns the DB handle.
+    pub fn init_image_database(
+        &self,
+        blob: &[u8],
+        refs: &[crate::ffi::ManagedReferenceImage],
+    ) -> Option<u64> {
+        self.native
+            .lock()
+            .expect("xreal native mutex")
+            .init_image_database(blob, refs)
+    }
+
+    /// Activate a database (`0` disables image tracking).
+    pub fn set_image_database(&self, handle: u64) {
+        self.native
+            .lock()
+            .expect("xreal native mutex")
+            .set_image_database(handle)
+    }
+
+    /// Number of reference images in a database.
+    pub fn image_reference_count(&self, handle: u64) -> i32 {
+        self.native
+            .lock()
+            .expect("xreal native mutex")
+            .image_reference_count(handle)
+    }
+
+    /// Free a database.
+    pub fn release_image_database(&self, handle: u64) {
+        self.native
+            .lock()
+            .expect("xreal native mutex")
+            .release_image_database(handle)
+    }
+
+    /// Poll the tracked-image added/updated/removed changes since the last call.
+    pub fn poll_image_changes(&self) -> Option<crate::native::ImageChanges> {
+        self.native
+            .lock()
+            .expect("xreal native mutex")
+            .poll_image_changes()
+    }
+
     /// Current HMD clock in nanoseconds, or `None` while the perception pipe is down.
     pub fn hmd_time_nanos(&self) -> Option<u64> {
         self.native

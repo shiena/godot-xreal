@@ -16,12 +16,14 @@ use libloading::Library;
 use std::ffi::c_void;
 
 use crate::ffi::{
-    bounded_plane, xr_anchor, ArSubsystemChanges, FnAcquireNewTrackableAnchor,
-    FnEstimateTrackableAnchorQuality, FnGetPlaneBoundaryVertexCount, FnGetPlaneBoundaryVertexData,
-    FnGetPlaneDetectionChanges, FnGetPlaneDetectionMode, FnGetTrackableAnchorChanges,
-    FnIsHmdFeatureSupported, FnLoadTrackableAnchor, FnRemapTrackableAnchor,
-    FnRemoveTrackableAnchor, FnSaveTrackableAnchor, FnSetAnchorMappingFileDirectory,
-    FnSetPlaneDetectionMode, FnSetTrackableAnchorEnabled, Guid, TrackableId, UnityPose,
+    bounded_plane, xr_anchor, xr_tracked_image, ArSubsystemChanges, FnAcquireNewTrackableAnchor,
+    FnEstimateTrackableAnchorQuality, FnGetImageTrackingChanges, FnGetPlaneBoundaryVertexCount,
+    FnGetPlaneBoundaryVertexData, FnGetPlaneDetectionChanges, FnGetPlaneDetectionMode,
+    FnGetReferenceImageCount, FnGetTrackableAnchorChanges, FnInitImageTrackingDatabase,
+    FnIsHmdFeatureSupported, FnLoadTrackableAnchor, FnReleaseImageTrackingDatabase,
+    FnRemapTrackableAnchor, FnRemoveTrackableAnchor, FnSaveTrackableAnchor,
+    FnSetAnchorMappingFileDirectory, FnSetImageTrackingDatabase, FnSetPlaneDetectionMode,
+    FnSetTrackableAnchorEnabled, Guid, ManagedReferenceImage, NativeView, TrackableId, UnityPose,
 };
 use crate::ffi::{
     FnControlSetI32, FnCreateFrame, FnCreateSession, FnGetDeviceType, FnGetFrameMetaData,
@@ -161,6 +163,50 @@ fn read_anchors(ptr: *const c_void, count: i32, stride: usize) -> Vec<AnchorSamp
         .collect()
 }
 
+/// A tracked reference image sampled from the image-tracking changes. `pose` is **Unity space** (convert
+/// like planes/anchors). `source_image` is the reference image's `Guid` (matches the baked DB entry).
+#[derive(Clone, Copy, Debug)]
+pub struct ImageSample {
+    pub id: TrackableId,
+    pub source_image: Guid,
+    pub pose: UnityPose,
+    pub size: [f32; 2],
+    pub tracking_state: i32,
+}
+
+/// Added / updated / removed tracked images from one [`XrealNative::poll_image_changes`] call.
+pub struct ImageChanges {
+    pub added: Vec<ImageSample>,
+    pub updated: Vec<ImageSample>,
+    pub removed: Vec<TrackableId>,
+}
+
+/// Read one `XRTrackedImage` element at `e` (a pointer to `>= xr_tracked_image::ELEMENT_SIZE` bytes).
+unsafe fn read_image_at(e: *const u8) -> ImageSample {
+    ImageSample {
+        id: std::ptr::read_unaligned(e.add(xr_tracked_image::TRACKABLE_ID) as *const TrackableId),
+        source_image: std::ptr::read_unaligned(
+            e.add(xr_tracked_image::SOURCE_IMAGE_ID) as *const Guid
+        ),
+        pose: std::ptr::read_unaligned(e.add(xr_tracked_image::POSE) as *const UnityPose),
+        size: std::ptr::read_unaligned(e.add(xr_tracked_image::SIZE) as *const [f32; 2]),
+        tracking_state: std::ptr::read_unaligned(
+            e.add(xr_tracked_image::TRACKING_STATE) as *const i32
+        ),
+    }
+}
+
+/// Read `count` `XRTrackedImage`s from a native array of `stride`-byte elements.
+fn read_images(ptr: *const c_void, count: i32, stride: usize) -> Vec<ImageSample> {
+    if ptr.is_null() || count <= 0 {
+        return Vec::new();
+    }
+    let base = ptr as *const u8;
+    (0..count as usize)
+        .map(|i| unsafe { read_image_at(base.add(i * stride)) })
+        .collect()
+}
+
 type FnGlGenTextures = unsafe extern "C" fn(i32, *mut u32);
 type FnGlDeleteTextures = unsafe extern "C" fn(i32, *const u32);
 type FnGlBindTexture = unsafe extern "C" fn(u32, u32);
@@ -225,6 +271,14 @@ pub struct XrealNative {
     remove_anchor: Option<FnRemoveTrackableAnchor>,
     remap_anchor: Option<FnRemapTrackableAnchor>,
     estimate_anchor_quality: Option<FnEstimateTrackableAnchorQuality>,
+
+    // Image tracking (libXREALXRPlugin.so, flat C ABI; see docs/plans/ar-features-plan.md). Needs
+    // 6DoF + the vendored nr_image_tracking.aar backend + assets/nr_plugins.json + a DB blob.
+    init_image_db: Option<FnInitImageTrackingDatabase>,
+    set_image_db: Option<FnSetImageTrackingDatabase>,
+    get_image_changes: Option<FnGetImageTrackingChanges>,
+    get_reference_image_count: Option<FnGetReferenceImageCount>,
+    release_image_db: Option<FnReleaseImageTrackingDatabase>,
 
     // RGB camera (libXREALXRPlugin.so, flat C ABI; see docs/plans/camera-feed-plan.md). Poll path.
     rgb_start_capture: Option<FnStartRgbCameraCapture>,
@@ -1257,6 +1311,23 @@ impl XrealNative {
                 .as_ref()
                 .and_then(|l| l.get(b"EstimateTrackableAnchorQuality\0").ok().map(|s| *s));
 
+            // Image-tracking exports (libXREALXRPlugin.so). See docs/plans/ar-features-plan.md.
+            let init_image_db: Option<FnInitImageTrackingDatabase> = plugin_lib
+                .as_ref()
+                .and_then(|l| l.get(b"InitImageTrackingDatabase\0").ok().map(|s| *s));
+            let set_image_db: Option<FnSetImageTrackingDatabase> = plugin_lib
+                .as_ref()
+                .and_then(|l| l.get(b"SetImageTrackingDatabase\0").ok().map(|s| *s));
+            let get_image_changes: Option<FnGetImageTrackingChanges> = plugin_lib
+                .as_ref()
+                .and_then(|l| l.get(b"GetImageTrackingChanges\0").ok().map(|s| *s));
+            let get_reference_image_count: Option<FnGetReferenceImageCount> = plugin_lib
+                .as_ref()
+                .and_then(|l| l.get(b"GetReferenceImageCount\0").ok().map(|s| *s));
+            let release_image_db: Option<FnReleaseImageTrackingDatabase> = plugin_lib
+                .as_ref()
+                .and_then(|l| l.get(b"ReleaseImageTrackingDatabase\0").ok().map(|s| *s));
+
             // RGB camera exports (libXREALXRPlugin.so). See docs/plans/camera-feed-plan.md.
             let rgb_start_capture: Option<FnStartRgbCameraCapture> = plugin_lib
                 .as_ref()
@@ -1397,6 +1468,11 @@ impl XrealNative {
                 remove_anchor,
                 remap_anchor,
                 estimate_anchor_quality,
+                init_image_db,
+                set_image_db,
+                get_image_changes,
+                get_reference_image_count,
+                release_image_db,
                 rgb_start_capture,
                 rgb_stop_capture,
                 rgb_try_acquire_latest,
@@ -1751,6 +1827,93 @@ impl XrealNative {
         let mut quality = -1_i32;
         let ok = unsafe { f(id, pose, &mut quality) };
         ok.then_some(quality)
+    }
+
+    // --- Image tracking (libXREALXRPlugin.so; see docs/plans/ar-features-plan.md). Needs 6DoF +
+    //     the nr_image_tracking.aar backend + assets/nr_plugins.json + a DB blob. ---
+
+    /// Whether the image-tracking C ABI resolved (libXREALXRPlugin.so present + symbols).
+    pub fn image_tracking_available(&self) -> bool {
+        self.init_image_db.is_some() && self.get_image_changes.is_some()
+    }
+
+    /// Build a tracking database from a blob (from `trackableImageTools`) + its per-image metadata.
+    /// Returns the DB handle (`None` if the export is absent or the SDK returns a 0 handle). The two
+    /// slices must outlive the call only (the SDK copies the data it needs).
+    pub fn init_image_database(&self, blob: &[u8], refs: &[ManagedReferenceImage]) -> Option<u64> {
+        let f = self.init_image_db?;
+        let db = NativeView {
+            data: blob.as_ptr() as *const c_void,
+            count: blob.len() as i32,
+        };
+        let managed = NativeView {
+            data: refs.as_ptr() as *const c_void,
+            count: refs.len() as i32,
+        };
+        let handle = unsafe { f(db, managed) };
+        (handle != 0).then_some(handle)
+    }
+
+    /// Activate a database (pass `0` to disable image tracking). No-op if the export is absent.
+    pub fn set_image_database(&self, handle: u64) {
+        if let Some(f) = self.set_image_db {
+            unsafe { f(handle) };
+        }
+    }
+
+    /// Number of reference images in a database, or `0` if the export is absent.
+    pub fn image_reference_count(&self, handle: u64) -> i32 {
+        self.get_reference_image_count
+            .map(|f| unsafe { f(handle) })
+            .unwrap_or(0)
+    }
+
+    /// Free a database. No-op if the export is absent.
+    pub fn release_image_database(&self, handle: u64) {
+        if let Some(f) = self.release_image_db {
+            unsafe { f(handle) };
+        }
+    }
+
+    /// Poll the tracked-image added/updated/removed changes since the last call. `None` when the
+    /// export is absent.
+    pub fn poll_image_changes(&self) -> Option<ImageChanges> {
+        let f = self.get_image_changes?;
+        let mut changes = ArSubsystemChanges::default();
+        unsafe { f(&mut changes) };
+        let stride = changes.element_size as usize;
+        if stride < xr_tracked_image::TRACKING_STATE + 4 {
+            if changes.added_count != 0 || changes.updated_count != 0 {
+                godot::global::godot_warn!(
+                    "[xreal] image changes: element_size={stride} < expected {}; skipping parse",
+                    xr_tracked_image::ELEMENT_SIZE
+                );
+            }
+            return Some(ImageChanges {
+                added: Vec::new(),
+                updated: Vec::new(),
+                removed: read_removed_ids(
+                    changes.removed_ptr,
+                    sane_count(changes.removed_count, "image removed"),
+                ),
+            });
+        }
+        Some(ImageChanges {
+            added: read_images(
+                changes.added_ptr,
+                sane_count(changes.added_count, "image added"),
+                stride,
+            ),
+            updated: read_images(
+                changes.updated_ptr,
+                sane_count(changes.updated_count, "image updated"),
+                stride,
+            ),
+            removed: read_removed_ids(
+                changes.removed_ptr,
+                sane_count(changes.removed_count, "image removed"),
+            ),
+        })
     }
 
     /// Whether the RGB-camera C ABI is available (libXREALXRPlugin.so present + symbols resolved).
