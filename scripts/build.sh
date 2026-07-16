@@ -84,7 +84,7 @@ These ship with the XREAL SDK for Unity (com.xreal.xr) and are NOT included in t
 Vendor them once (no download/extract is automated):
   1. Obtain the XREAL SDK for Unity package `com.xreal.xr.tar.gz` and extract it (-> a `package/` dir).
   2. Copy the 3 core libs from package/Runtime/Plugins/Android/arm64-v8a/ into jniLibs/arm64-v8a/,
-     e.g.  pwsh tools/vendor_xreal_libs.ps1 -XrealPackage <...>/package
+     e.g.  pwsh scripts/vendor_xreal_libs.ps1 -XrealPackage <...>/package
        libXREALNativeSessionManager.so, libXREALXRPlugin.so, libVulkanSupport.so
   3. Extract the 5 NR libs from the package's .aar (each .aar is a zip; take jni/arm64-v8a/<lib>)
      into jniLibs/arm64-v8a/:

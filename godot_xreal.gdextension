@@ -20,7 +20,7 @@ android.release.arm64 = "res://target/aarch64-linux-android/release/libgodot_xre
 
 [dependencies]
 ; The vendored XREAL runtime libraries that the GDExtension dlopen()s at startup.
-; Populate ./jniLibs/arm64-v8a/ with tools/vendor_xreal_libs.ps1 before exporting.
+; Populate ./jniLibs/arm64-v8a/ with scripts/vendor_xreal_libs.ps1 before exporting.
 android.arm64 = {
 "res://jniLibs/arm64-v8a/libXREALNativeSessionManager.so" : "",
 "res://jniLibs/arm64-v8a/libXREALXRPlugin.so" : "",
