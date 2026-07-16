@@ -57,9 +57,6 @@ XREAL Air 2 Ultra）で実機確認。以下はすべてコミュニティによ
 
 ## インストール（プリビルト）
 
-> **まだ未公開。** 残りの機能が実機確認できるまでプリビルトのリリースはありません — それまでは
-> [ソースからビルド](#ビルドソースから)してください。以下はリリース公開後の手順です。
-
 多くのユーザーはビルド不要 — プリビルトのアドオンを入手して XREAL 純正ライブラリを vendoring するだけです:
 
 1. [Releases](https://github.com/shiena/godot-xreal/releases) から `godot-xreal-<version>.zip` を

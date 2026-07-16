@@ -57,10 +57,6 @@ Not implemented: 6DoF position for the app camera, image tracking, meshing, audi
 
 ## Install (prebuilt)
 
-> **Not published yet.** No prebuilt release exists until the remaining features are verified on
-> device — until then, [build from source](#build-from-source). The steps below are how it works once
-> releases are out.
-
 Most users won't build anything — grab the prebuilt addon and vendor the XREAL libraries:
 
 1. Download `godot-xreal-<version>.zip` from the
