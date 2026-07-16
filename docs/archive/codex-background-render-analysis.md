@@ -165,6 +165,13 @@ reparent the render SurfaceView onto the resumed glasses-display Activity and su
 pause, mirroring `NRXRApp.bindFloatingView`. No service-based shortcut exists. It is substantial and
 somewhat fragile.
 
+**Device-confirmed (2026-07-16, metrics check).** Watched `run_frame_tick`'s submit counter
+(`[xreal] frame_tick #N ... submit=Some(0)`, logged every 300 frames) across a background
+transition on the One Pro: foreground advanced normally (#300@:43 → #900@:53 → #1200@:58, ~60 fps),
+then **froze at #1200 the instant the app was backgrounded** (21:08:00) and produced **zero** further
+submits over 18 s. `DISP euler` stopped at the same instant. So our compositor submit genuinely
+stops on background — the diagnosis holds and the old "keeps rendering" claim is refuted on device.
+
 **Reconciling the memory:** the "multi-resume keeps rendering after Home" note likely conflated
 "app/session stays alive" with "glasses keep showing new frames." The cited signals (camera frame /
 DISP euler updates) come from native SDK/session threads and pose polling that keep running because
