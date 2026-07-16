@@ -79,8 +79,14 @@ and run:
 pwsh scripts/vendor_xreal_libs.ps1 -XrealPackage <…>/package
 ```
 
-The script stages everything the Android export needs (all destinations are git-ignored; nothing is
-downloaded — you supply the package):
+> **No terminal? Do it from the editor.** With the addon enabled, the **`XREAL 取込`** dock (left
+> panel) runs the same vendoring: click *パッケージを選択…*, pick `com.xreal.xr(.tgz|.tar.gz)` (or an
+> extracted `package/` folder), and it extracts (via the system `tar`) and copies the same files into
+> place. It vendors only the XREAL libs — the addon's own `libgodot_xreal.so` still comes from the
+> `cargo ndk` build (or a prebuilt release).
+
+The script (and the dock) stage everything the Android export needs (all destinations are git-ignored;
+nothing is downloaded — you supply the package):
 
 **3 core `.so` → `jniLibs/arm64-v8a/`** — copied from `Runtime/Plugins/Android/arm64-v8a/`; packed
 next to the GDExtension via `godot_xreal.gdextension` `[dependencies]` and `dlopen`ed at startup:
