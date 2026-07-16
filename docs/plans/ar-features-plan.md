@@ -195,15 +195,46 @@ Exports (`XREALImageTrackingSubsystem.cs`): `SetImageTrackingDatabase(u64)` (`0x
 **`XRTrackedImage` element — 80 bytes (`0x50`):** `trackable_id@0x00`, `source_image_id(Guid)@0x10`,
 `pose@0x20`, `size@0x3c`, `tracking_state@0x44`, `native_ptr@0x48`.
 
-## 4. Depth Mesh (shelve)
+## 4. Depth Mesh — FEASIBLE (medium effort; not the Unity-interface dead end previously assumed)
 
-Mesh geometry does **not** use flat C exports — it goes through Unity's engine `XRMeshSubsystem` with a
-native provider registered via `IUnityXRMeshInterface` (`InputManager::GetMeshInfos`/`AcquireMesh` take
-engine-supplied allocators). Using it from Godot means emulating that interface (feasible, different
-class of work). Ships in `nr_meshing.aar`. The **only** flat export is per-vertex labels:
-`GetMeshLabels(TrackableId, *mut *mut u8, *mut i32) -> bool` (`0x80564`) → SDK-owned array of
-`NRMeshingVertexSemanticLabel` (`u8` enum: Background=0, Wall=1, Building=2, Floor=4, Ceiling=5,
-Highway=6, Sidewalk=7, Grass=8, Door=10, Table=11). → shelve until Plane/Anchor/Image are done.
+**Codex RE (2026-07-17) refuted the "shelve — needs Unity-interface emulation" verdict.** Under Unity
+the geometry *does* flow through the engine `XRMeshSubsystem` (`XREALXRLoader.cs:192` registers "XREAL
+Meshing"; the sample reads verts/normals/tris off the engine-built `Mesh`), and `GetMeshLabels` *is* the
+only flat dynsym export. **But** the raw geometry lives in plain C++ `std::vector`s inside `MeshBlockInfo`,
+produced by `NativePerception::GetMeshBlockInfo()` **before any Unity allocator is involved** — reachable
+the same way hand tracking calls the internal `SetHandTrackingEnabled` (resolve `libXREALXRPlugin.so`
+base + offset). Ships in `nr_meshing.aar` (backend `libnr_meshing.so` exports only `NRPluginCreate/Destroy`
+— an opaque fn-ptr table at `NativePerception+8`, no flat NRMeshing C API).
+
+**Recommended path (B — bypass the engine allocators):**
+1. `InputManager* im = TSingleton<InputManager>::GetInstance()` (exported thunk `0x47a10`);
+   `NativePerception* np = *(im + 72)` (same field `GetPlaneDetectionMode`/`GetMeshInfos` use).
+2. `NativePerception::SetMeshingEnabled(np, true)` — internal `0x9a4a8` (backend fn table+416).
+3. Per frame: `NativePerception::GetMeshBlockInfo(np, &out)` — internal `0x9a664` (x8 sret →
+   `std::vector<MeshBlockInfo>`, backend fn table+152). Walk it (128-byte stride) and free the vectors.
+4. Build a Godot `ArrayMesh` per block.
+
+**`MeshBlockInfo` (128 B, from `AcquireMesh` disasm `0x79a28`+):** `id(=subId2)@0x00`,
+`NRMeshingBlockState@0x08` (`==2` ⇒ removed), `vector<Vector3> vertices@0x38` (12 B ea, SDK writes
+`{x,y,-z}`), `vector<Vector3> normals@0x50` (same Z-flip, count==verts), `vector<u32> indices@0x68`,
+source labels@0x80 → dest labels@0x98 (what `GetMeshLabels` returns).
+
+**Gating (the on-device unknown, same class as hand tracking):** `GetMeshInfos` bails unless
+`NativePerception::GetSupportedFeatures() & (1<<3)` (bit 3 = meshing) and a ready flag at `NativePerception+24`
+are set → meshing must likely be requested at session init via a perception-feature / `input_source` bit
+(mirror the hand-tracking two-gate: internal `SetHandTrackingEnabled` + `input_source` Hands bit).
+**Air 2 Ultra-only** per the compat table.
+
+**`GetMeshLabels(TrackableId, u8** out, i32* count) -> bool`** (flat `0x4801c` → internal `0x80564`):
+uses only `subId2`; returns a **borrowed** pointer into the SDK's label vector, count 0 until `AcquireMesh`
+(or Path A equivalent) has populated that block — so **labels alone are a dead end** (no geometry to map
+them onto). `NRMeshingVertexSemanticLabel` (`u8`): Background=0, Wall=1, Building=2, Floor=4, Ceiling=5,
+Highway=6, Sidewalk=7, Grass=8, Door=10, Table=11.
+
+**Effort MEDIUM** (vs plane/anchor/image LOW): calls non-exported symbols by base+offset, RE'd struct
+layout, and C++ `std::vector` lifetime management (Path B) — or emulate a 3-fn-ptr allocator (Path A:
+fake `IUnityXRMeshInterface` at `InputManager+40`, let the SDK own lifetimes, read labels via the flat
+export). Not yet implemented.
 
 ## Gotchas (all features)
 
