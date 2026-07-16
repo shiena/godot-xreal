@@ -260,7 +260,7 @@ impl XrealSession {
             color_space: 1,
             // Selectable at startup (see stereo_rendering_mode()): 0 = Multipass (per-eye 2D
             // textures; renders but the layer is world-anchored), 2 = Multiview / Single-Pass-
-            // Instanced (one 2-layer array texture, matches LayeredClient's StereoRendering: 2 —
+            // Instanced (one 2-layer array texture, matches the reference app's StereoRendering: 2 —
             // the reference app's head-locked peek window; still WIP: NR swapchain registration).
             stereo_rendering_mode: stereo_mode,
             tracking_type: tracking_mode,
