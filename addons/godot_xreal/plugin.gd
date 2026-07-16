@@ -14,8 +14,16 @@ extends EditorPlugin
 ## This EditorPlugin exists so the addon can be toggled from
 ## Project > Project Settings > Plugins and to host future editor integration.
 
+const ExportPluginScript := preload("res://addons/godot_xreal/export_plugin.gd")
+var _export_plugin: EditorExportPlugin
+
 func _enter_tree() -> void:
-	pass
+	# Contribute the XREAL Android manifest/library requirements at export time so the Gradle
+	# build template needs no hand-edits (they survive template regeneration).
+	_export_plugin = ExportPluginScript.new()
+	add_export_plugin(_export_plugin)
 
 func _exit_tree() -> void:
-	pass
+	if _export_plugin:
+		remove_export_plugin(_export_plugin)
+		_export_plugin = null

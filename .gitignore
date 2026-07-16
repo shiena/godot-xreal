@@ -6,7 +6,8 @@ Cargo.lock
 .godot/
 *.import
 demo/addons/
-android
+# Godot Android build template (top-level only; NOT addons/godot_xreal/android/).
+/android/
 jniLibs
 
 # Build artifacts
@@ -36,3 +37,8 @@ jniLibs
 .DS_Store
 Thumbs.db
 
+
+# XREAL addon vendored binaries (AARs) + built bridge JAR — vendor/build locally
+# (see docs/android-export-plugin-migration.md), like jniLibs/*.so.
+/addons/godot_xreal/android/*.aar
+/addons/godot_xreal/android/*.jar
