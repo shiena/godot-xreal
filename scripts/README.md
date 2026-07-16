@@ -11,6 +11,10 @@ cargo ndk build  ->  Godot APK export  ->  adb install  ->  launch on the glasse
 workarounds that bite every time — the Godot export hang, and the force-stop-before-launch
 requirement (relaunching a not-fully-dead instance leaves the glasses black).
 
+`vendor_xreal_libs.ps1` is the one-time prerequisite: it stages every XREAL runtime piece
+(8 `.so` → `jniLibs/arm64-v8a/`, 5 `.aar` + the compiled `xreal_bridge.jar` →
+`addons/godot_xreal/android/`) out of a local copy of the SDK package.
+
 ## Prerequisites (assumed installed and on PATH)
 
 - **Rust + cargo-ndk** — `cargo install cargo-ndk`; `ANDROID_NDK_HOME` set (NDK r27).
@@ -18,10 +22,12 @@ requirement (relaunching a not-fully-dead instance leaves the glasses black).
 - **Godot 4.7-stable** (console binary) — template match; 4.8.dev fails with a version mismatch.
   The scripts call `godot` by default; override with `-Godot` / `$env:GODOT` (PS) or `GODOT=…` (sh)
   if it isn't on PATH under that name.
-- **XREAL runtime `.so` vendored into `jniLibs/arm64-v8a/`** — the 8 native libraries from the XREAL
-  SDK for Unity (`com.xreal.xr.tar.gz`); they are not in the repo. The `-Export` / `--export` stage
-  checks for them and prints the acquisition steps if any is missing. See the main
-  [README](../README.md#vendoring-the-xreal-runtime-libraries-required).
+- **XREAL runtime pieces vendored** — the 8 native `.so` in `jniLibs/arm64-v8a/` plus the 5 `.aar`
+  and the compiled `xreal_bridge.jar` in `addons/godot_xreal/android/`; none are in the repo.
+  `vendor_xreal_libs.ps1 -XrealPackage <…>/package` stages all of them from a local copy of the
+  XREAL SDK for Unity (`com.xreal.xr.tar.gz`). The `-Export` / `--export` stage checks for them and
+  prints the acquisition steps if anything is missing. See the main
+  [README](../README.md#prerequisite-vendor-the-xreal-runtime-libraries).
 
 ## Usage
 

@@ -56,34 +56,43 @@ function Ok  ([string]$m) { Write-Host $m -ForegroundColor Green }
 function Die ([string]$m) { Write-Error $m }
 function Adbx { if ($Device) { & $Adb -s $Device @args } else { & $Adb @args } }
 
-# The XREAL runtime libraries the APK must bundle (see godot_xreal.gdextension [dependencies]).
-# They are NOT in this repo — vendor them from the XREAL SDK for Unity (see README / the guide below).
-# This checks jniLibs before an export and stops with instructions if any is missing; it never
-# downloads or extracts anything.
+# The XREAL runtime pieces the APK must bundle. They are NOT in this repo — vendor them from the
+# XREAL SDK for Unity (see README / the guide below):
+#   - 8 .so in jniLibs/arm64-v8a (packed via godot_xreal.gdextension [dependencies])
+#   - 5 .aar + the compiled xreal_bridge.jar in addons/godot_xreal/android (shipped into the APK
+#     by the addon's export_plugin.gd: Java/JNI layer + manifest merge)
+# This checks both before an export and stops with instructions if anything is missing; it never
+# downloads anything.
 $RequiredLibs = @(
     'libXREALNativeSessionManager.so', 'libXREALXRPlugin.so', 'libVulkanSupport.so',
     'libnr_api.so', 'libnr_libusb.so', 'libnr_loader.so', 'libnr_plugin_6dof.so', 'libnr_rgb_camera.so'
 )
+$RequiredAddonFiles = @(
+    'nr_loader.aar', 'nr_api.aar', 'nr_common.aar',
+    'GlassesDisplayPlugEvent-2.4.2.aar', 'Log-Control-1.2.aar', 'xreal_bridge.jar'
+)
 function Require-VendoredLibs {
-    $dir = Join-Path $repoRoot 'jniLibs\arm64-v8a'
-    $missing = $RequiredLibs | Where-Object { -not (Test-Path (Join-Path $dir $_)) }
+    $jniDir = Join-Path $repoRoot 'jniLibs\arm64-v8a'
+    $addonDir = Join-Path $repoRoot 'addons\godot_xreal\android'
+    $missing = @($RequiredLibs | Where-Object { -not (Test-Path (Join-Path $jniDir $_)) } |
+            ForEach-Object { "jniLibs/arm64-v8a/$_" }) +
+        @($RequiredAddonFiles | Where-Object { -not (Test-Path (Join-Path $addonDir $_)) } |
+            ForEach-Object { "addons/godot_xreal/android/$_" })
     if (-not $missing) { return }
-    Write-Host "Missing XREAL runtime libraries in jniLibs/arm64-v8a:" -ForegroundColor Red
+    Write-Host "Missing vendored XREAL runtime pieces:" -ForegroundColor Red
     $missing | ForEach-Object { Write-Host "  - $_" }
     Write-Host @'
 
 These ship with the XREAL SDK for Unity (com.xreal.xr) and are NOT included in this repo.
-Vendor them once (no download/extract is automated):
+Vendor them once from a local copy of the package (nothing is downloaded):
   1. Obtain the XREAL SDK for Unity package `com.xreal.xr.tar.gz` and extract it (-> a `package/` dir).
-  2. Copy the 3 core libs from package/Runtime/Plugins/Android/arm64-v8a/ into jniLibs/arm64-v8a/,
-     e.g.  pwsh scripts/vendor_xreal_libs.ps1 -XrealPackage <...>\package
-       libXREALNativeSessionManager.so, libXREALXRPlugin.so, libVulkanSupport.so
-  3. Extract the 5 NR libs from the package's .aar (each .aar is a zip; take jni/arm64-v8a/<lib>)
-     into jniLibs/arm64-v8a/:
-       nr_api.aar    -> libnr_api.so, libnr_plugin_6dof.so, libnr_rgb_camera.so
-       nr_loader.aar -> libnr_loader.so
-       nr_common.aar -> libnr_libusb.so
-See the README "Vendoring the XREAL runtime libraries" section and docs/build-and-release.md.
+  2. Run  pwsh scripts/vendor_xreal_libs.ps1 -XrealPackage <...>\package
+     which stages everything:
+       - 8 .so  -> jniLibs/arm64-v8a/          (3 core libs copied + 5 NR libs extracted from the .aar)
+       - 5 .aar -> addons/godot_xreal/android/ (shipped by the addon's export plugin)
+       - xreal_bridge.jar -> addons/godot_xreal/android/ (compiled from the committed Java source;
+         needs a JDK `javac` + an Android SDK platform android.jar)
+See the README "Prerequisite: vendor the XREAL runtime libraries" and docs/build-and-release.md.
 '@
     exit 1
 }

@@ -60,24 +60,39 @@ iteration, manual `cargo ndk` / Gradle steps, signing): [`docs/build-and-release
 
 The XREAL native libraries are **not** included in this repo (they remain under XREAL's terms). Obtain
 them from the **XREAL SDK for Unity** — the `com.xreal.xr` package, shipped as a tgz
-(`com.xreal.xr.tar.gz`); **3.1.0 is the verified version** — and place these **8 `.so` into
-`jniLibs/arm64-v8a/`** (git-ignored) before exporting the APK:
+(`com.xreal.xr.tar.gz`); **3.1.0 is the verified version**. Extract it (→ a `package/` directory)
+and run:
 
-1. Extract `com.xreal.xr.tar.gz` → a `package/` directory.
-2. **3 core libs** from `package/Runtime/Plugins/Android/arm64-v8a/` — copy them, or run
-   `pwsh scripts/vendor_xreal_libs.ps1 -XrealPackage <…>/package`:
-   `libXREALNativeSessionManager.so`, `libXREALXRPlugin.so`, `libVulkanSupport.so`.
-3. **5 NR libs** from the package's `.aar` files (an `.aar` is a zip; take `jni/arm64-v8a/<lib>`):
-   - `nr_api.aar` → `libnr_api.so`, `libnr_plugin_6dof.so`, `libnr_rgb_camera.so`
-   - `nr_loader.aar` → `libnr_loader.so`
-   - `nr_common.aar` → `libnr_libusb.so`
+```powershell
+pwsh scripts/vendor_xreal_libs.ps1 -XrealPackage <…>/package
+```
+
+The script stages everything the Android export needs (all destinations are git-ignored; nothing is
+downloaded — you supply the package):
+
+- **8 `.so` → `jniLibs/arm64-v8a/`** — the 3 core libs (`libXREALNativeSessionManager.so`,
+  `libXREALXRPlugin.so`, `libVulkanSupport.so`) copied from
+  `package/Runtime/Plugins/Android/arm64-v8a/`, plus the 5 NR libs extracted from the package's
+  `.aar` files (an `.aar` is a zip; the libs sit at `jni/arm64-v8a/<lib>`):
+  `nr_api.aar` → `libnr_api.so` / `libnr_plugin_6dof.so` / `libnr_rgb_camera.so`,
+  `nr_loader.aar` → `libnr_loader.so`, `nr_common.aar` → `libnr_libusb.so`.
+  Packed next to the GDExtension via `godot_xreal.gdextension` `[dependencies]` and `dlopen`ed at
+  startup.
+- **5 `.aar` → `addons/godot_xreal/android/`** — `nr_loader.aar`, `nr_api.aar`, `nr_common.aar`,
+  `GlassesDisplayPlugEvent-2.4.2.aar`, `Log-Control-1.2.aar`. The addon's export plugin
+  (`export_plugin.gd`) ships them into the APK: they carry the Java/JNI layer and manifest entries
+  the glasses need (glasses detection provider etc.).
+- **`xreal_bridge.jar` → `addons/godot_xreal/android/`** — compiled by the script from the
+  committed Java source (`addons/godot_xreal/android/src/`); requires a JDK (`javac`) and an
+  Android SDK platform `android.jar` (skip with `-SkipJar` if a built jar is already in place).
 
 ### Build & install
 
 With the toolchain on `PATH` (Rust `aarch64-linux-android` target, `cargo-ndk`, `ANDROID_NDK_HOME`, a
 Godot 4.7-stable binary, `adb`), `scripts/build.sh` (or `scripts/build.ps1`) wraps the four Android
 stages — cargo-ndk build → Godot APK export → `adb install` → launch. It re-checks the prerequisite
-above first and prints the same guide if any `.so` is missing.
+above first (both the 8 `.so` and the addon's `.aar`/`.jar`) and prints the same guide if anything
+is missing.
 
 ```bash
 ./scripts/build.sh --all      # build + export + install + run on the glasses
@@ -128,7 +143,8 @@ XrealHeadTracker (Node3D)   # rotation driven by native head pose
 ## Layout
 
 ```
-addons/godot_xreal/   the installable addon (plugin.cfg, plugin.gd, xreal_rig.tscn)
+addons/godot_xreal/   the installable addon (plugin.cfg, plugin.gd, xreal_rig.tscn,
+                      export_plugin.gd + android/: bridge Java source, vendored .aar/.jar git-ignored)
 src/
   lib.rs        ExtensionLibrary entry
   ffi.rs        repr(C) structs / enums / fn-pointer types (the RE'd ABI)
@@ -139,7 +155,7 @@ src/
   system.rs     XrealSystem (RefCounted) — read-only SDK info
 demo/           demo scene (main.tscn + main.gd) with a status UI
 jniLibs/        vendored XREAL .so (git-ignored) + built libgodot_xreal.so
-scripts/        build.ps1 / build.sh (pipeline) + vendor_xreal_libs.ps1 (copy core libs)
+scripts/        build.ps1 / build.sh (pipeline) + vendor_xreal_libs.ps1 (stage all runtime pieces)
 docs/           port plan + reverse-engineering notes
 ```
 
