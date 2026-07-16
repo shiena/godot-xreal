@@ -595,12 +595,19 @@ pub fn call_input_update_hmd() -> i32 {
     let update: extern "C" fn(*mut c_void, *mut c_void, u32, u32, *mut c_void) -> i32 =
         unsafe { std::mem::transmute(provider.update_device_state) };
     let mut buf = [0u8; 1024];
-    // deviceId 0 = HMD; updateType 0 = Dynamic.
+    // deviceId 0 = HMD; updateType 1 = BeforeRender. RE (codex + our cross-check, see
+    // docs/codex-headlock-analysis.md): InputManager::UpdateHMDState @0x7aa3c calls
+    // DisplayManager::OnBeforeRender @0x66fa8 ONLY when updateType == 1 (guard `cmp w1,#0x1; b.ne`
+    // @0x7aa68). OnBeforeRender refreshes DM+0x100, which SubmitFrame passes to
+    // NRFrameSetRenderingPose(frame, *(DM+0x100)) — the pose the compositor reprojects the layer
+    // against. With updateType 0 (Dynamic) OnBeforeRender is skipped, DM+0x100 stays frozen at the
+    // session-start pose, and our render world-anchors there instead of head-locking. So we must use
+    // updateType 1 here (this is why the earlier updateType-0 attempt had no visual effect).
     update(
         ptr::null_mut(),
         ptr::null_mut(),
         0,
-        0,
+        1,
         buf.as_mut_ptr() as *mut c_void,
     )
 }
