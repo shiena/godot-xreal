@@ -774,24 +774,30 @@ fn unity_pose_to_transform(pose: &crate::ffi::UnityPose) -> Transform3D {
     )
 }
 
+/// Format two u64s as a stable 32-hex-char string — the wire form shared by `TrackableId` and `Guid`.
+fn hex_pair(a: u64, b: u64) -> String {
+    format!("{a:016x}{b:016x}")
+}
+
+/// Parse a 32-hex-char string back into two u64s; a missing/invalid half falls back to 0.
+fn parse_hex_pair(s: &str) -> (u64, u64) {
+    let half = |r: std::ops::Range<usize>| -> u64 {
+        s.get(r)
+            .and_then(|h| u64::from_str_radix(h, 16).ok())
+            .unwrap_or(0)
+    };
+    (half(0..16), half(16..32))
+}
+
 /// 128-bit `TrackableId` → a stable 32-hex-char string (round-trips via [`gstring_to_trackable_id`]).
 fn trackable_id_to_gstring(id: crate::ffi::TrackableId) -> GString {
-    GString::from(format!("{:016x}{:016x}", id.sub_id_1, id.sub_id_2).as_str())
+    GString::from(hex_pair(id.sub_id_1, id.sub_id_2).as_str())
 }
 
 /// Parse a 32-hex-char id string (from `poll_planes`) back into a `TrackableId`.
 fn gstring_to_trackable_id(s: &GString) -> crate::ffi::TrackableId {
-    let s = s.to_string();
-    crate::ffi::TrackableId {
-        sub_id_1: s
-            .get(0..16)
-            .and_then(|h| u64::from_str_radix(h, 16).ok())
-            .unwrap_or(0),
-        sub_id_2: s
-            .get(16..32)
-            .and_then(|h| u64::from_str_radix(h, 16).ok())
-            .unwrap_or(0),
-    }
+    let (sub_id_1, sub_id_2) = parse_hex_pair(&s.to_string());
+    crate::ffi::TrackableId { sub_id_1, sub_id_2 }
 }
 
 /// A detected plane → a GDScript `Dictionary`.
@@ -834,22 +840,13 @@ fn transform_to_unity_pose(t: &Transform3D) -> crate::ffi::UnityPose {
 
 /// 128-bit anchor persistence `Guid` → a stable 32-hex-char string (round-trips via [`gstring_to_guid`]).
 fn guid_to_gstring(g: crate::ffi::Guid) -> GString {
-    GString::from(format!("{:016x}{:016x}", g.lo, g.hi).as_str())
+    GString::from(hex_pair(g.lo, g.hi).as_str())
 }
 
 /// Parse a 32-hex-char `Guid` string (from `save_anchor`) back into a [`crate::ffi::Guid`].
 fn gstring_to_guid(s: &GString) -> crate::ffi::Guid {
-    let s = s.to_string();
-    crate::ffi::Guid {
-        lo: s
-            .get(0..16)
-            .and_then(|h| u64::from_str_radix(h, 16).ok())
-            .unwrap_or(0),
-        hi: s
-            .get(16..32)
-            .and_then(|h| u64::from_str_radix(h, 16).ok())
-            .unwrap_or(0),
-    }
+    let (lo, hi) = parse_hex_pair(&s.to_string());
+    crate::ffi::Guid { lo, hi }
 }
 
 /// A tracked spatial anchor → a GDScript `Dictionary`.
@@ -1135,5 +1132,66 @@ impl XrealAR {
                 .native_error()
                 .emit(code, &GString::from(msg.as_str()));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{hex_pair, parse_hex_pair, transform_to_unity_pose, unity_pose_to_transform};
+    use crate::ffi::UnityPose;
+    use godot::builtin::{Quaternion, Vector3};
+
+    #[test]
+    fn hex_pair_round_trips_both_halves() {
+        let (a, b) = (0x0123_4567_89ab_cdef_u64, 0xfedc_ba98_7654_3210_u64);
+        let s = hex_pair(a, b);
+        assert_eq!(s, "0123456789abcdeffedcba9876543210");
+        assert_eq!(s.len(), 32);
+        assert_eq!(parse_hex_pair(&s), (a, b));
+    }
+
+    #[test]
+    fn hex_pair_zero_pads_each_half_first_then_second() {
+        // Each u64 is 16 zero-padded hex chars; first half is `a`, second is `b` (order matters).
+        assert_eq!(hex_pair(1, 2), "00000000000000010000000000000002");
+        assert_eq!(parse_hex_pair("00000000000000010000000000000002"), (1, 2));
+    }
+
+    #[test]
+    fn parse_hex_pair_tolerates_short_or_garbage_input() {
+        assert_eq!(parse_hex_pair(""), (0, 0));
+        assert_eq!(parse_hex_pair("zzzz"), (0, 0));
+        // valid first half, missing second → second is 0 (guards the OOB slice).
+        assert_eq!(parse_hex_pair("0000000000000005"), (5, 0));
+    }
+
+    #[test]
+    fn unity_pose_to_transform_flips_y_and_z_position() {
+        let pose = UnityPose {
+            position: [1.0, 2.0, 3.0],
+            rotation: [0.0, 0.0, 0.0, 1.0],
+        };
+        let t = unity_pose_to_transform(&pose);
+        assert_eq!(t.origin, Vector3::new(1.0, -2.0, -3.0));
+    }
+
+    #[test]
+    fn unity_pose_transform_round_trips() {
+        // The (x, -y, -z) position and (x, -y, -z, w) quaternion flips are self-inverse.
+        let q = Quaternion::new(0.1, 0.2, 0.3, 0.9).normalized();
+        let pose = UnityPose {
+            position: [1.0, -2.0, 3.0],
+            rotation: [q.x, q.y, q.z, q.w],
+        };
+        let back = transform_to_unity_pose(&unity_pose_to_transform(&pose));
+        for i in 0..3 {
+            assert!(
+                (back.position[i] - pose.position[i]).abs() < 1e-5,
+                "position[{i}]"
+            );
+        }
+        // Quaternion may return negated (double cover) but must represent the same rotation.
+        let dot: f32 = (0..4).map(|i| back.rotation[i] * pose.rotation[i]).sum();
+        assert!(dot.abs() > 0.999, "rotation round-trip dot={dot}");
     }
 }

@@ -229,3 +229,41 @@ pub fn stop() {
         godot::global::godot_print!("[xreal] FPV stream stopped");
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{codec_type, config_json};
+
+    #[test]
+    fn codec_type_from_url_scheme() {
+        assert_eq!(codec_type("rtp://1.2.3.4:5000"), 2);
+        assert_eq!(codec_type("rtmp://host/app"), 1);
+        assert_eq!(codec_type("/sdcard/out.mp4"), 0);
+        assert_eq!(codec_type("clip.mp4"), 0);
+    }
+
+    #[test]
+    fn config_json_embeds_params_and_rtp_codec_type() {
+        let j = config_json("rtp://10.0.0.2:6000", 1280, 720, 4_000_000, 30, true, false);
+        for needle in [
+            "\"width\":1280",
+            "\"height\":720",
+            "\"bitRate\":4000000",
+            "\"fps\":30",
+            "\"codecType\":2", // rtp -> 2
+            "\"outPutPath\":\"rtp://10.0.0.2:6000\"",
+            "\"addMicphoneAudio\":true",
+            "\"addInternalAudio\":false",
+        ] {
+            assert!(j.contains(needle), "missing {needle} in {j}");
+        }
+    }
+
+    #[test]
+    fn config_json_local_file_is_codec_type_zero() {
+        let j = config_json("/sdcard/clip.mp4", 640, 480, 1_000_000, 24, false, true);
+        assert!(j.contains("\"codecType\":0"));
+        assert!(j.contains("\"addMicphoneAudio\":false"));
+        assert!(j.contains("\"addInternalAudio\":true"));
+    }
+}

@@ -2509,3 +2509,23 @@ impl Drop for XrealNative {
         }
     }
 }
+#[cfg(test)]
+mod tests {
+    use super::{sane_count, MAX_TRACKABLES};
+
+    #[test]
+    fn sane_count_passes_values_in_range() {
+        assert_eq!(sane_count(0, "t"), 0);
+        assert_eq!(sane_count(1, "t"), 1);
+        assert_eq!(sane_count(MAX_TRACKABLES, "t"), MAX_TRACKABLES);
+    }
+
+    #[test]
+    fn sane_count_clamps_out_of_range_to_zero() {
+        // The guard that prevents OOB reads from a stale/garbage change count (device crash trap).
+        assert_eq!(sane_count(-1, "t"), 0);
+        assert_eq!(sane_count(MAX_TRACKABLES + 1, "t"), 0);
+        assert_eq!(sane_count(i32::MAX, "t"), 0);
+        assert_eq!(sane_count(i32::MIN, "t"), 0);
+    }
+}
