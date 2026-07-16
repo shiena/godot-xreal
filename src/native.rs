@@ -16,6 +16,14 @@ use libloading::Library;
 use std::ffi::c_void;
 
 use crate::ffi::{
+    bounded_plane, xr_anchor, ArSubsystemChanges, FnAcquireNewTrackableAnchor,
+    FnEstimateTrackableAnchorQuality, FnGetPlaneBoundaryVertexCount, FnGetPlaneBoundaryVertexData,
+    FnGetPlaneDetectionChanges, FnGetPlaneDetectionMode, FnGetTrackableAnchorChanges,
+    FnIsHmdFeatureSupported, FnLoadTrackableAnchor, FnRemapTrackableAnchor,
+    FnRemoveTrackableAnchor, FnSaveTrackableAnchor, FnSetAnchorMappingFileDirectory,
+    FnSetPlaneDetectionMode, FnSetTrackableAnchorEnabled, Guid, TrackableId, UnityPose,
+};
+use crate::ffi::{
     FnControlSetI32, FnCreateFrame, FnCreateSession, FnGetDeviceType, FnGetFrameMetaData,
     FnGetHeadPoseAtTime, FnGetHeadPoseDisplay, FnGetPluginVersion, FnGlassesEventCallback,
     FnHmdTimeNanos, FnInitUserDefinedSettings, FnIsSessionStarted, FnLoadApi, FnNrBufferSpecCreate,
@@ -35,11 +43,6 @@ use crate::ffi::{
 use crate::ffi::{
     FnDisposeRgbCameraDataHandle, FnStartRgbCameraCapture, FnStopRgbCameraCapture,
     FnTryAcquireLatestImage, FnTryGetRgbCameraDataPlane, NrSize2i,
-};
-use crate::ffi::{
-    bounded_plane, ArSubsystemChanges, FnGetPlaneBoundaryVertexCount, FnGetPlaneBoundaryVertexData,
-    FnGetPlaneDetectionChanges, FnGetPlaneDetectionMode, FnSetPlaneDetectionMode, TrackableId,
-    UnityPose,
 };
 
 const SESSION_LIB: &str = "libXREALNativeSessionManager.so";
@@ -77,7 +80,9 @@ fn read_planes(ptr: *const c_void, count: i32, stride: usize) -> Vec<PlaneSample
         .map(|i| unsafe {
             let e = base.add(i * stride);
             PlaneSample {
-                id: std::ptr::read_unaligned(e.add(bounded_plane::TRACKABLE_ID) as *const TrackableId),
+                id: std::ptr::read_unaligned(
+                    e.add(bounded_plane::TRACKABLE_ID) as *const TrackableId
+                ),
                 pose: std::ptr::read_unaligned(e.add(bounded_plane::POSE) as *const UnityPose),
                 center: std::ptr::read_unaligned(e.add(bounded_plane::CENTER) as *const [f32; 2]),
                 size: std::ptr::read_unaligned(e.add(bounded_plane::SIZE) as *const [f32; 2]),
@@ -97,6 +102,47 @@ fn read_removed_ids(ptr: *const c_void, count: i32) -> Vec<TrackableId> {
     let stride = std::mem::size_of::<TrackableId>();
     (0..count as usize)
         .map(|i| unsafe { std::ptr::read_unaligned(base.add(i * stride) as *const TrackableId) })
+        .collect()
+}
+
+/// A tracked spatial anchor sampled from the anchor changes / an acquire/load call. `pose` is **Unity
+/// space** — convert on the Godot side (`(x, -y, -z)` / quaternion `(-x, -y, z, w)`). `session_id` is
+/// the map session it belongs to (zero until saved).
+#[derive(Clone, Copy, Debug)]
+pub struct AnchorSample {
+    pub id: TrackableId,
+    pub pose: UnityPose,
+    pub tracking_state: i32,
+    pub session_id: Guid,
+}
+
+/// Added / updated / removed anchors from one [`XrealNative::poll_anchor_changes`] call.
+pub struct AnchorChanges {
+    pub added: Vec<AnchorSample>,
+    pub updated: Vec<AnchorSample>,
+    pub removed: Vec<TrackableId>,
+}
+
+/// Read one `XRTrackedAnchor` element at `e` (a pointer to `>= xr_anchor::ELEMENT_SIZE` bytes), pulling
+/// the stable fields at the [`xr_anchor`] offsets.
+unsafe fn read_anchor_at(e: *const u8) -> AnchorSample {
+    AnchorSample {
+        id: std::ptr::read_unaligned(e.add(xr_anchor::TRACKABLE_ID) as *const TrackableId),
+        pose: std::ptr::read_unaligned(e.add(xr_anchor::POSE) as *const UnityPose),
+        tracking_state: std::ptr::read_unaligned(e.add(xr_anchor::TRACKING_STATE) as *const i32),
+        session_id: std::ptr::read_unaligned(e.add(xr_anchor::SESSION_ID) as *const Guid),
+    }
+}
+
+/// Read `count` `XRTrackedAnchor`s from a native array of `stride`-byte elements. `ptr` must be valid
+/// for `count * stride` bytes.
+fn read_anchors(ptr: *const c_void, count: i32, stride: usize) -> Vec<AnchorSample> {
+    if ptr.is_null() || count <= 0 {
+        return Vec::new();
+    }
+    let base = ptr as *const u8;
+    (0..count as usize)
+        .map(|i| unsafe { read_anchor_at(base.add(i * stride)) })
         .collect()
 }
 
@@ -142,6 +188,9 @@ pub struct XrealNative {
     get_tracking_reason: Option<FnQueryInt>,
     get_tracking_type: Option<FnQueryInt>,
     switch_tracking_type: Option<FnSwitchTrackingType>,
+    /// Per-device capability query (`IsHMDFeatureSupported`) — e.g. the RGB camera is absent on the
+    /// Air 2 Ultra, so the camera path must gate on this to avoid opening a nonexistent camera.
+    is_hmd_feature_supported: Option<FnIsHmdFeatureSupported>,
 
     // Plane detection (libXREALXRPlugin.so, flat C ABI; see docs/plans/ar-features-plan.md). Needs 6DoF.
     get_plane_detection_mode: Option<FnGetPlaneDetectionMode>,
@@ -149,6 +198,18 @@ pub struct XrealNative {
     get_plane_detection_changes: Option<FnGetPlaneDetectionChanges>,
     get_plane_boundary_vertex_count: Option<FnGetPlaneBoundaryVertexCount>,
     get_plane_boundary_vertex_data: Option<FnGetPlaneBoundaryVertexData>,
+
+    // Spatial anchors (libXREALXRPlugin.so, flat C ABI; see docs/plans/ar-features-plan.md). Needs
+    // 6DoF + the vendored nr_spatial_anchor.aar backend.
+    set_anchor_mapping_dir: Option<FnSetAnchorMappingFileDirectory>,
+    set_anchor_enabled: Option<FnSetTrackableAnchorEnabled>,
+    acquire_anchor: Option<FnAcquireNewTrackableAnchor>,
+    get_anchor_changes: Option<FnGetTrackableAnchorChanges>,
+    save_anchor: Option<FnSaveTrackableAnchor>,
+    load_anchor: Option<FnLoadTrackableAnchor>,
+    remove_anchor: Option<FnRemoveTrackableAnchor>,
+    remap_anchor: Option<FnRemapTrackableAnchor>,
+    estimate_anchor_quality: Option<FnEstimateTrackableAnchorQuality>,
 
     // RGB camera (libXREALXRPlugin.so, flat C ABI; see docs/plans/camera-feed-plan.md). Poll path.
     rgb_start_capture: Option<FnStartRgbCameraCapture>,
@@ -1131,6 +1192,9 @@ impl XrealNative {
             let switch_tracking_type: Option<FnSwitchTrackingType> = plugin_lib
                 .as_ref()
                 .and_then(|l| l.get(b"SwitchTrackingType\0").ok().map(|s| *s));
+            let is_hmd_feature_supported: Option<FnIsHmdFeatureSupported> = plugin_lib
+                .as_ref()
+                .and_then(|l| l.get(b"IsHMDFeatureSupported\0").ok().map(|s| *s));
 
             // Plane detection exports (libXREALXRPlugin.so). See docs/plans/ar-features-plan.md.
             let get_plane_detection_mode: Option<FnGetPlaneDetectionMode> = plugin_lib
@@ -1148,6 +1212,35 @@ impl XrealNative {
             let get_plane_boundary_vertex_data: Option<FnGetPlaneBoundaryVertexData> = plugin_lib
                 .as_ref()
                 .and_then(|l| l.get(b"GetPlaneBoundaryVertexData\0").ok().map(|s| *s));
+
+            // Spatial-anchor exports (libXREALXRPlugin.so). See docs/plans/ar-features-plan.md.
+            let set_anchor_mapping_dir: Option<FnSetAnchorMappingFileDirectory> = plugin_lib
+                .as_ref()
+                .and_then(|l| l.get(b"SetAnchorMappingFileDirectory\0").ok().map(|s| *s));
+            let set_anchor_enabled: Option<FnSetTrackableAnchorEnabled> = plugin_lib
+                .as_ref()
+                .and_then(|l| l.get(b"SetTrackableAnchorEnabled\0").ok().map(|s| *s));
+            let acquire_anchor: Option<FnAcquireNewTrackableAnchor> = plugin_lib
+                .as_ref()
+                .and_then(|l| l.get(b"AcquireNewTrackableAnchor\0").ok().map(|s| *s));
+            let get_anchor_changes: Option<FnGetTrackableAnchorChanges> = plugin_lib
+                .as_ref()
+                .and_then(|l| l.get(b"GetTrackableAnchorChanges\0").ok().map(|s| *s));
+            let save_anchor: Option<FnSaveTrackableAnchor> = plugin_lib
+                .as_ref()
+                .and_then(|l| l.get(b"SaveTrackableAnchor\0").ok().map(|s| *s));
+            let load_anchor: Option<FnLoadTrackableAnchor> = plugin_lib
+                .as_ref()
+                .and_then(|l| l.get(b"LoadTrackableAnchor\0").ok().map(|s| *s));
+            let remove_anchor: Option<FnRemoveTrackableAnchor> = plugin_lib
+                .as_ref()
+                .and_then(|l| l.get(b"RemoveTrackableAnchor\0").ok().map(|s| *s));
+            let remap_anchor: Option<FnRemapTrackableAnchor> = plugin_lib
+                .as_ref()
+                .and_then(|l| l.get(b"RemapTrackableAnchor\0").ok().map(|s| *s));
+            let estimate_anchor_quality: Option<FnEstimateTrackableAnchorQuality> = plugin_lib
+                .as_ref()
+                .and_then(|l| l.get(b"EstimateTrackableAnchorQuality\0").ok().map(|s| *s));
 
             // RGB camera exports (libXREALXRPlugin.so). See docs/plans/camera-feed-plan.md.
             let rgb_start_capture: Option<FnStartRgbCameraCapture> = plugin_lib
@@ -1274,11 +1367,21 @@ impl XrealNative {
                 get_tracking_reason,
                 get_tracking_type,
                 switch_tracking_type,
+                is_hmd_feature_supported,
                 get_plane_detection_mode,
                 set_plane_detection_mode,
                 get_plane_detection_changes,
                 get_plane_boundary_vertex_count,
                 get_plane_boundary_vertex_data,
+                set_anchor_mapping_dir,
+                set_anchor_enabled,
+                acquire_anchor,
+                get_anchor_changes,
+                save_anchor,
+                load_anchor,
+                remove_anchor,
+                remap_anchor,
+                estimate_anchor_quality,
                 rgb_start_capture,
                 rgb_stop_capture,
                 rgb_try_acquire_latest,
@@ -1427,6 +1530,13 @@ impl XrealNative {
 
     // --- Plane detection (libXREALXRPlugin.so; see docs/plans/ar-features-plan.md). Needs a 6DoF session. ---
 
+    /// Whether the connected glasses support an [`crate::ffi::hmd_feature`] (`IsHMDFeatureSupported`).
+    /// `None` if the export is absent. The device-accurate camera/6DoF gate (the Air 2 Ultra has no
+    /// RGB camera, so `hmd_feature::RGB_CAMERA` returns `Some(false)` there).
+    pub fn hmd_feature_supported(&self, feature: i32) -> Option<bool> {
+        self.is_hmd_feature_supported.map(|f| unsafe { f(feature) })
+    }
+
     /// Whether the plane-detection C ABI resolved (libXREALXRPlugin.so present + symbols).
     pub fn plane_detection_available(&self) -> bool {
         self.set_plane_detection_mode.is_some() && self.get_plane_detection_changes.is_some()
@@ -1491,6 +1601,119 @@ impl XrealNative {
         let mut verts = vec![[0.0_f32; 2]; n as usize];
         unsafe { data_fn(id, verts.as_mut_ptr() as *mut c_void) };
         verts
+    }
+
+    // --- Spatial anchors (libXREALXRPlugin.so; see docs/plans/ar-features-plan.md). Needs 6DoF +
+    //     the nr_spatial_anchor.aar backend. ---
+
+    /// Whether the anchor C ABI resolved (libXREALXRPlugin.so present + symbols).
+    pub fn anchor_available(&self) -> bool {
+        self.set_anchor_enabled.is_some() && self.get_anchor_changes.is_some()
+    }
+
+    /// Enable/disable the anchor subsystem. Returns whether the export was present (call before use).
+    pub fn set_anchor_enabled(&self, enabled: bool) -> bool {
+        match self.set_anchor_enabled {
+            Some(f) => {
+                unsafe { f(enabled) };
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Point the anchor subsystem at a writable directory for its saved-anchor map files.
+    pub fn set_anchor_mapping_dir(&self, dir: &str) -> bool {
+        let (Some(f), Ok(c)) = (self.set_anchor_mapping_dir, std::ffi::CString::new(dir)) else {
+            return false;
+        };
+        unsafe { f(c.as_ptr()) };
+        true
+    }
+
+    /// Create a new anchor at `pose` (Unity space). `None` if the export is absent or the SDK fails.
+    pub fn acquire_anchor(&self, pose: UnityPose) -> Option<AnchorSample> {
+        let f = self.acquire_anchor?;
+        let mut buf = [0u8; 128]; // >= xr_anchor::ELEMENT_SIZE; the SDK writes the element into it
+        let ok = unsafe { f(pose, buf.as_mut_ptr() as *mut c_void) };
+        if !ok {
+            return None;
+        }
+        Some(unsafe { read_anchor_at(buf.as_ptr()) })
+    }
+
+    /// Poll the anchor added/updated/removed changes since the last call. Copies out of the SDK's
+    /// (transient) arrays immediately. `None` when the export is absent.
+    pub fn poll_anchor_changes(&self) -> Option<AnchorChanges> {
+        let f = self.get_anchor_changes?;
+        let mut changes = ArSubsystemChanges::default();
+        unsafe { f(&mut changes) };
+        let stride = changes.element_size as usize;
+        // A stride smaller than the fields we read means an unexpected layout — bail rather than read
+        // out of bounds (expected element_size == `xr_anchor::ELEMENT_SIZE`).
+        if stride < xr_anchor::SESSION_ID + std::mem::size_of::<Guid>() {
+            if changes.added_count != 0 || changes.updated_count != 0 {
+                godot::global::godot_warn!(
+                    "[xreal] anchor changes: element_size={stride} < expected {}; skipping parse",
+                    xr_anchor::ELEMENT_SIZE
+                );
+            }
+            return Some(AnchorChanges {
+                added: Vec::new(),
+                updated: Vec::new(),
+                removed: read_removed_ids(changes.removed_ptr, changes.removed_count),
+            });
+        }
+        Some(AnchorChanges {
+            added: read_anchors(changes.added_ptr, changes.added_count, stride),
+            updated: read_anchors(changes.updated_ptr, changes.updated_count, stride),
+            removed: read_removed_ids(changes.removed_ptr, changes.removed_count),
+        })
+    }
+
+    /// Persist an anchor and return its `Guid` key. `None` if the export is absent or the SDK fails
+    /// (estimate quality ≥ SUFFICIENT first).
+    pub fn save_anchor(&self, id: TrackableId) -> Option<Guid> {
+        let f = self.save_anchor?;
+        let mut guid = Guid::default();
+        let ok = unsafe { f(id, &mut guid) };
+        ok.then_some(guid)
+    }
+
+    /// Restore a saved anchor by its `Guid`. `None` if the export is absent or the SDK fails.
+    pub fn load_anchor(&self, guid: Guid) -> Option<AnchorSample> {
+        let f = self.load_anchor?;
+        let mut buf = [0u8; 128];
+        let ok = unsafe { f(guid, buf.as_mut_ptr() as *mut c_void) };
+        if !ok {
+            return None;
+        }
+        Some(unsafe { read_anchor_at(buf.as_ptr()) })
+    }
+
+    /// Drop a tracked anchor. Returns the SDK bool (or `false` if the export is absent).
+    pub fn remove_anchor(&self, id: TrackableId) -> bool {
+        match self.remove_anchor {
+            Some(f) => unsafe { f(id) },
+            None => false,
+        }
+    }
+
+    /// Re-localize an anchor into the current map. Returns the SDK bool (or `false` if absent).
+    pub fn remap_anchor(&self, id: TrackableId) -> bool {
+        match self.remap_anchor {
+            Some(f) => unsafe { f(id) },
+            None => false,
+        }
+    }
+
+    /// Estimate an anchor's save quality (`ffi::anchor_quality`) at `pose`. `None` if the export is
+    /// absent or the SDK fails.
+    pub fn estimate_anchor_quality(&self, id: TrackableId, pose: UnityPose) -> Option<i32> {
+        let f = self.estimate_anchor_quality?;
+        let mut quality = -1_i32;
+        let ok = unsafe { f(id, pose, &mut quality) };
+        ok.then_some(quality)
     }
 
     /// Whether the RGB-camera C ABI is available (libXREALXRPlugin.so present + symbols resolved).

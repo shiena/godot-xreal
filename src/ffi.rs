@@ -288,6 +288,77 @@ pub type FnGetPlaneBoundaryVertexCount = unsafe extern "C" fn(TrackableId) -> i3
 /// `void GetPlaneBoundaryVertexData(TrackableId, void* out)` — writes `count` `Vector2`s (plane-local).
 pub type FnGetPlaneBoundaryVertexData = unsafe extern "C" fn(TrackableId, *mut c_void);
 
+/// `XREALSupportedFeature` (`XREALPlugin.cs`) — the per-device capability queried by
+/// [`FnIsHmdFeatureSupported`]. The SDK uses `RGB_CAMERA` to gate the camera pipeline (so the Air 2
+/// Ultra, which has no RGB camera, reports `false` and never opens it — see `XREALCameraInitializer.cs`).
+pub mod hmd_feature {
+    pub const RGB_CAMERA: i32 = 1;
+    pub const WEARING_STATUS: i32 = 2;
+    pub const CONTROLLER: i32 = 3;
+    pub const HEAD_TRACKING_ROTATION: i32 = 4;
+    pub const HEAD_TRACKING_POSITION: i32 = 5;
+}
+/// `bool IsHMDFeatureSupported(XREALSupportedFeature)` — whether the connected glasses support a
+/// feature (`hmd_feature`). The correct, device-accurate gate before opening the RGB camera etc.
+pub type FnIsHmdFeatureSupported = unsafe extern "C" fn(i32) -> bool;
+
+// --- Spatial anchors (libXREALXRPlugin.so flat C exports; see docs/plans/ar-features-plan.md) --------
+// Source: `XREALAnchorSubsystem.cs` `[DllImport]` + demangled `InputManager::*` internals. Needs a
+// 6DoF session AND the vendored `nr_spatial_anchor.aar` backend `.so`. Poses are Unity space — convert
+// like the plane/hand poses. The changes-poll reuses [`ArSubsystemChanges`]; `removed` is `TrackableId[]`.
+
+/// .NET `System.Guid` — a 128-bit persistence key for a saved anchor. Opaque 16-byte blob, passed by
+/// value (2 GPRs) into [`FnLoadTrackableAnchor`] and written out by [`FnSaveTrackableAnchor`].
+#[repr(C)]
+#[derive(Clone, Copy, Default, PartialEq, Eq, Hash, Debug)]
+pub struct Guid {
+    pub lo: u64,
+    pub hi: u64,
+}
+
+/// Field offsets within this SDK build's `XRTrackedAnchor` element (`element_size = 72`). Layout
+/// derived from the disassembly of `InputManager::AcquireNewTrackableAnchor` / `LoadTrackableAnchor`:
+/// `[trackableId:16][pose:28][trackingState:4][nativePtr:8][sessionId(Guid):16]`. See
+/// `docs/plans/ar-features-plan.md`.
+pub mod xr_anchor {
+    pub const TRACKABLE_ID: usize = 0x00;
+    pub const POSE: usize = 0x10;
+    pub const TRACKING_STATE: usize = 0x2c;
+    pub const SESSION_ID: usize = 0x38;
+    /// Expected `ArSubsystemChanges::element_size` for an `XRTrackedAnchor` (assert at runtime).
+    pub const ELEMENT_SIZE: i32 = 72;
+}
+
+/// Anchor-quality estimate returned by [`FnEstimateTrackableAnchorQuality`] (require ≥ `SUFFICIENT`
+/// before saving). `XREALAnchorSubsystem.cs` `NRTrackableAnchorQuality`.
+pub mod anchor_quality {
+    pub const INSUFFICIENT: i32 = 0;
+    pub const SUFFICIENT: i32 = 1;
+    pub const GOOD: i32 = 2;
+}
+
+/// `void SetAnchorMappingFileDirectory(const char* dir)` — where saved-anchor maps are persisted.
+pub type FnSetAnchorMappingFileDirectory = unsafe extern "C" fn(*const c_char);
+/// `void SetTrackableAnchorEnabled(bool)` — turn the anchor subsystem on/off (call before use).
+pub type FnSetTrackableAnchorEnabled = unsafe extern "C" fn(bool);
+/// `bool AcquireNewTrackableAnchor(UnityPose pose, XRTrackedAnchor* out)` — create an anchor at a pose.
+/// `UnityPose` (28 B, non-HFA) is passed **indirectly** by the ABI; declare it by value and Rust matches.
+pub type FnAcquireNewTrackableAnchor = unsafe extern "C" fn(UnityPose, *mut c_void) -> bool;
+/// `void GetTrackableAnchorChanges(out ARSubsystemChanges)` — added/updated/removed `XRTrackedAnchor`s.
+pub type FnGetTrackableAnchorChanges = unsafe extern "C" fn(*mut ArSubsystemChanges);
+/// `bool SaveTrackableAnchor(TrackableId, Guid* out)` — persist an anchor; writes its `Guid` key.
+pub type FnSaveTrackableAnchor = unsafe extern "C" fn(TrackableId, *mut Guid) -> bool;
+/// `bool LoadTrackableAnchor(Guid, XRTrackedAnchor* out)` — restore a saved anchor by its `Guid`.
+pub type FnLoadTrackableAnchor = unsafe extern "C" fn(Guid, *mut c_void) -> bool;
+/// `bool RemoveTrackableAnchor(TrackableId)` — drop a tracked anchor.
+pub type FnRemoveTrackableAnchor = unsafe extern "C" fn(TrackableId) -> bool;
+/// `bool RemapTrackableAnchor(TrackableId)` — re-localize an anchor into the current map.
+pub type FnRemapTrackableAnchor = unsafe extern "C" fn(TrackableId) -> bool;
+/// `bool EstimateTrackableAnchorQuality(TrackableId, UnityPose, i32* out)` — save-quality estimate
+/// (`anchor_quality`).
+pub type FnEstimateTrackableAnchorQuality =
+    unsafe extern "C" fn(TrackableId, UnityPose, *mut i32) -> bool;
+
 /// `GlassesEventData` from `XREALCallbackHandler.cs`, delivered **by value** to the
 /// callback registered with `SetGlassesEventCallback` (libXREALXRPlugin.so export,
 /// C# `[DllImport] SetGlassesEventCallback(XREALGlassesEventCallback)`).

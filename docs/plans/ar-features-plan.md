@@ -1,9 +1,20 @@
 # AR features (Plane / Image / Anchor / Mesh): confirmed C ABI + plan
 
-Status: **Plane detection IMPLEMENTED (2026-07-16, compiles clean; on-device verification pending).
-All four features' C ABI is RE-confirmed** (codex, cross-checking the SDK C# `[DllImport]` sources
-against `llvm-nm`/AArch64 disassembly of `libXREALXRPlugin.so`). Implementation order:
-**Plane (done) → Spatial Anchor → Image Tracking → Depth Mesh (shelve)**.
+Status: **Plane detection + Spatial Anchor IMPLEMENTED (2026-07-16, compiles clean; on-device
+verification pending). All four features' C ABI is RE-confirmed** (codex, cross-checking the SDK C#
+`[DllImport]` sources against `llvm-nm`/AArch64 disassembly of `libXREALXRPlugin.so`). Implementation
+order: **Plane (done) → Spatial Anchor (done) → Image Tracking → Depth Mesh (shelve)**.
+
+**Device capability gate:** `IsHMDFeatureSupported(XREALSupportedFeature)` (flat export, `-> bool`) is
+the device-accurate feature check the SDK itself uses — e.g. the **Air 2 Ultra has no RGB camera**, so
+`RGB_CAMERA(1)` returns false there (opening it anyway froze the app). Enum: `RGB_CAMERA=1`,
+`WEARING_STATUS=2`, `CONTROLLER=3`, `HEAD_TRACKING_ROTATION=4`, `HEAD_TRACKING_POSITION=5` (6DoF).
+Exposed as `XrealSystem.is_hmd_feature_supported(feature)` / `is_camera_supported()`.
+
+**Plane-toggle gotcha:** `SetPlaneDetectionMode(mode) -> bool` — the return is **not** a success
+signal (the SDK's own `XREALPlaneSubsystem.cs` setter discards it, and it can read false even when the
+mode takes). Gate the UI on `is_plane_detection_available()` (ABI resolved) and poll for actual planes,
+not on that return.
 
 Every AR export is a flat C `T` symbol (`LibName = "XREALXRPlugin"`) — the **same dlsym pattern** as
 the RGB camera / hand tracking already in `src/ffi.rs`. All 21 exports confirmed present.
@@ -93,11 +104,12 @@ by `element_size` stride at the offsets above and copies out immediately; `plane
 `element_size == 104`, plane transforms sit on the real surface (adjust the coordinate flip if not),
 and `alignment` reads 100/200.
 
-## 2. Spatial Anchor (next)
+## 2. Spatial Anchor — IMPLEMENTED
 
-Ships in **`nr_spatial_anchor.aar`** (`libnr_spatial_anchor.so`) — add to `export_plugin.gd` +
-`vendor_xreal_libs`. No `nr_plugins.json` entry (loaded directly once the `.so` is present). Needs
-6DoF. Exports (`XREALAnchorSubsystem.cs`, thunks `0x481c4`–`0x4833c`):
+Ships in **`nr_spatial_anchor.aar`** (`libnr_spatial_anchor.so`) — **now vendored** (`export_plugin.gd`
+`_get_android_libraries` + `vendor_xreal_libs.{sh,ps1}` + `build.{sh,ps1}` checks). No
+`nr_plugins.json` entry (loaded directly once the `.so` is present). Needs 6DoF. Exports
+(`XREALAnchorSubsystem.cs`, thunks `0x481c4`–`0x4833c`):
 
 | Flat C signature | internal |
 |---|---|
@@ -111,11 +123,25 @@ Ships in **`nr_spatial_anchor.aar`** (`libnr_spatial_anchor.so`) — add to `exp
 | `RemapTrackableAnchor(TrackableId) -> bool` | `0x819c8` |
 | `EstimateTrackableAnchorQuality(TrackableId, UnityPose, *mut i32) -> bool` | `0x818a4` |
 
-**`XRAnchor` element — 72 bytes (`element_size = 0x48`):** `trackable_id@0x00`, `pose@0x10`,
-`tracking_state@0x2c`, `native_ptr@0x30`, `session_id(Guid)@0x38`. Quality enum:
-`INSUFFICIENT=0 / SUFFICIENT=1 / GOOD=2`. Init: `SetTrackableAnchorEnabled(true)` →
-`SetAnchorMappingFileDirectory(writable_dir)`; `EstimateTrackableAnchorQuality` ≥ SUFFICIENT before
-`SaveTrackableAnchor`. Saved-anchor enumeration is pure C# file-listing (no native call).
+**`XRTrackedAnchor` element — 72 bytes (`element_size = 0x48`), layout DEVICE-CONFIRMED by
+disassembling both `AcquireNewTrackableAnchor` (out ptr → x2→x19) and `LoadTrackableAnchor` (out ptr
+→ x3→x20), which write identical fields:** `trackable_id@0x00 (16)`, `pose@0x10 (28, Unity space)`,
+`tracking_state@0x2c (i32; 2=Tracking/0=None)`, `native_ptr@0x30 (8, zeroed on output)`,
+`session_id(Guid)@0x38 (16)`. `element_size=72` is baked as an immediate (`mov w10,#72`) and the
+change-array counts divide by a 72-byte stride. Quality enum: `INSUFFICIENT=0 / SUFFICIENT=1 /
+GOOD=2`. Init: `SetTrackableAnchorEnabled(true)` → `SetAnchorMappingFileDirectory(writable_dir)`;
+`EstimateTrackableAnchorQuality` ≥ SUFFICIENT before `SaveTrackableAnchor`. Saved-anchor enumeration is
+pure C# file-listing (no native call).
+
+**Shipped implementation:** `src/ffi.rs` (`Guid`, `xr_anchor` offsets, `anchor_quality`, 9 fn-pointer
+types) → `src/native.rs` (dlsym all 9 + `read_anchor_at`/`read_anchors`, mirroring the plane readers;
+`AnchorSample`/`AnchorChanges`) → `src/session.rs` wrappers → `src/system.rs` `XrealSystem`:
+`is_anchor_available()`, `set_anchor_enabled(bool)`, `set_anchor_mapping_dir(String)`,
+`acquire_anchor(Transform3D) -> Dictionary`, `poll_anchors() -> {added, updated, removed}`,
+`save_anchor(id) -> Guid str`, `load_anchor(Guid str) -> Dictionary`, `remove_anchor(id)`,
+`remap_anchor(id)`, `estimate_anchor_quality(id, Transform3D) -> int`, `ANCHOR_QUALITY_*` constants.
+On-device verify pending (needs 6DoF + real tracking): confirm `poll_anchors`/`acquire`/`save`/`load`
+round-trip and the pose flip lands anchors on the intended spot.
 
 ## 3. Image Tracking (third — two extra prereqs)
 

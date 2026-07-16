@@ -222,6 +222,40 @@ impl XrealSystem {
             .unwrap_or(-1) as i64
     }
 
+    // --- Device capability query (IsHMDFeatureSupported) ---
+
+    /// `XREALSupportedFeature` values for [`Self::is_hmd_feature_supported`].
+    #[constant]
+    const FEATURE_RGB_CAMERA: i64 = crate::ffi::hmd_feature::RGB_CAMERA as i64;
+    #[constant]
+    const FEATURE_WEARING_STATUS: i64 = crate::ffi::hmd_feature::WEARING_STATUS as i64;
+    #[constant]
+    const FEATURE_CONTROLLER: i64 = crate::ffi::hmd_feature::CONTROLLER as i64;
+    #[constant]
+    const FEATURE_HEAD_TRACKING_ROTATION: i64 =
+        crate::ffi::hmd_feature::HEAD_TRACKING_ROTATION as i64;
+    #[constant]
+    const FEATURE_HEAD_TRACKING_POSITION: i64 =
+        crate::ffi::hmd_feature::HEAD_TRACKING_POSITION as i64;
+
+    /// Whether the connected glasses support a `FEATURE_*` capability (`IsHMDFeatureSupported`).
+    /// `false` when unavailable. This is the device-accurate gate the SDK itself uses.
+    #[func]
+    fn is_hmd_feature_supported(&self, feature: i64) -> bool {
+        session::shared()
+            .and_then(|s| s.hmd_feature_supported(feature as i32))
+            .unwrap_or(false)
+    }
+
+    /// Whether the connected glasses have an RGB camera (`IsHMDFeatureSupported(FEATURE_RGB_CAMERA)`).
+    /// The Air 2 Ultra reports `false` — gate the camera on this so it is never opened there.
+    #[func]
+    fn is_camera_supported(&self) -> bool {
+        session::shared()
+            .and_then(|s| s.hmd_feature_supported(crate::ffi::hmd_feature::RGB_CAMERA))
+            .unwrap_or(false)
+    }
+
     // --- Plane detection (see docs/plans/ar-features-plan.md). Needs a live 6DoF session. ---
 
     /// `PlaneDetectionMode` flags for [`Self::set_plane_detection_mode`] / [`Self::poll_planes`].
@@ -298,6 +332,130 @@ impl XrealSystem {
             out.push(Vector2::new(v[0], v[1]));
         }
         out
+    }
+
+    // --- Spatial anchors (see docs/plans/ar-features-plan.md). Needs a live 6DoF session + the
+    //     vendored nr_spatial_anchor.aar backend. ---
+
+    /// Anchor-quality levels from [`Self::estimate_anchor_quality`] — require ≥ SUFFICIENT before saving.
+    #[constant]
+    const ANCHOR_QUALITY_INSUFFICIENT: i64 = crate::ffi::anchor_quality::INSUFFICIENT as i64;
+    #[constant]
+    const ANCHOR_QUALITY_SUFFICIENT: i64 = crate::ffi::anchor_quality::SUFFICIENT as i64;
+    #[constant]
+    const ANCHOR_QUALITY_GOOD: i64 = crate::ffi::anchor_quality::GOOD as i64;
+
+    /// Whether the spatial-anchor C ABI resolved (false on desktop / when the backend is absent).
+    #[func]
+    fn is_anchor_available(&self) -> bool {
+        session::shared()
+            .map(XrealSession::anchor_available)
+            .unwrap_or(false)
+    }
+
+    /// Enable/disable the anchor subsystem (call once before acquiring). Returns whether the export
+    /// was present. Needs a live 6DoF session for anchors to actually track.
+    #[func]
+    fn set_anchor_enabled(&self, enabled: bool) -> bool {
+        session::shared()
+            .map(|s| s.set_anchor_enabled(enabled))
+            .unwrap_or(false)
+    }
+
+    /// Point the anchor subsystem at a writable directory for its saved-anchor map files (e.g.
+    /// `OS.get_user_data_dir()`). Call before saving/loading.
+    #[func]
+    fn set_anchor_mapping_dir(&self, dir: GString) -> bool {
+        session::shared()
+            .map(|s| s.set_anchor_mapping_dir(&dir.to_string()))
+            .unwrap_or(false)
+    }
+
+    /// Create a new anchor at `pose` (a world `Transform3D`). Returns the anchor `Dictionary`
+    /// (`{ id, transform, tracking_state, session_id }`) or an empty dict on failure.
+    #[func]
+    fn acquire_anchor(&self, pose: Transform3D) -> VarDictionary {
+        let up = transform_to_unity_pose(&pose);
+        session::shared()
+            .and_then(|s| s.acquire_anchor(up))
+            .map(|a| anchor_to_dict(&a))
+            .unwrap_or_default()
+    }
+
+    /// Poll anchor changes since the last call: `{ "added": Array, "updated": Array, "removed": Array }`
+    /// (each added/updated entry a `Dictionary { id, transform, tracking_state, session_id }`; `removed`
+    /// an array of id strings). Call once per frame to drive the SDK's change queue.
+    #[func]
+    fn poll_anchors(&self) -> VarDictionary {
+        let mut added = VarArray::new();
+        let mut updated = VarArray::new();
+        let mut removed = VarArray::new();
+        if let Some(ch) = session::shared().and_then(|s| s.poll_anchor_changes()) {
+            for a in &ch.added {
+                added.push(&anchor_to_dict(a).to_variant());
+            }
+            for a in &ch.updated {
+                updated.push(&anchor_to_dict(a).to_variant());
+            }
+            for id in &ch.removed {
+                removed.push(&trackable_id_to_gstring(*id).to_variant());
+            }
+        }
+        let mut d = VarDictionary::new();
+        d.set(&"added".to_variant(), &added.to_variant());
+        d.set(&"updated".to_variant(), &updated.to_variant());
+        d.set(&"removed".to_variant(), &removed.to_variant());
+        d
+    }
+
+    /// Persist an anchor (by its id from `poll_anchors`) and return its `Guid` key as a 32-hex string
+    /// (empty on failure). Estimate quality ≥ SUFFICIENT first; enumerate saved keys yourself.
+    #[func]
+    fn save_anchor(&self, id: GString) -> GString {
+        let tid = gstring_to_trackable_id(&id);
+        session::shared()
+            .and_then(|s| s.save_anchor(tid))
+            .map(guid_to_gstring)
+            .unwrap_or_default()
+    }
+
+    /// Restore a saved anchor by its `Guid` string. Returns the anchor `Dictionary` or an empty dict.
+    #[func]
+    fn load_anchor(&self, guid: GString) -> VarDictionary {
+        let g = gstring_to_guid(&guid);
+        session::shared()
+            .and_then(|s| s.load_anchor(g))
+            .map(|a| anchor_to_dict(&a))
+            .unwrap_or_default()
+    }
+
+    /// Drop a tracked anchor by its id. Returns the SDK bool (or `false` when unavailable).
+    #[func]
+    fn remove_anchor(&self, id: GString) -> bool {
+        let tid = gstring_to_trackable_id(&id);
+        session::shared()
+            .map(|s| s.remove_anchor(tid))
+            .unwrap_or(false)
+    }
+
+    /// Re-localize an anchor into the current map. Returns the SDK bool (or `false` when unavailable).
+    #[func]
+    fn remap_anchor(&self, id: GString) -> bool {
+        let tid = gstring_to_trackable_id(&id);
+        session::shared()
+            .map(|s| s.remap_anchor(tid))
+            .unwrap_or(false)
+    }
+
+    /// Estimate an anchor's save quality (`ANCHOR_QUALITY_*`) at `pose`, or `-1` on failure.
+    #[func]
+    fn estimate_anchor_quality(&self, id: GString, pose: Transform3D) -> i64 {
+        let tid = gstring_to_trackable_id(&id);
+        let up = transform_to_unity_pose(&pose);
+        session::shared()
+            .and_then(|s| s.estimate_anchor_quality(tid, up))
+            .map(i64::from)
+            .unwrap_or(-1)
     }
 
     // NOTE: there is no stereo-mode selector — the port is Multipass-only. Multiview is shelved and
@@ -429,7 +587,10 @@ fn unity_pose_to_transform(pose: &crate::ffi::UnityPose) -> Transform3D {
     let p = pose.position;
     let r = pose.rotation;
     let quat = Quaternion::new(r[0], -r[1], -r[2], r[3]);
-    Transform3D::new(Basis::from_quaternion(quat), Vector3::new(p[0], -p[1], -p[2]))
+    Transform3D::new(
+        Basis::from_quaternion(quat),
+        Vector3::new(p[0], -p[1], -p[2]),
+    )
 }
 
 /// 128-bit `TrackableId` → a stable 32-hex-char string (round-trips via [`gstring_to_trackable_id`]).
@@ -441,18 +602,93 @@ fn trackable_id_to_gstring(id: crate::ffi::TrackableId) -> GString {
 fn gstring_to_trackable_id(s: &GString) -> crate::ffi::TrackableId {
     let s = s.to_string();
     crate::ffi::TrackableId {
-        sub_id_1: s.get(0..16).and_then(|h| u64::from_str_radix(h, 16).ok()).unwrap_or(0),
-        sub_id_2: s.get(16..32).and_then(|h| u64::from_str_radix(h, 16).ok()).unwrap_or(0),
+        sub_id_1: s
+            .get(0..16)
+            .and_then(|h| u64::from_str_radix(h, 16).ok())
+            .unwrap_or(0),
+        sub_id_2: s
+            .get(16..32)
+            .and_then(|h| u64::from_str_radix(h, 16).ok())
+            .unwrap_or(0),
     }
 }
 
 /// A detected plane → a GDScript `Dictionary`.
 fn plane_to_dict(p: &crate::native::PlaneSample) -> VarDictionary {
     let mut d = VarDictionary::new();
-    d.set(&"id".to_variant(), &trackable_id_to_gstring(p.id).to_variant());
-    d.set(&"transform".to_variant(), &unity_pose_to_transform(&p.pose).to_variant());
-    d.set(&"center".to_variant(), &Vector2::new(p.center[0], p.center[1]).to_variant());
-    d.set(&"size".to_variant(), &Vector2::new(p.size[0], p.size[1]).to_variant());
-    d.set(&"alignment".to_variant(), &(p.alignment as i64).to_variant());
+    d.set(
+        &"id".to_variant(),
+        &trackable_id_to_gstring(p.id).to_variant(),
+    );
+    d.set(
+        &"transform".to_variant(),
+        &unity_pose_to_transform(&p.pose).to_variant(),
+    );
+    d.set(
+        &"center".to_variant(),
+        &Vector2::new(p.center[0], p.center[1]).to_variant(),
+    );
+    d.set(
+        &"size".to_variant(),
+        &Vector2::new(p.size[0], p.size[1]).to_variant(),
+    );
+    d.set(
+        &"alignment".to_variant(),
+        &(p.alignment as i64).to_variant(),
+    );
+    d
+}
+
+/// Inverse of [`unity_pose_to_transform`]: a Godot world `Transform3D` → a Unity-space `UnityPose`
+/// (for anchor acquire/quality input). The position/quaternion sign flips are self-inverse, so the
+/// same `(x, -y, -z)` / `(x, -y, -z, w)` pattern round-trips.
+fn transform_to_unity_pose(t: &Transform3D) -> crate::ffi::UnityPose {
+    let p = t.origin;
+    let q = t.basis.get_quaternion();
+    crate::ffi::UnityPose {
+        position: [p.x, -p.y, -p.z],
+        rotation: [q.x, -q.y, -q.z, q.w],
+    }
+}
+
+/// 128-bit anchor persistence `Guid` → a stable 32-hex-char string (round-trips via [`gstring_to_guid`]).
+fn guid_to_gstring(g: crate::ffi::Guid) -> GString {
+    GString::from(format!("{:016x}{:016x}", g.lo, g.hi).as_str())
+}
+
+/// Parse a 32-hex-char `Guid` string (from `save_anchor`) back into a [`crate::ffi::Guid`].
+fn gstring_to_guid(s: &GString) -> crate::ffi::Guid {
+    let s = s.to_string();
+    crate::ffi::Guid {
+        lo: s
+            .get(0..16)
+            .and_then(|h| u64::from_str_radix(h, 16).ok())
+            .unwrap_or(0),
+        hi: s
+            .get(16..32)
+            .and_then(|h| u64::from_str_radix(h, 16).ok())
+            .unwrap_or(0),
+    }
+}
+
+/// A tracked spatial anchor → a GDScript `Dictionary`.
+fn anchor_to_dict(a: &crate::native::AnchorSample) -> VarDictionary {
+    let mut d = VarDictionary::new();
+    d.set(
+        &"id".to_variant(),
+        &trackable_id_to_gstring(a.id).to_variant(),
+    );
+    d.set(
+        &"transform".to_variant(),
+        &unity_pose_to_transform(&a.pose).to_variant(),
+    );
+    d.set(
+        &"tracking_state".to_variant(),
+        &(a.tracking_state as i64).to_variant(),
+    );
+    d.set(
+        &"session_id".to_variant(),
+        &guid_to_gstring(a.session_id).to_variant(),
+    );
     d
 }

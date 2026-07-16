@@ -49,9 +49,10 @@ XREAL Air 2 Ultra）で実機確認。以下はすべてコミュニティによ
 | **スマホ 3D ポインター**（ホスト IMU） | ✅（デモ） | スマホを傾けてグラス内に 3D レイを飛ばす（`demo/phone_pointer.gd`）。姿勢は `XrealSystem.poll_controller()` が露出する NRController の生 IMU（`accel`→ピッチ/ロール, `gyro`→ヨー）を GDScript で融合。本機では NRController の**融合ポーズ**も Godot 内蔵 `Input.get_gyroscope()` も空だったため。レイキャストで当たったオブジェクトをハイライト・トリガーで選択、オンスクリーンの左右手切替でレイの原点を切替、gyro ドリフトはバイアス学習+デッドゾーンで抑制。`recenter` で正面リセット。 |
 | **マルチレジューム** — スマホを別アプリに切替えてもグラスのアプリが継続（描画も） | ✅ | **Unity SDK がフローティングウインドウ（復帰ボタン）で行う所を、本移植では代わりに auto-enter Picture-in-Picture で実装。** 背景化するとアプリはスマホ隅の小タイル（pause だが可視）になり、Godot の GL スレッド + Surface が生存 → グラスがライブ描画継続。タイルタップで全画面復帰。`XrealBridge.enableAutoEnterPiP`（`demo/main.gd` から駆動）、manifest 足場 `nr_features=multiResume`+`NRFakeActivity`。**実機検証済み**: submit カウンタが背景化後も進行（PiP 前は凍結）。なぜ PiP か（フローティングウインドウ / foreground service / SurfaceView 付け替えでない理由）は `docs/plans/background-render-plan.md`。（先にフローティング「戻る」ボタンを実装したが*復帰*専用で描画維持できず、PiP に差し替えて除去: `docs/archive/codex-floatingmanager-analysis.md`） |
 | **平面検出** → GDScript | ✅ 移植済み（実機検証待ち） | 水平/垂直の平面検出を `XrealSystem.set_plane_detection_mode()` + `poll_planes()`（追加/更新/削除、ポーズ・サイズ・alignment 付き）+ `get_plane_boundary()` で提供。`libXREALXRPlugin.so` のフラット C export（追加 AAR 不要）、6DoF 必須。4 つの AR 機能の C ABI は RE 確定済み — [`docs/plans/ar-features-plan.md`](docs/plans/ar-features-plan.md)。 |
+| **空間アンカー** → GDScript | ✅ 移植済み（実機検証待ち） | ワールドアンカーの作成/永続化/復元を `XrealSystem.acquire_anchor()` / `poll_anchors()` / `save_anchor()` / `load_anchor()` / `estimate_anchor_quality()` 等で提供。フラット C export（`XRTrackedAnchor` レイアウトは実機確定）+ 同梱の `nr_spatial_anchor.aar` バックエンド、6DoF 必須。併せて `is_camera_supported()` / `is_hmd_feature_supported()`（SDK のデバイス別判定 — Air 2 Ultra は RGB カメラ非搭載）も追加。 |
 
-未実装: アプリカメラの 6DoF 位置、画像トラッキング、空間アンカー、メッシング、音声/写真
-キャプチャ。（画像/アンカー/メッシュは ARCore・AR Foundation 不要で移植可能、C ABI も RE 済み —
+未実装: アプリカメラの 6DoF 位置、画像トラッキング、メッシング、音声/写真キャプチャ。（画像/
+メッシュは ARCore・AR Foundation 不要で移植可能、C ABI も RE 済み —
 [`docs/plans/ar-features-plan.md`](docs/plans/ar-features-plan.md)。）
 
 ## ビルド

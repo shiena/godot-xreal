@@ -52,12 +52,14 @@ func _get_android_manifest_application_element_contents(_platform: EditorExportP
 <activity android:name="com.godot.game.XrealCompanionActivity" android:autoRemoveFromRecents="true" android:excludeFromRecents="true" android:exported="false" android:hardwareAccelerated="true" android:launchMode="singleTask" android:resizeableActivity="true" android:screenOrientation="reverseLandscape" android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen" android:configChanges="layoutDirection|locale|orientation|keyboardHidden|screenSize|smallestScreenSize|density|keyboard|navigation|screenLayout|uiMode" />
 <activity android:name="ai.nreal.activitylife.NRFakeActivity" android:autoRemoveFromRecents="true" android:excludeFromRecents="true" android:exported="false" android:hardwareAccelerated="false" android:launchMode="singleTask" android:resizeableActivity="true" android:screenOrientation="reverseLandscape" android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale|layoutDirection|density" />"""
 
-## Local .aar the plugin ships (XREAL/NR runtime archives).
+## Local .aar the plugin ships (XREAL/NR runtime archives). nr_spatial_anchor carries the
+## libnr_spatial_anchor.so backend for the spatial-anchor C ABI (see docs/plans/ar-features-plan.md).
 func _get_android_libraries(_platform: EditorExportPlatform, _debug: bool) -> PackedStringArray:
 	return PackedStringArray([
 		ANDROID_DIR + "nr_loader.aar",
 		ANDROID_DIR + "nr_api.aar",
 		ANDROID_DIR + "nr_common.aar",
+		ANDROID_DIR + "nr_spatial_anchor.aar",
 		ANDROID_DIR + "GlassesDisplayPlugEvent-2.4.2.aar",
 		ANDROID_DIR + "Log-Control-1.2.aar",
 	])

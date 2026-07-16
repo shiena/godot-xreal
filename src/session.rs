@@ -576,6 +576,14 @@ impl XrealSession {
             .switch_tracking_type(tracking_type)
     }
 
+    /// Whether the connected glasses support an `ffi::hmd_feature` (`IsHMDFeatureSupported`).
+    pub fn hmd_feature_supported(&self, feature: i32) -> Option<bool> {
+        self.native
+            .lock()
+            .expect("xreal native mutex")
+            .hmd_feature_supported(feature)
+    }
+
     /// Whether the plane-detection C ABI resolved (see `docs/plans/ar-features-plan.md`).
     pub fn plane_detection_available(&self) -> bool {
         self.native
@@ -614,6 +622,96 @@ impl XrealSession {
             .lock()
             .expect("xreal native mutex")
             .plane_boundary(id)
+    }
+
+    // --- Spatial anchors (see docs/plans/ar-features-plan.md). Needs a live 6DoF session +
+    //     the nr_spatial_anchor.aar backend. ---
+
+    /// Whether the anchor C ABI resolved.
+    pub fn anchor_available(&self) -> bool {
+        self.native
+            .lock()
+            .expect("xreal native mutex")
+            .anchor_available()
+    }
+
+    /// Enable/disable the anchor subsystem (call before use). Returns whether the export was present.
+    pub fn set_anchor_enabled(&self, enabled: bool) -> bool {
+        self.native
+            .lock()
+            .expect("xreal native mutex")
+            .set_anchor_enabled(enabled)
+    }
+
+    /// Point the anchor subsystem at a writable directory for its saved-anchor map files.
+    pub fn set_anchor_mapping_dir(&self, dir: &str) -> bool {
+        self.native
+            .lock()
+            .expect("xreal native mutex")
+            .set_anchor_mapping_dir(dir)
+    }
+
+    /// Create a new anchor at `pose` (Unity space).
+    pub fn acquire_anchor(
+        &self,
+        pose: crate::ffi::UnityPose,
+    ) -> Option<crate::native::AnchorSample> {
+        self.native
+            .lock()
+            .expect("xreal native mutex")
+            .acquire_anchor(pose)
+    }
+
+    /// Poll the anchor added/updated/removed changes since the last call.
+    pub fn poll_anchor_changes(&self) -> Option<crate::native::AnchorChanges> {
+        self.native
+            .lock()
+            .expect("xreal native mutex")
+            .poll_anchor_changes()
+    }
+
+    /// Persist an anchor and return its `Guid` key.
+    pub fn save_anchor(&self, id: crate::ffi::TrackableId) -> Option<crate::ffi::Guid> {
+        self.native
+            .lock()
+            .expect("xreal native mutex")
+            .save_anchor(id)
+    }
+
+    /// Restore a saved anchor by its `Guid`.
+    pub fn load_anchor(&self, guid: crate::ffi::Guid) -> Option<crate::native::AnchorSample> {
+        self.native
+            .lock()
+            .expect("xreal native mutex")
+            .load_anchor(guid)
+    }
+
+    /// Drop a tracked anchor.
+    pub fn remove_anchor(&self, id: crate::ffi::TrackableId) -> bool {
+        self.native
+            .lock()
+            .expect("xreal native mutex")
+            .remove_anchor(id)
+    }
+
+    /// Re-localize an anchor into the current map.
+    pub fn remap_anchor(&self, id: crate::ffi::TrackableId) -> bool {
+        self.native
+            .lock()
+            .expect("xreal native mutex")
+            .remap_anchor(id)
+    }
+
+    /// Estimate an anchor's save quality (`ffi::anchor_quality`) at `pose`.
+    pub fn estimate_anchor_quality(
+        &self,
+        id: crate::ffi::TrackableId,
+        pose: crate::ffi::UnityPose,
+    ) -> Option<i32> {
+        self.native
+            .lock()
+            .expect("xreal native mutex")
+            .estimate_anchor_quality(id, pose)
     }
 
     /// Current HMD clock in nanoseconds, or `None` while the perception pipe is down.

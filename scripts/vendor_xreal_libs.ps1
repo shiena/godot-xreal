@@ -6,7 +6,7 @@
 
       - 3 core .so       -> jniLibs/arm64-v8a/           (copied; dlopen'd by the GDExtension,
                                                           packed via godot_xreal.gdextension)
-      - 5 .aar           -> addons/godot_xreal/android/  (shipped into the APK by export_plugin.gd:
+      - 6 .aar           -> addons/godot_xreal/android/  (shipped into the APK by export_plugin.gd:
                                                           Java/JNI layer + manifest merge; Gradle
                                                           also merges each .aar's jni/arm64-v8a/*.so
                                                           — the NR libs — into the APK, so they are
@@ -94,11 +94,11 @@ try {
         Write-Host "so   $lib"
     }
 
-    # --- 2) 5 .aar -> addons/godot_xreal/android (shipped by export_plugin.gd _get_android_libraries;
+    # --- 2) 6 .aar -> addons/godot_xreal/android (shipped by export_plugin.gd _get_android_libraries;
     #        the exact file names are hardcoded there). Besides the Java/JNI layer + manifest merge,
     #        the aars carry the NR native libs at jni/arm64-v8a/ (nr_api.aar: libnr_api.so /
     #        libnr_plugin_6dof.so / libnr_rgb_camera.so, nr_loader.aar: libnr_loader.so,
-    #        nr_common.aar: libnr_libusb.so) — Gradle merges those into the APK.
+    #        nr_common.aar: libnr_libusb.so, nr_spatial_anchor.aar: libnr_spatial_anchor.so) — Gradle merges those into the APK.
     #
     # Log-Control is REQUIRED whenever GlassesDisplayPlugEvent ships: its GlassesInitProvider
     # (a ContentProvider that auto-runs at app startup) references com.xreal.logcontrol.LogControl,
@@ -108,6 +108,7 @@ try {
         'nr_loader.aar',
         'nr_api.aar',
         'nr_common.aar',
+        'nr_spatial_anchor.aar',
         'GlassesDisplayPlugEvent-2.4.2.aar',
         'Log-Control-1.2.aar'
     )
@@ -133,7 +134,7 @@ try {
         $missing | ForEach-Object { Write-Host "  - $_" }
         exit 1
     }
-    Write-Host "Done: 3 core .so -> jniLibs/arm64-v8a, 5 .aar -> addons/godot_xreal/android." -ForegroundColor Green
+    Write-Host "Done: 3 core .so -> jniLibs/arm64-v8a, 6 .aar -> addons/godot_xreal/android." -ForegroundColor Green
     Write-Host "(NR .so ship via the .aar; nractivitylife*.aar deliberately excluded — Unity-only launcher.)"
 }
 finally {

@@ -73,7 +73,7 @@ $RequiredLibs = @(
     'libXREALNativeSessionManager.so', 'libXREALXRPlugin.so', 'libVulkanSupport.so'
 )
 $RequiredAddonFiles = @(
-    'nr_loader.aar', 'nr_api.aar', 'nr_common.aar',
+    'nr_loader.aar', 'nr_api.aar', 'nr_common.aar', 'nr_spatial_anchor.aar',
     'GlassesDisplayPlugEvent-2.4.2.aar', 'Log-Control-1.2.aar'
 )
 function Require-VendoredLibs {
