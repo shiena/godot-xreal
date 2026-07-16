@@ -72,30 +72,33 @@ nothing and are not committed.
 
 The XREAL native libraries are **not** included in this repo (they remain under XREAL's terms). Obtain
 them from the **XREAL SDK for Unity** — the `com.xreal.xr` package, shipped as a tgz
-(`com.xreal.xr.tar.gz`); **3.1.0 is the verified version**. Extract it (→ a `package/` directory)
-and run:
+(`com.xreal.xr.tar.gz`); **3.1.0 is the verified version**. Then stage its libraries one of three ways —
+all place the **same** files in the same git-ignored destinations (see the tables below):
 
-```powershell
-pwsh scripts/vendor_xreal_libs.ps1 -XrealPackage <…>/package
-```
+1. **Recommended — editor dock.** Enable the addon (Project → Project Settings → Plugins → "Godot
+   XREAL"), open the **`XREAL Import`** dock (left panel), click *Select package…*, and pick
+   `com.xreal.xr(.tgz|.tar.gz)` (or an already-extracted `package/` folder). It extracts (via the
+   system `tar`) and copies everything into place, then rescans — no terminal needed.
+2. **Alternative — script.** From a terminal:
+   ```powershell
+   pwsh scripts/vendor_xreal_libs.ps1 -XrealPackage <…>/com.xreal.xr.tar.gz   # or an extracted …/package dir
+   ```
+   (`./scripts/vendor_xreal_libs.sh <…>` on macOS / Linux.)
+3. **Alternative — manual.** Extract the tgz yourself and copy the files in the tables below into their
+   destinations under the repo.
 
-> **No terminal? Do it from the editor.** With the addon enabled, the **`XREAL Import`** dock (left
-> panel) runs the same vendoring: click *パッケージを選択…*, pick `com.xreal.xr(.tgz|.tar.gz)` (or an
-> extracted `package/` folder), and it extracts (via the system `tar`) and copies the same files into
-> place. It vendors only the XREAL libs — the addon's own `libgodot_xreal.so` still comes from the
-> `cargo ndk` build (or a prebuilt release).
+Vendoring only handles XREAL's proprietary libs — the addon's own `libgodot_xreal.so` still comes from
+the `cargo ndk` build (or a prebuilt release). What gets placed where:
 
-The script (and the dock) stage everything the Android export needs (all destinations are git-ignored;
-nothing is downloaded — you supply the package):
-
-**3 core `.so` → `jniLibs/arm64-v8a/`** — copied from `Runtime/Plugins/Android/arm64-v8a/`; packed
-next to the GDExtension via `godot_xreal.gdextension` `[dependencies]` and `dlopen`ed at startup:
+**4 `.so` → `jniLibs/arm64-v8a/`** — packed next to the GDExtension via `godot_xreal.gdextension`
+`[dependencies]` and `dlopen`ed at startup. The first three come from `Runtime/Plugins/Android/arm64-v8a/`:
 
 | `.so` | Role |
 |---|---|
 | `libXREALNativeSessionManager.so` | session / head-pose C ABI |
 | `libXREALXRPlugin.so` | XR-plugin compositor / display C ABI |
 | `libVulkanSupport.so` | support lib the two above need |
+| `libmedia_codec.so` | FPV H.264 encoder (from `Runtime/Scripts/…/Camera Features/…/arm64/`) |
 
 **7 `.aar` → `addons/godot_xreal/android/`** — shipped into the APK by the addon's export plugin
 (`export_plugin.gd`): the Java/JNI layer + manifest entries the glasses need. They also carry the
