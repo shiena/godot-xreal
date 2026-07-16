@@ -138,7 +138,7 @@ This repo already ships the wiring — the steps below are what produced the cur
    (Add `nrdisplay` / `chameleon` jars later for Phase 2.)
 
    > **No terminal? Use the editor dock instead of the script.** With the addon enabled, the
-   > **`XREAL 取込`** dock (left panel; `addons/godot_xreal/editor/vendor_import_dock.gd`) does the
+   > **`XREAL Import`** dock (left panel; `addons/godot_xreal/editor/vendor_import_dock.gd`) does the
    > exact same vendoring from inside Godot: click *パッケージを選択…*, pick `com.xreal.xr(.tgz|.tar.gz)`
    > (or an already-extracted `package/` folder), and it extracts (via the system `tar`) and copies the
    > same `.so`/`.aar`/tool into place, then rescans. Only the XREAL proprietary libs — the addon's own

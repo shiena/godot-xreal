@@ -79,7 +79,7 @@ and run:
 pwsh scripts/vendor_xreal_libs.ps1 -XrealPackage <…>/package
 ```
 
-> **No terminal? Do it from the editor.** With the addon enabled, the **`XREAL 取込`** dock (left
+> **No terminal? Do it from the editor.** With the addon enabled, the **`XREAL Import`** dock (left
 > panel) runs the same vendoring: click *パッケージを選択…*, pick `com.xreal.xr(.tgz|.tar.gz)` (or an
 > extracted `package/` folder), and it extracts (via the system `tar`) and copies the same files into
 > place. It vendors only the XREAL libs — the addon's own `libgodot_xreal.so` still comes from the

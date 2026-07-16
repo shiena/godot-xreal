@@ -36,18 +36,18 @@ func _build_ui() -> void:
 	add_theme_constant_override(&"separation", 6)
 
 	var title := Label.new()
-	title.text = "XREAL SDK 取込 (vendoring)"
+	title.text = "XREAL SDK Import (vendoring)"
 	title.add_theme_font_size_override(&"font_size", 15)
 	add_child(title)
 
 	var help := Label.new()
-	help.text = "com.xreal.xr の .tgz / .tar.gz（または展開済み package フォルダ）を選ぶと、必要な .so / .aar / ツールを配置します。"
+	help.text = "Pick com.xreal.xr's .tgz / .tar.gz (or an extracted package folder) to copy the required .so / .aar / tool into place."
 	help.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	help.modulate = Color(1, 1, 1, 0.75)
 	add_child(help)
 
 	var pick := Button.new()
-	pick.text = "パッケージを選択…"
+	pick.text = "Select package…"
 	pick.pressed.connect(_on_pick_pressed)
 	add_child(pick)
 
@@ -74,8 +74,8 @@ func _on_pick_pressed() -> void:
 # --- import ---------------------------------------------------------------------------------------
 
 func _on_selected(path: String) -> void:
-	_status.text = "取込中 …"
-	# Defer so the "取込中" paint lands before the (blocking) tar/copy work.
+	_status.text = "Importing …"
+	# Defer so the "Importing …" paint lands before the (blocking) tar/copy work.
 	call_deferred("_import", path)
 
 func _import(path: String) -> void:
@@ -87,30 +87,30 @@ func _import(path: String) -> void:
 		# An already-extracted package root (contains Runtime/Plugins/Android) or its parent.
 		pkg = _find_package_root(path)
 		if pkg.is_empty():
-			_fail("選択フォルダに Runtime/Plugins/Android が見つかりません: %s" % path)
+			_fail("Runtime/Plugins/Android not found in the selected folder: %s" % path)
 			return
 	else:
 		if not (path.ends_with(".tgz") or path.ends_with(".tar.gz")):
-			_fail(".tgz / .tar.gz か package フォルダを選んでください: %s" % path)
+			_fail("Pick a .tgz / .tar.gz or a package folder: %s" % path)
 			return
 		temp = OS.get_cache_dir().path_join("xreal_pkg_%d" % Time.get_ticks_usec())
 		DirAccess.make_dir_recursive_absolute(temp)
 		var terr := _extract(path, temp, log)
 		if terr != OK:
 			_rmtree(temp)
-			_fail("展開に失敗しました:\n%s" % "\n".join(log))
+			_fail("Extraction failed:\n%s" % "\n".join(log))
 			return
 		pkg = _find_package_root(temp)
 		if pkg.is_empty():
 			_rmtree(temp)
-			_fail("アーカイブ内に Runtime/Plugins/Android を持つ package が見つかりません。")
+			_fail("No package containing Runtime/Plugins/Android found in the archive.")
 			return
 
 	var src_android := pkg.path_join("Runtime/Plugins/Android")
 	var src_abi := src_android.path_join("arm64-v8a")
 	if not DirAccess.dir_exists_absolute(src_abi):
 		if temp: _rmtree(temp)
-		_fail("com.xreal.xr の package ではないようです（%s が無い）" % src_abi)
+		_fail("Doesn't look like a com.xreal.xr package (%s missing)" % src_abi)
 		return
 
 	# Destinations (all gitignored).
@@ -143,7 +143,7 @@ func _import(path: String) -> void:
 			tool_rel = "Tools~/MacOS/trackableImageTools"
 			tool_dst = tools.path_join("trackableImageTools")
 	if tool_rel.is_empty():
-		log.append("skip trackableImageTools（この OS 用のツールは同梱されていません）")
+		log.append("skip trackableImageTools (no tool bundled for this OS)")
 	elif _copy(pkg.path_join(tool_rel), tool_dst, "tool " + tool_dst.get_file(), log, missing) and OS.get_name() != "Windows":
 		OS.execute("chmod", ["+x", tool_dst])  # copy drops the exec bit on Unix
 
@@ -159,9 +159,9 @@ func _import(path: String) -> void:
 	# Report.
 	var body := "\n".join(log)
 	if missing.is_empty():
-		_status.text = "[color=green]完了[/color] — 全て配置しました。\n[code]%s[/code]\n[color=gray]※ アドオン本体 libgodot_xreal.so は別途（Rust ビルド or プリビルト）[/color]" % body
+		_status.text = "[color=green]Done[/color] — everything staged.\n[code]%s[/code]\n[color=gray]note: the addon's own libgodot_xreal.so comes separately (Rust build or prebuilt release)[/color]" % body
 	else:
-		_status.text = "[color=orange]一部欠落[/color]（パッケージのバージョン差の可能性）:\n[code]%s[/code]\n[color=orange]missing:\n  - %s[/color]" % [body, "\n  - ".join(missing)]
+		_status.text = "[color=orange]Partly missing[/color] (possible package-version mismatch):\n[code]%s[/code]\n[color=orange]missing:\n  - %s[/color]" % [body, "\n  - ".join(missing)]
 
 # --- helpers --------------------------------------------------------------------------------------
 

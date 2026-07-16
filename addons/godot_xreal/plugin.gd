@@ -30,13 +30,13 @@ func _enter_tree() -> void:
 	# SDK vendoring dock: pick the com.xreal.xr package (.tgz/.tar.gz or an extracted folder) and copy
 	# the .so/.aar/tool into place — the in-editor analog of scripts/vendor_xreal_libs.*.
 	_vendor_import_dock = VendorImportDockScript.new()
-	_vendor_import_dock.name = "XREAL 取込"
+	_vendor_import_dock.name = "XREAL Import"
 	add_control_to_dock(EditorPlugin.DOCK_SLOT_LEFT_UR, _vendor_import_dock)
 
 	# Image-tracking DB builder dock (runs the vendored trackableImageTools to compile the blob —
 	# the Godot analog of Unity's XREALImageLibraryBuildProcessor).
 	_image_db_dock = ImageDbDockScript.new()
-	_image_db_dock.name = "XREAL 画像DB"
+	_image_db_dock.name = "XREAL Image DB"
 	add_control_to_dock(EditorPlugin.DOCK_SLOT_LEFT_UR, _image_db_dock)
 
 func _exit_tree() -> void:

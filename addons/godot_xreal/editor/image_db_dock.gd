@@ -26,7 +26,7 @@ func _build_ui() -> void:
 	add_theme_constant_override(&"separation", 6)
 
 	var title := Label.new()
-	title.text = "画像トラッキング DB ビルダー"
+	title.text = "Image-tracking DB builder"
 	title.add_theme_font_size_override(&"font_size", 15)
 	add_child(title)
 
@@ -44,18 +44,18 @@ func _build_ui() -> void:
 	# Set selector + add/remove (each set = one tracking DB / blob).
 	var srow := HBoxContainer.new()
 	var slabel := Label.new()
-	slabel.text = "セット:"
+	slabel.text = "Set:"
 	srow.add_child(slabel)
 	_set_selector = OptionButton.new()
 	_set_selector.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_set_selector.item_selected.connect(func(i): _current_set = i; _refresh_list())
 	srow.add_child(_set_selector)
 	var add_set := Button.new()
-	add_set.text = "セット追加"
+	add_set.text = "Add set"
 	add_set.pressed.connect(_on_add_set)
 	srow.add_child(add_set)
 	var rm_set := Button.new()
-	rm_set.text = "削除"
+	rm_set.text = "Remove"
 	rm_set.pressed.connect(_on_remove_set)
 	srow.add_child(rm_set)
 	add_child(srow)
@@ -70,11 +70,11 @@ func _build_ui() -> void:
 
 	var buttons := HBoxContainer.new()
 	var add_btn := Button.new()
-	add_btn.text = "画像を追加"
+	add_btn.text = "Add image"
 	add_btn.pressed.connect(_on_add_pressed)
 	buttons.add_child(add_btn)
 	var build_btn := Button.new()
-	build_btn.text = "ブロブを生成"
+	build_btn.text = "Build blob"
 	build_btn.pressed.connect(_on_build_pressed)
 	buttons.add_child(build_btn)
 	add_child(buttons)
@@ -153,7 +153,7 @@ func _refresh_list() -> void:
 		_list.add_child(_make_row(i, images[i]))
 	if images.is_empty():
 		var empty := Label.new()
-		empty.text = "（画像なし。「画像を追加」で追加）"
+		empty.text = "(No images — use \"Add image\".)"
 		empty.modulate = Color(1, 1, 1, 0.6)
 		_list.add_child(empty)
 
@@ -166,7 +166,7 @@ func _make_row(index: int, img: Dictionary) -> Control:
 	row.add_child(name_label)
 
 	var wlabel := Label.new()
-	wlabel.text = "幅(m):"
+	wlabel.text = "Width (m):"
 	row.add_child(wlabel)
 	var width := SpinBox.new()
 	width.min_value = 0.01
@@ -177,7 +177,7 @@ func _make_row(index: int, img: Dictionary) -> Control:
 	row.add_child(width)
 
 	var rm := Button.new()
-	rm.text = "削除"
+	rm.text = "Remove"
 	rm.pressed.connect(func(): _remove(index))
 	row.add_child(rm)
 	return row
@@ -207,7 +207,7 @@ func _on_add_set() -> void:
 	_current_set = sets.size() - 1
 	_save_manifest(data)
 	_refresh_list()
-	_set_status("セット追加: set%d" % n)
+	_set_status("Added set: set%d" % n)
 
 func _on_remove_set() -> void:
 	var data := _load_manifest()
@@ -218,7 +218,7 @@ func _on_remove_set() -> void:
 		_current_set = maxi(0, _current_set - 1)
 		_save_manifest(data)
 		_refresh_list()
-		_set_status("セット削除: %s" % removed)
+		_set_status("Removed set: %s" % removed)
 
 # --- add image -----------------------------------------------------------------------------------
 
@@ -235,7 +235,7 @@ func _on_file_selected(res_path: String) -> void:
 	if res_path != dest:
 		var err := DirAccess.copy_absolute(res_path, dest)
 		if err != OK:
-			_set_status("[color=red]画像のコピー失敗: %s (err %d)[/color]" % [dest, err])
+			_set_status("[color=red]Image copy failed: %s (err %d)[/color]" % [dest, err])
 			return
 	var data := _load_manifest()
 	_cur_set(data)["images"].append({
@@ -246,7 +246,7 @@ func _on_file_selected(res_path: String) -> void:
 	})
 	_save_manifest(data)
 	_refresh_list()
-	_set_status("追加: %s（幅を設定して「ブロブを生成」）" % dest_name)
+	_set_status("Added: %s (set the width, then \"Build blob\")" % dest_name)
 
 func _gen_guid() -> String:
 	var g := ""
@@ -263,19 +263,19 @@ func _tool_path() -> String:
 func _on_build_pressed() -> void:
 	var tool_path := _tool_path()
 	if not FileAccess.file_exists(tool_path):
-		_set_status("[color=red]trackableImageTools がありません: %s\nscripts/vendor_xreal_libs を実行してください[/color]" % tool_path)
+		_set_status("[color=red]trackableImageTools not found: %s\nRun scripts/vendor_xreal_libs (or the XREAL Import dock)[/color]" % tool_path)
 		return
 	var data := _load_manifest()
 	if data["sets"].is_empty():
-		_set_status("[color=orange]セットがありません（「セット追加」）[/color]")
+		_set_status("[color=orange]No sets (use \"Add set\")[/color]")
 		return
 	var cur := _cur_set(data)
 	if bool(cur.get("prebuilt", false)):
-		_set_status("[color=orange]セット '%s' は prebuilt（%s）— ビルド不要[/color]" % [cur.get("name", "?"), cur.get("blob", "")])
+		_set_status("[color=orange]Set '%s' is prebuilt (%s) — no build needed[/color]" % [cur.get("name", "?"), cur.get("blob", "")])
 		return
 	var images: Array = cur.get("images", [])
 	if images.is_empty():
-		_set_status("[color=orange]このセットに画像がありません[/color]")
+		_set_status("[color=orange]This set has no images[/color]")
 		return
 	var dir_abs := ProjectSettings.globalize_path(_manifest_dir())
 	# Image-list config: <guid>|<abs image path>|<width> per line.
@@ -283,7 +283,7 @@ func _on_build_pressed() -> void:
 	for img in images:
 		var img_abs := dir_abs.path_join(str(img.get("image", "")))
 		if not FileAccess.file_exists(ProjectSettings.localize_path(img_abs)) and not FileAccess.file_exists(img_abs):
-			_set_status("[color=red]画像が見つかりません: %s[/color]" % img_abs)
+			_set_status("[color=red]Image not found: %s[/color]" % img_abs)
 			return
 		lines.append("%s|%s|%s" % [img.get("guid", ""), img_abs, img.get("width", 0.2)])
 	var list_path := OS.get_cache_dir().path_join("xreal_imglist_%d.txt" % (Time.get_ticks_usec()))
@@ -293,7 +293,7 @@ func _on_build_pressed() -> void:
 
 	var blob_abs := dir_abs.path_join(str(cur.get("blob", "reference.bin")))
 	var output := []
-	_set_status("生成中 ...")
+	_set_status("Building …")
 	var code := OS.execute(tool_path, ["--images_config_file", list_path, "--save_path", blob_abs], output, true)
 	DirAccess.remove_absolute(list_path)
 	var log := "\n".join(output)
@@ -307,9 +307,9 @@ func _on_build_pressed() -> void:
 		ok = code == 0 and FileAccess.file_exists(blob_abs)
 	if ok:
 		EditorInterface.get_resource_filesystem().scan()
-		_set_status("[color=green]生成完了: %s（セット '%s' / %d 画像）[/color]\n%s" % [cur.get("blob"), cur.get("name", "?"), images.size(), scores])
+		_set_status("[color=green]Built: %s (set '%s' / %d image(s))[/color]\n%s" % [cur.get("blob"), cur.get("name", "?"), images.size(), scores])
 	else:
-		_set_status("[color=red]生成失敗 (exit %d)[/color]\n%s" % [code, log.left(600)])
+		_set_status("[color=red]Build failed (exit %d)[/color]\n%s" % [code, log.left(600)])
 
 func _set_status(bbcode: String) -> void:
 	if _status:

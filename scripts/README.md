@@ -18,7 +18,7 @@ local copy of the SDK package — either the extracted `package/` dir or the `co
 archive itself (auto-extracted to a temp dir). The build scripts wrap it as `-Extract` / `--extract`.
 (The XrealBridge Java sources are compiled by the export's gradle build — no vendoring step.)
 
-> No terminal? The addon ships an in-editor equivalent: the **`XREAL 取込`** dock
+> No terminal? The addon ships an in-editor equivalent: the **`XREAL Import`** dock
 > (`addons/godot_xreal/editor/vendor_import_dock.gd`) runs the same vendoring from a file dialog —
 > pick `com.xreal.xr(.tgz|.tar.gz)` (or an extracted `package/` folder) and it extracts (system `tar`)
 > and copies the same `.so`/`.aar`/tool into place. See `docs/guides/android-setup.md` §3.
