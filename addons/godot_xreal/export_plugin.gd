@@ -45,6 +45,7 @@ func _get_android_manifest_element_contents(_platform: EditorExportPlatform, _de
 <uses-permission android:name="android.permission.ACTIVITY_EMBEDDING" tools:ignore="ProtectedPermissions" />
 <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
 <uses-permission android:name="android.permission.CAMERA" />
+<uses-permission android:name="android.permission.RECORD_AUDIO" />
 <uses-permission android:name="android.permission.VIBRATE" />"""
 
 ## <application>-level: XREAL markers + the companion / NRFakeActivity declarations. Uses the

@@ -59,4 +59,10 @@ EGL context**, so the call must be on the render thread.
    network. Then set `STREAM_TARGET = "rtp://<PC>:5555"` for live RTP to `log/stream_server`.
 2. Confirm the config fields the encoder needs (bitrate/fps), the timestamp unit, and that a
    `useLinnerTexture`/`useAlpha` mismatch doesn't garble the frame.
-3. Audio is off (video-only); `HWEncoderNotifyAudioData` is available if wanted later.
+## Audio
+`stream_start(..., with_mic, with_internal_audio)`: **`with_mic`** sets `addMicphoneAudio` — the encoder
+captures the mic natively (needs `RECORD_AUDIO`, added by the export plugin). **`with_internal_audio`**
+sets `addInternalAudio` and is fed by `stream_push_audio(bytes, nSamples, bytesPerSample, channels,
+sampleRate, fmt)` → `HWEncoderNotifyAudioData` (mono s16, `fmt` 0 — from an `AudioEffectCapture` on the
+master bus, the Godot analog of the SDK's `AudioRecordTool` `OnAudioFilterRead`). The demo enables the
+mic (`STREAM_WITH_MIC`) and leaves internal audio off (it plays no sound).

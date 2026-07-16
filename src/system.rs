@@ -573,6 +573,7 @@ impl XrealSystem {
     /// (the URL scheme picks local/RTMP/RTP). Returns whether the encoder started. Then feed the view's
     /// GL texture each frame via [`Self::stream_push_frame`] from a `RenderingServer.call_on_render_thread`.
     #[func]
+    #[allow(clippy::too_many_arguments)] // GDScript-facing signature (resolution + rate + audio flags)
     fn stream_start(
         &self,
         output: GString,
@@ -580,6 +581,8 @@ impl XrealSystem {
         height: i64,
         bitrate: i64,
         fps: i64,
+        with_mic: bool,
+        with_internal_audio: bool,
     ) -> bool {
         crate::video_encoder::start(
             &output.to_string(),
@@ -587,7 +590,32 @@ impl XrealSystem {
             height as i32,
             bitrate as i32,
             fps as i32,
+            with_mic,
+            with_internal_audio,
         )
+    }
+
+    /// Feed app ("internal") audio to the running stream (the mic, if enabled in `stream_start`, is
+    /// captured natively). `samples` is raw PCM; `fmt` 0 = s16 / 8 = float. Source it from an
+    /// `AudioEffectCapture` on the master bus. Returns the encoder status (`-1` if not streaming).
+    #[func]
+    fn stream_push_audio(
+        &self,
+        samples: PackedByteArray,
+        n_samples: i64,
+        bytes_per_sample: i64,
+        channels: i64,
+        sample_rate: i64,
+        fmt: i64,
+    ) -> i64 {
+        crate::video_encoder::push_audio(
+            samples.as_slice(),
+            n_samples as i32,
+            bytes_per_sample as i32,
+            channels as i32,
+            sample_rate as i32,
+            fmt as i32,
+        ) as i64
     }
 
     /// Feed one frame to the running stream: `gl_texture_id` from `RenderingServer.texture_get_native_handle`

@@ -15,6 +15,10 @@ const STREAM_W := 1280
 const STREAM_H := 720
 const STREAM_BITRATE := 8_000_000
 const STREAM_FPS := 30
+## Include the microphone in the stream (captured natively by the encoder; needs RECORD_AUDIO).
+const STREAM_WITH_MIC := true
+## Include app audio (fed via stream_push_audio from an AudioEffectCapture). Off — the demo plays no sound.
+const STREAM_WITH_INTERNAL_AUDIO := false
 
 var _system: Object                 # XrealSystem
 var _tracker: Node3D                # head tracker (FPV camera follows it)
@@ -43,7 +47,7 @@ func set_enabled(on: bool) -> bool:
 		var url := STREAM_TARGET
 		if url.is_empty():
 			url = OS.get_user_data_dir().path_join("fpv_stream.mp4")
-		if not _system.stream_start(url, STREAM_W, STREAM_H, STREAM_BITRATE, STREAM_FPS):
+		if not _system.stream_start(url, STREAM_W, STREAM_H, STREAM_BITRATE, STREAM_FPS, STREAM_WITH_MIC, STREAM_WITH_INTERNAL_AUDIO):
 			return false
 		print("[demo] FPV stream -> %s" % url)
 		_active = true

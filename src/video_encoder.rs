@@ -20,6 +20,10 @@ type FnCreate = unsafe extern "C" fn(*mut u64) -> i32;
 type FnSetConfig = unsafe extern "C" fn(u64, *const c_char) -> i32;
 type FnStart = unsafe extern "C" fn(u64) -> i32;
 type FnUpdateSurface = unsafe extern "C" fn(u64, usize, u64) -> i32;
+/// `HWEncoderNotifyAudioData(handle, samples, nSamples, nBytesPerSample, nChannels, sampleRate, fmt)`
+/// — `fmt` 0 = s16 / 8 = float. Feeds app ("internal") audio; the mic is captured natively when
+/// enabled in the config.
+type FnNotifyAudio = unsafe extern "C" fn(u64, *const u8, i32, i32, i32, i32, i32) -> i32;
 type FnStop = unsafe extern "C" fn(u64) -> i32;
 type FnDestroy = unsafe extern "C" fn(u64) -> i32;
 
@@ -27,6 +31,7 @@ type FnDestroy = unsafe extern "C" fn(u64) -> i32;
 struct Encoder {
     _lib: Library,
     update_surface: FnUpdateSurface,
+    notify_audio: Option<FnNotifyAudio>,
     stop: FnStop,
     destroy: FnDestroy,
     handle: u64,
@@ -49,15 +54,22 @@ fn codec_type(output: &str) -> i32 {
     }
 }
 
-/// Build the encoder config JSON (SDK format from `EncodeTypes.cs`).
-fn config_json(output: &str, width: i32, height: i32, bitrate: i32, fps: i32) -> String {
-    // JSON string value escaping for the path is unnecessary here (URLs / file paths have no quotes);
-    // keep it simple and match the SDK's field set. Audio is off (video-only FPV stream).
+/// Build the encoder config JSON (SDK format from `EncodeTypes.cs`). `with_mic` captures the microphone
+/// natively; `with_internal` mixes app audio fed via [`push_audio`].
+fn config_json(
+    output: &str,
+    width: i32,
+    height: i32,
+    bitrate: i32,
+    fps: i32,
+    with_mic: bool,
+    with_internal: bool,
+) -> String {
     format!(
         concat!(
             "{{\"width\":{},\"height\":{},\"bitRate\":{},\"fps\":{},\"codecType\":{},",
             "\"outPutPath\":\"{}\",\"useStepTime\":0,\"useAlpha\":false,\"useLinnerTexture\":true,",
-            "\"addMicphoneAudio\":false,\"addInternalAudio\":false,\"audioSampleRate\":16000,",
+            "\"addMicphoneAudio\":{},\"addInternalAudio\":{},\"audioSampleRate\":16000,",
             "\"audioBitRate\":128000}}"
         ),
         width,
@@ -65,7 +77,9 @@ fn config_json(output: &str, width: i32, height: i32, bitrate: i32, fps: i32) ->
         bitrate,
         fps,
         codec_type(output),
-        output
+        output,
+        with_mic,
+        with_internal
     )
 }
 
@@ -77,7 +91,15 @@ pub fn is_active() -> bool {
 /// Start streaming the FPV to `output` (`rtp://ip:port`, `rtmp://…`, or a local file path). Creates,
 /// configures, and starts the HW encoder. Returns `false` on any failure (library/symbol absent or an
 /// `HWEncoder*` non-zero status). Feed frames with [`submit_frame`] from the render thread.
-pub fn start(output: &str, width: i32, height: i32, bitrate: i32, fps: i32) -> bool {
+pub fn start(
+    output: &str,
+    width: i32,
+    height: i32,
+    bitrate: i32,
+    fps: i32,
+    with_mic: bool,
+    with_internal: bool,
+) -> bool {
     let mut guard = ENCODER.lock().expect("encoder mutex");
     if guard.is_some() {
         return true; // already streaming
@@ -112,13 +134,17 @@ pub fn start(output: &str, width: i32, height: i32, bitrate: i32, fps: i32) -> b
             Ok(s) => *s,
             Err(_) => return false,
         };
+        let notify_audio: Option<FnNotifyAudio> = lib
+            .get::<FnNotifyAudio>(b"HWEncoderNotifyAudioData\0")
+            .ok()
+            .map(|s| *s);
 
         let mut handle: u64 = 0;
         if create(&mut handle) != 0 || handle == 0 {
             godot::global::godot_warn!("[xreal] HWEncoderCreate failed");
             return false;
         }
-        let cfg = config_json(output, width, height, bitrate, fps);
+        let cfg = config_json(output, width, height, bitrate, fps, with_mic, with_internal);
         let Ok(cfg_c) = CString::new(cfg.as_str()) else {
             destroy(handle);
             return false;
@@ -140,11 +166,44 @@ pub fn start(output: &str, width: i32, height: i32, bitrate: i32, fps: i32) -> b
         *guard = Some(Encoder {
             _lib: lib,
             update_surface,
+            notify_audio,
             stop,
             destroy,
             handle,
         });
         true
+    }
+}
+
+/// Feed one buffer of app ("internal") audio to the stream via `HWEncoderNotifyAudioData`. `samples` is
+/// raw PCM; `bytes_per_sample`/`channels`/`sample_rate`/`fmt` (0=s16, 8=float) describe it. Returns the
+/// encoder status (`-1` if not streaming / the export is absent). The mic, if enabled, is captured
+/// natively — this is only for app audio.
+pub fn push_audio(
+    samples: &[u8],
+    n_samples: i32,
+    bytes_per_sample: i32,
+    channels: i32,
+    sample_rate: i32,
+    fmt: i32,
+) -> i32 {
+    let guard = ENCODER.lock().expect("encoder mutex");
+    match guard
+        .as_ref()
+        .and_then(|e| e.notify_audio.map(|f| (e.handle, f)))
+    {
+        Some((handle, f)) => unsafe {
+            f(
+                handle,
+                samples.as_ptr(),
+                n_samples,
+                bytes_per_sample,
+                channels,
+                sample_rate,
+                fmt,
+            )
+        },
+        None => -1,
     }
 }
 
