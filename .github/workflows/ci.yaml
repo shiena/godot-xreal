@@ -1,0 +1,143 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+  # NDK release the project builds against (matches docs/guides/toolchain — r27.x).
+  NDK_VERSION: r27c
+
+jobs:
+  # Lint the cross-platform Rust (host target). The Android-only modules (signal_guard etc.) are
+  # cfg-gated off the host, so this stays clean; the `build` job compiles the real Android target.
+  check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Check formatting
+        id: fmt
+        run: |
+          if ! cargo fmt --check 2>&1 | tee fmt_output.txt; then
+            echo "has_diff=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_diff=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Run clippy
+        id: clippy
+        run: |
+          if ! cargo clippy --all-targets --all-features -- -D warnings 2>&1 | tee clippy_output.txt; then
+            echo "has_errors=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_errors=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Comment on PR
+        if: github.event_name == 'pull_request' && (steps.fmt.outputs.has_diff == 'true' || steps.clippy.outputs.has_errors == 'true')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          {
+            echo "## CI Check Failed"
+            echo ""
+            if [ "${{ steps.fmt.outputs.has_diff }}" = "true" ]; then
+              echo "### Formatting Issues"
+              echo ""
+              echo "Run \`cargo fmt\` to fix formatting."
+              echo ""
+              echo "<details>"
+              echo "<summary>Diff</summary>"
+              echo ""
+              echo "\`\`\`diff"
+              cargo fmt -- --check 2>&1 || true
+              echo "\`\`\`"
+              echo "</details>"
+              echo ""
+            fi
+            if [ "${{ steps.clippy.outputs.has_errors }}" = "true" ]; then
+              echo "### Clippy Warnings/Errors"
+              echo ""
+              echo "<details>"
+              echo "<summary>Output</summary>"
+              echo ""
+              echo "\`\`\`"
+              cat clippy_output.txt
+              echo "\`\`\`"
+              echo "</details>"
+            fi
+          } > comment.md
+          gh pr comment ${{ github.event.pull_request.number }} --body-file comment.md
+
+      - name: Fail if issues found
+        if: steps.fmt.outputs.has_diff == 'true' || steps.clippy.outputs.has_errors == 'true'
+        run: |
+          echo "::error::CI checks failed. See the job log (and PR comment) for details."
+          exit 1
+
+  # Build the addon exactly as a release would: the real Android arm64 GDExtension (cargo-ndk, needs
+  # no vendored XREAL libs — they are dlopen'd at runtime) + the 6 desktop dummy stubs (clang + lld,
+  # freestanding, so all targets cross-compile from this one Linux runner).
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Set up Android NDK
+        id: setup_ndk
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: ${{ env.NDK_VERSION }}
+          local-cache: true
+
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk --locked
+
+      - name: Build Android GDExtension (arm64-v8a)
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup_ndk.outputs.ndk-path }}
+        run: cargo ndk -t arm64-v8a build --release
+
+      - name: Install clang + lld
+        run: sudo apt-get update && sudo apt-get install -y clang lld
+
+      - name: Build desktop dummy stubs
+        run: ./scripts/build_dummy_libs.sh
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v6
+        with:
+          name: addon-build
+          path: |
+            target/aarch64-linux-android/release/libgodot_xreal.so
+            dummy/*.dll
+            dummy/*.so
+            dummy/*.dylib
+          if-no-files-found: error

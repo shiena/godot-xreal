@@ -1,0 +1,225 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g., v0.1.0)'
+        required: true
+        type: string
+
+env:
+  CARGO_TERM_COLOR: always
+  NDK_VERSION: r27c
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.normalize.outputs.version }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Normalize version
+        id: normalize
+        run: |
+          # 1.0.0 or v1.0.0 -> v1.0.0
+          VERSION="${{ inputs.version }}"
+          VERSION="v${VERSION#v}"
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "Normalized version: ${VERSION}"
+
+      - name: Validate version
+        run: |
+          INPUT_VERSION="${{ steps.normalize.outputs.version }}"
+          INPUT_VERSION="${INPUT_VERSION#v}"
+          if git rev-parse "refs/tags/${{ steps.normalize.outputs.version }}" >/dev/null 2>&1; then
+            echo "::error::Tag ${{ steps.normalize.outputs.version }} already exists. Delete it first to re-release."
+            exit 1
+          fi
+          LATEST_TAG=$(git tag -l 'v*' | sort -V | tail -n1)
+          if [ -z "$LATEST_TAG" ]; then
+            echo "No existing tags found. Proceeding with release."
+            exit 0
+          fi
+          LATEST_VERSION="${LATEST_TAG#v}"
+          HIGHER=$(printf '%s\n%s' "$LATEST_VERSION" "$INPUT_VERSION" | sort -V | tail -n1)
+          if [ "$HIGHER" != "$INPUT_VERSION" ]; then
+            echo "::error::Input version ($INPUT_VERSION) must be >= latest version ($LATEST_VERSION)"
+            exit 1
+          fi
+          echo "Version check passed: $INPUT_VERSION >= $LATEST_VERSION"
+
+      - name: Update versions
+        run: |
+          VERSION="${{ steps.normalize.outputs.version }}"
+          VERSION="${VERSION#v}"
+          sed -i "s/^version=\".*\"/version=\"${VERSION}\"/" addons/godot_xreal/plugin.cfg
+          sed -i "s/^version = \".*\"/version = \"${VERSION}\"/" Cargo.toml
+          echo "plugin.cfg:"; grep '^version' addons/godot_xreal/plugin.cfg
+          echo "Cargo.toml:"; grep '^version' Cargo.toml
+
+      - name: Upload version files as artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: version-commit
+          path: |
+            addons/godot_xreal/plugin.cfg
+            Cargo.toml
+
+  # Real Android arm64 GDExtension. Needs no vendored XREAL libs — they are dlopen'd at runtime, so
+  # the release binary is self-contained (DT_NEEDED = libdl/libm/libc only).
+  build-android:
+    needs: [prepare]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Apply version updates
+        uses: actions/download-artifact@v7
+        with:
+          name: version-commit
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Set up Android NDK
+        id: setup_ndk
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: ${{ env.NDK_VERSION }}
+          local-cache: true
+
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk --locked
+
+      - name: Build
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup_ndk.outputs.ndk-path }}
+        run: |
+          cargo ndk -t arm64-v8a build --release
+          cp target/aarch64-linux-android/release/libgodot_xreal.so .
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: android-lib
+          path: libgodot_xreal.so
+          if-no-files-found: error
+
+  # 6 desktop dummy stubs (freestanding; all targets cross-compile from one Linux runner via clang+lld).
+  build-dummy:
+    needs: [prepare]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install clang + lld
+        run: sudo apt-get update && sudo apt-get install -y clang lld
+
+      - name: Build dummy stubs
+        run: |
+          ./scripts/build_dummy_libs.sh
+          mkdir -p out
+          cp dummy/*.dll dummy/*.so dummy/*.dylib out/
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: dummy-stubs
+          path: out/
+          if-no-files-found: error
+
+  release:
+    needs: [prepare, build-android, build-dummy]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v7
+        with:
+          path: artifacts
+
+      - name: Commit and push version bump + tag
+        run: |
+          cp artifacts/version-commit/Cargo.toml Cargo.toml
+          cp artifacts/version-commit/addons/godot_xreal/plugin.cfg addons/godot_xreal/plugin.cfg
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add addons/godot_xreal/plugin.cfg Cargo.toml
+          if git diff --cached --quiet; then
+            echo "No version changes needed (already set)"
+          else
+            git commit -m "chore(release): ${{ needs.prepare.outputs.version }}"
+            git push origin main
+          fi
+          git tag ${{ needs.prepare.outputs.version }}
+          git push origin ${{ needs.prepare.outputs.version }}
+
+      - name: Assemble release package
+        run: |
+          VER="${{ needs.prepare.outputs.version }}"
+          NAME="godot-xreal-${VER}"
+          # Drop-in tree: extract over a Godot project, then vendor the XREAL libs (see INSTALL.md).
+          mkdir -p "${NAME}/dummy" "${NAME}/target/aarch64-linux-android/release" "${NAME}/addons"
+          cp godot_xreal.gdextension "${NAME}/"
+          cp -r addons/godot_xreal "${NAME}/addons/"   # aar / tools are gitignored -> not in the checkout
+          cp artifacts/android-lib/libgodot_xreal.so "${NAME}/target/aarch64-linux-android/release/"
+          cp artifacts/dummy-stubs/* "${NAME}/dummy/"
+          cat > "${NAME}/INSTALL.md" <<'EOF'
+          # Godot XREAL — prebuilt addon
+
+          These are the prebuilt binaries (Android arm64 GDExtension + 6 desktop editor stubs). You do
+          NOT need Rust / cargo-ndk / clang to use them.
+
+          ## Install
+          1. Copy this folder's contents into your Godot **4.7** project root, merging:
+             `godot_xreal.gdextension`, `dummy/`, `target/aarch64-linux-android/release/libgodot_xreal.so`,
+             and `addons/godot_xreal/`.
+          2. Enable the plugin: Project > Project Settings > Plugins > "Godot XREAL".
+          3. Vendor the XREAL proprietary libraries (NOT redistributable, so not included): use the
+             **XREAL 取込** editor dock (pick `com.xreal.xr(.tgz|.tar.gz)`), or run
+             `scripts/vendor_xreal_libs.*`. Pin the SDK to the version these offsets were built against
+             (**com.xreal.xr 3.1.0**).
+          4. Android export: *Use Gradle Build* ON, Min SDK 29, Architectures arm64-v8a, renderer
+             Compatibility (GLES3). See docs/guides/android-setup.md.
+          EOF
+          zip -r "${NAME}.zip" "${NAME}"
+          echo "ARCHIVE=${NAME}.zip" >> $GITHUB_ENV
+
+      - name: Generate changelog
+        uses: orhun/git-cliff-action@v4
+        with:
+          config: .github/cliff.toml
+          args: --latest --strip header
+        env:
+          OUTPUT: CHANGELOG.md
+
+      - name: Create Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release create ${{ needs.prepare.outputs.version }} \
+            --title "Release ${{ needs.prepare.outputs.version }}" \
+            --notes-file CHANGELOG.md \
+            "${{ env.ARCHIVE }}" \
+            artifacts/android-lib/libgodot_xreal.so
