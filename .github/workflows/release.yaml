@@ -20,7 +20,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -64,7 +64,7 @@ jobs:
           echo "Cargo.toml:"; grep '^version' Cargo.toml
 
       - name: Upload version files as artifact
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: version-commit
           path: |
@@ -78,10 +78,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
 
       - name: Apply version updates
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: version-commit
 
@@ -111,7 +111,7 @@ jobs:
           cp target/aarch64-linux-android/release/libgodot_xreal.so .
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: android-lib
           path: libgodot_xreal.so
@@ -123,7 +123,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
 
       - name: Install clang + lld
         run: sudo apt-get update && sudo apt-get install -y clang lld
@@ -135,7 +135,7 @@ jobs:
           cp dummy/*.dll dummy/*.so dummy/*.dylib out/
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: dummy-stubs
           path: out/
@@ -149,12 +149,12 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
       - name: Download all artifacts
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           path: artifacts
 
