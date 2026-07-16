@@ -537,6 +537,35 @@ impl XrealSystem {
         d
     }
 
+    // --- Depth mesh (see docs/plans/ar-features-plan.md §4). Internal libXREALXRPlugin.so functions by
+    //     LIB_BASE+offset (like hand tracking), NOT flat exports. Air 2 Ultra only. ---
+
+    /// Whether the connected glasses support depth meshing (`GetSupportedFeatures() & (1<<3)`). `false`
+    /// on non-Air-2-Ultra devices / before the perception is up.
+    #[func]
+    fn is_meshing_supported(&self) -> bool {
+        crate::depth_mesh::meshing_supported()
+    }
+
+    /// Enable/disable depth meshing (`NativePerception::SetMeshingEnabled`). Returns whether the call
+    /// reached the SDK (perception up); poll `poll_mesh_blocks` after enabling.
+    #[func]
+    fn set_meshing_enabled(&self, on: bool) -> bool {
+        crate::depth_mesh::set_meshing_enabled(on)
+    }
+
+    /// Poll the current mesh blocks. Returns an `Array` of `Dictionary { id: String, state: int,
+    /// vertices: PackedVector3Array, normals: PackedVector3Array, indices: PackedInt32Array }`.
+    /// `state == 2` means the block was removed; build/update an `ArrayMesh` per block otherwise.
+    #[func]
+    fn poll_mesh_blocks(&self) -> VarArray {
+        let mut arr = VarArray::new();
+        for b in crate::depth_mesh::poll_mesh_blocks() {
+            arr.push(&mesh_block_to_dict(&b).to_variant());
+        }
+        arr
+    }
+
     // NOTE: there is no stereo-mode selector — the port is Multipass-only. Multiview is shelved and
     // no longer reachable (the force_multiview escape was removed). It renders correctly but gains
     // nothing here and shares a cross-thread crash path; see docs/archive/multiview-investigation.md.
@@ -815,5 +844,32 @@ fn image_to_dict(im: &crate::native::ImageSample) -> VarDictionary {
         &"tracking_state".to_variant(),
         &(im.tracking_state as i64).to_variant(),
     );
+    d
+}
+
+/// A depth-mesh block → a GDScript `Dictionary`. Vertices/normals get the same `(x, -y, -z)` flip the
+/// poses use (on-device-verify-pending); indices are copied as-is.
+fn mesh_block_to_dict(b: &crate::depth_mesh::MeshBlock) -> VarDictionary {
+    let mut verts = PackedVector3Array::new();
+    for v in &b.vertices {
+        verts.push(Vector3::new(v[0], -v[1], -v[2]));
+    }
+    let mut norms = PackedVector3Array::new();
+    for n in &b.normals {
+        norms.push(Vector3::new(n[0], -n[1], -n[2]));
+    }
+    let mut idx = PackedInt32Array::new();
+    for i in &b.indices {
+        idx.push(*i as i32);
+    }
+    let mut d = VarDictionary::new();
+    d.set(
+        &"id".to_variant(),
+        &GString::from(format!("{:016x}", b.id).as_str()).to_variant(),
+    );
+    d.set(&"state".to_variant(), &(b.state as i64).to_variant());
+    d.set(&"vertices".to_variant(), &verts.to_variant());
+    d.set(&"normals".to_variant(), &norms.to_variant());
+    d.set(&"indices".to_variant(), &idx.to_variant());
     d
 }

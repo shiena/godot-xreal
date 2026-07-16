@@ -15,6 +15,7 @@ use godot::prelude::*;
 
 mod camera_feed;
 mod controller_probe;
+mod depth_mesh;
 mod ffi;
 mod gl;
 mod glasses_events;

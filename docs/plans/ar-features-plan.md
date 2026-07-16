@@ -195,7 +195,17 @@ Exports (`XREALImageTrackingSubsystem.cs`): `SetImageTrackingDatabase(u64)` (`0x
 **`XRTrackedImage` element — 80 bytes (`0x50`):** `trackable_id@0x00`, `source_image_id(Guid)@0x10`,
 `pose@0x20`, `size@0x3c`, `tracking_state@0x44`, `native_ptr@0x48`.
 
-## 4. Depth Mesh — FEASIBLE (medium effort; not the Unity-interface dead end previously assumed)
+## 4. Depth Mesh — IMPLEMENTED (Path B; on-device verification pending)
+
+**Shipped** via `src/depth_mesh.rs` (internal `libXREALXRPlugin.so` calls by `LIB_BASE + offset`, like
+`src/hand_tracking.rs`): `meshing_supported()` (`GetSupportedFeatures() & (1<<3)`), `set_meshing_enabled(bool)`
+(`0x9a4a8`), `poll_mesh_blocks()` (`GetMeshBlockInfo` `0x9a664` → walk the `vector<MeshBlockInfo>`, copy
+verts/normals/indices, free the C++ storage with libc++ `operator delete`). Exposed on `XrealSystem`
+(`is_meshing_supported` / `set_meshing_enabled` / `poll_mesh_blocks() -> Array` of
+`{id, state, vertices, normals, indices}`); the `(x,-y,-z)` flip is applied Godot-side. Demo
+`demo/mesh_manager.gd` (phone-menu "メッシュ" toggle, Air2U tab) builds a translucent `ArrayMesh` per block.
+**On-device TODO:** confirm the session-init meshing gate turns blocks on, the coordinate flip, and the
+C++ vector free doesn't corrupt (behind the toggle so any crash is contained).
 
 **Codex RE (2026-07-17) refuted the "shelve — needs Unity-interface emulation" verdict.** Under Unity
 the geometry *does* flow through the engine `XRMeshSubsystem` (`XREALXRLoader.cs:192` registers "XREAL

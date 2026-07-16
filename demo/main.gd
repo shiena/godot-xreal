@@ -59,6 +59,8 @@ var _ar_diag_frames := 0
 var _anchor_manager: Node3D
 # Image-tracking manager (demo/image_manager.gd), driven by the phone-menu "画像" toggle.
 var _image_manager: Node3D
+# Depth-mesh manager (demo/mesh_manager.gd), driven by the phone-menu "メッシュ" toggle.
+var _mesh_manager: Node3D
 # Detected-plane visualization: a thin, semi-transparent box overlaid on each plane's bounds,
 # keyed by plane id. World-locked (children of Main, like the hand joints) so they sit on the real
 # surface as the head moves. On the see-through display the translucent fill reads as a tint.
@@ -173,6 +175,13 @@ func _spawn_rig() -> void:
 		_image_manager.set_script(load("res://demo/image_manager.gd"))
 		add_child(_image_manager)
 		_image_manager.setup(_system)
+		# Depth-mesh manager (also world-locked under Main). Enables meshing + overlays an ArrayMesh per
+		# scanned block — enabled from the phone-menu メッシュ toggle.
+		_mesh_manager = Node3D.new()
+		_mesh_manager.name = "MeshManager"
+		_mesh_manager.set_script(load("res://demo/mesh_manager.gd"))
+		add_child(_mesh_manager)
+		_mesh_manager.setup(_system)
 		# Recenter the view to the current head direction once tracking goes live.
 		if _tracker.has_signal(&"display_started"):
 			_tracker.display_started.connect(_on_display_started)
@@ -359,6 +368,18 @@ func _on_tc_image(on: bool) -> void:
 	if on and not enabled:
 		push_warning("[demo] image tracking unavailable (device / DB blob) — toggle disabled")
 		_set_controller_toggle("image", false)
+
+## Phone-menu "メッシュ" toggle → enable/disable depth meshing (demo/mesh_manager.gd). Overlays an
+## ArrayMesh of the scanned environment. Unavailable off the Air 2 Ultra: the toggle flips back off.
+func _on_tc_mesh(on: bool) -> void:
+	print("[demo] mesh toggle -> %s" % ("on" if on else "off"))
+	if _mesh_manager == null:
+		_set_controller_toggle("mesh", false)
+		return
+	var enabled: bool = _mesh_manager.set_enabled(on)
+	if on and not enabled:
+		push_warning("[demo] depth meshing unavailable (non-Air-2-Ultra / perception down) — toggle disabled")
+		_set_controller_toggle("mesh", false)
 
 ## Phone-menu "配置" button → place a spatial anchor at the currently-tracked hand fingertip.
 func _on_tc_place() -> void:

@@ -29,6 +29,8 @@ signal plane_toggled(on: bool)
 signal anchor_toggled(on: bool)
 ## Image-tracking mode toggle flipped (true = on).
 signal image_toggled(on: bool)
+## Depth-mesh mode toggle flipped (true = on).
+signal mesh_toggled(on: bool)
 ## Momentary "配置" button — place a spatial anchor at the hand fingertip now.
 signal place_pressed()
 
@@ -54,6 +56,7 @@ const _toggles := {
 	"plane": "平面検出",
 	"anchor": "アンカー",
 	"image": "画像",
+	"mesh": "メッシュ",
 }
 
 # Tabs, grouped by which glasses support each feature (per XREAL's Feature Compatibility table) so the
@@ -61,11 +64,11 @@ const _toggles := {
 # own buttons. Each item must be a key of `_buttons` or `_toggles`.
 #   操作  — the virtual controller (3DoF): ALL glasses (One Series / Air·Air 2·Air 2 Pro / Air 2 Ultra).
 #   カメラ — the RGB camera: XREAL One Series only (Air/Air 2/Air 2 Pro and Air 2 Ultra have no RGB cam).
-#   Air2U — perception (plane / spatial anchor / image tracking; hand / depth mesh to come): Air 2 Ultra only.
+#   Air2U — perception (plane / spatial anchor / image tracking / depth mesh): Air 2 Ultra only.
 const _tabs := [
 	{"label": "操作", "items": ["trigger", "grip", "menu", "hand_l", "hand_r"]},
 	{"label": "カメラ", "items": ["camera"]},
-	{"label": "Air2U", "items": ["place", "plane", "anchor", "image"]},
+	{"label": "Air2U", "items": ["place", "plane", "anchor", "image", "mesh"]},
 ]
 
 # Layout, filled by _layout() from the current size.
@@ -214,6 +217,8 @@ func _press(widget: String, pos: Vector2) -> void:
 				anchor_toggled.emit(on)
 			"image":
 				image_toggled.emit(on)
+			"mesh":
+				mesh_toggled.emit(on)
 		queue_redraw()
 		return
 	match widget:
