@@ -51,9 +51,9 @@ Verified on XREAL One Pro (and hand tracking on the XREAL Air 2 Ultra) with the 
 | **Plane detection** → GDScript | ✅ ported (on-device verify pending) | Horizontal/vertical plane detection via `XrealSystem.set_plane_detection_mode()` + `poll_planes()` (added/updated/removed with pose, size, alignment) + `get_plane_boundary()`. Flat C exports in `libXREALXRPlugin.so` (no extra AAR); needs 6DoF. All 4 AR features' C ABI is RE-confirmed — see [`docs/plans/ar-features-plan.md`](docs/plans/ar-features-plan.md). |
 | **Spatial anchors** → GDScript | ✅ ported (on-device verify pending) | Create/persist/restore world anchors via `XrealSystem.acquire_anchor()` / `poll_anchors()` / `save_anchor()` / `load_anchor()` / `estimate_anchor_quality()` etc. Flat C exports (`XRTrackedAnchor` layout device-confirmed) + the vendored `nr_spatial_anchor.aar` backend; needs 6DoF. Also adds `is_camera_supported()` / `is_hmd_feature_supported()` — the SDK's per-device gate (the Air 2 Ultra has no RGB camera). |
 
-Not implemented: 6DoF position for the app camera, image tracking, meshing, audio/photo capture.
-(Image / mesh are portable without ARCore or AR Foundation and their C ABI is already RE'd — see
-[`docs/plans/ar-features-plan.md`](docs/plans/ar-features-plan.md).)
+Not implemented: 6DoF position for the app camera. (Image tracking, marker tracking, depth meshing,
+photo / blended capture and FPV streaming are ported — device verification is still pending for some;
+see [`docs/plans/ar-features-plan.md`](docs/plans/ar-features-plan.md).)
 
 ## Install (prebuilt)
 

@@ -93,6 +93,12 @@ jobs:
       - name: Run tests
         run: cargo test --all-features
 
+      - name: Lint GDScript
+        run: |
+          # Static-check the demo + addon .gd files (gdtoolkit; no Godot needed). Config: .gdlintrc.
+          python3 -m pip install --quiet "gdtoolkit==4.*"
+          python3 -m gdtoolkit.linter $(git ls-files '*.gd')
+
   # Build the addon exactly as a release would: the real Android arm64 GDExtension (cargo-ndk, needs
   # no vendored XREAL libs — they are dlopen'd at runtime) + the 6 desktop dummy stubs (clang + lld,
   # freestanding, so all targets cross-compile from this one Linux runner).

@@ -51,8 +51,8 @@ XREAL Air 2 Ultra）で実機確認。以下はすべてコミュニティによ
 | **平面検出** → GDScript | ✅ 移植済み（実機検証待ち） | 水平/垂直の平面検出を `XrealSystem.set_plane_detection_mode()` + `poll_planes()`（追加/更新/削除、ポーズ・サイズ・alignment 付き）+ `get_plane_boundary()` で提供。`libXREALXRPlugin.so` のフラット C export（追加 AAR 不要）、6DoF 必須。4 つの AR 機能の C ABI は RE 確定済み — [`docs/plans/ar-features-plan.md`](docs/plans/ar-features-plan.md)。 |
 | **空間アンカー** → GDScript | ✅ 移植済み（実機検証待ち） | ワールドアンカーの作成/永続化/復元を `XrealSystem.acquire_anchor()` / `poll_anchors()` / `save_anchor()` / `load_anchor()` / `estimate_anchor_quality()` 等で提供。フラット C export（`XRTrackedAnchor` レイアウトは実機確定）+ 同梱の `nr_spatial_anchor.aar` バックエンド、6DoF 必須。併せて `is_camera_supported()` / `is_hmd_feature_supported()`（SDK のデバイス別判定 — Air 2 Ultra は RGB カメラ非搭載）も追加。 |
 
-未実装: アプリカメラの 6DoF 位置、画像トラッキング、メッシング、音声/写真キャプチャ。（画像/
-メッシュは ARCore・AR Foundation 不要で移植可能、C ABI も RE 済み —
+未実装: アプリカメラの 6DoF 位置。（画像トラッキング・マーカートラッキング・深度メッシュ・写真/合成
+キャプチャ・FPV 配信は移植済み。一部は実機検証待ち —
 [`docs/plans/ar-features-plan.md`](docs/plans/ar-features-plan.md)。）
 
 ## インストール（プリビルト）

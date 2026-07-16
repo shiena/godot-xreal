@@ -1,0 +1,10 @@
+# gdlint config for the demo + addon GDScript. We relax three style rules that clash with this
+# project's conventions and keep the semantic checks (unused-argument, expression-not-assigned,
+# duplicated-load, function-arguments-number, name checks, …) that catch real problems:
+#   - max-line-length: some lines (e.g. manifest strings) are intentionally very long.
+#   - class-definitions-order: definition order here is deliberate, not gdlint's.
+#   - constant-name: private const collections use the `_lower` convention (e.g. `_tabs`).
+disable:
+  - max-line-length
+  - class-definitions-order
+  - constant-name
