@@ -1,0 +1,31 @@
+[gd_scene load_steps=2 format=3 uid="uid://c0xrealdemo001"]
+
+[ext_resource type="Script" path="res://demo/main.gd" id="1_main"]
+
+[node name="Main" type="Node3D"]
+script = ExtResource("1_main")
+
+[node name="UI" type="CanvasLayer" parent="."]
+
+[node name="Panel" type="PanelContainer" parent="UI"]
+offset_left = 16.0
+offset_top = 16.0
+offset_right = 380.0
+offset_bottom = 168.0
+
+[node name="Margin" type="MarginContainer" parent="UI/Panel"]
+theme_override_constants/margin_left = 12
+theme_override_constants/margin_top = 12
+theme_override_constants/margin_right = 12
+theme_override_constants/margin_bottom = 12
+
+[node name="VBox" type="VBoxContainer" parent="UI/Panel/Margin"]
+
+[node name="Title" type="Label" parent="UI/Panel/Margin/VBox"]
+text = "Godot XREAL — 3DoF demo"
+
+[node name="Status" type="Label" parent="UI/Panel/Margin/VBox"]
+text = "XREAL: querying..."
+
+[node name="Recenter" type="Button" parent="UI/Panel/Margin/VBox"]
+text = "Recenter (3DoF)"

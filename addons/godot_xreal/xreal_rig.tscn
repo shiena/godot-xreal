@@ -1,0 +1,17 @@
+[gd_scene load_steps=2 format=3 uid="uid://b0xrealrig0001"]
+
+[sub_resource type="GDScript" id="GDScript_rig"]
+script/source = "extends Camera3D
+
+## Marks this camera current at runtime only, so the editor's own camera is not
+## hijacked while editing scenes that include the rig.
+
+func _ready() -> void:
+	if not Engine.is_editor_hint():
+		current = true
+"
+
+[node name="XrealCameraRig" type="XrealHeadTracker"]
+
+[node name="Camera3D" type="Camera3D" parent="."]
+script = SubResource("GDScript_rig")

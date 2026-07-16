@@ -1,0 +1,28 @@
+[configuration]
+entry_symbol = "gdext_rust_init"
+compatibility_minimum = "4.4"
+reloadable = true
+
+[libraries]
+windows.debug.x86_64 = "res://target/debug/godot_xreal.dll"
+windows.release.x86_64 = "res://target/release/godot_xreal.dll"
+linux.debug.x86_64 = "res://target/debug/libgodot_xreal.so"
+linux.release.x86_64 = "res://target/release/libgodot_xreal.so"
+macos.debug.arm64 = "res://target/debug/libgodot_xreal.dylib"
+macos.release.arm64 = "res://target/release/libgodot_xreal.dylib"
+macos.debug.x86_64 = "res://target/debug/libgodot_xreal.dylib"
+macos.release.x86_64 = "res://target/release/libgodot_xreal.dylib"
+; The XREAL native libraries only ship for Android arm64-v8a, so on-device
+; testing always targets aarch64. Build with:
+;   cargo ndk -t arm64-v8a -o ./jniLibs build --release
+android.debug.arm64 = "res://target/aarch64-linux-android/release/libgodot_xreal.so"
+android.release.arm64 = "res://target/aarch64-linux-android/release/libgodot_xreal.so"
+
+[dependencies]
+; The vendored XREAL runtime libraries that the GDExtension dlopen()s at startup.
+; Populate ./jniLibs/arm64-v8a/ with tools/vendor_xreal_libs.ps1 before exporting.
+android.arm64 = {
+"res://jniLibs/arm64-v8a/libXREALNativeSessionManager.so" : "",
+"res://jniLibs/arm64-v8a/libXREALXRPlugin.so" : "",
+"res://jniLibs/arm64-v8a/libVulkanSupport.so" : ""
+}
