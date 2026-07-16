@@ -96,7 +96,7 @@ pwsh scripts/vendor_xreal_libs.ps1 -XrealPackage <…>/package
 | `libXREALXRPlugin.so` | XR-plugin コンポジタ / 表示の C ABI |
 | `libVulkanSupport.so` | 上記2つが必要とするサポート lib |
 
-**5 個の `.aar` → `addons/godot_xreal/android/`** — アドオンのエクスポートプラグイン
+**7 個の `.aar` → `addons/godot_xreal/android/`** — アドオンのエクスポートプラグイン
 （`export_plugin.gd`）が APK に取り込みます: グラスに必要な Java/JNI 層+manifest エントリを
 担います。さらに NR 系ネイティブ lib（`jni/arm64-v8a/*.so`）も内包しており、Gradle が APK に
 マージするため**別途抽出は不要**です。コピー元はすべて `Runtime/Plugins/Android/` 直下:
@@ -106,6 +106,8 @@ pwsh scripts/vendor_xreal_libs.ps1 -XrealPackage <…>/package
 | `nr_loader.aar` | NR ローダの Java 層 | `libnr_loader.so` |
 | `nr_api.aar` | NR API の Java 層 | `libnr_api.so` / `libnr_plugin_6dof.so` / `libnr_rgb_camera.so` |
 | `nr_common.aar` | NR 共通層 | `libnr_libusb.so`（+ QNN/SNPE 系） |
+| `nr_spatial_anchor.aar` | 空間アンカーのバックエンド | `libnr_spatial_anchor.so` |
+| `nr_image_tracking.aar` | 画像トラッキングのバックエンド | `libnr_image_tracking.so` |
 | `GlassesDisplayPlugEvent-2.4.2.aar` | グラス検出 `GlassesInitProvider` | — |
 | `Log-Control-1.2.aar` | 上記が参照する `LogControl` — **必須**（欠けると Godot 起動前にクラッシュ） | — |
 
@@ -152,18 +154,33 @@ API:
 ## 構成
 
 ```
-addons/godot_xreal/   インストール可能なアドオン（plugin.cfg, plugin.gd, xreal_rig.tscn,
-                      export_plugin.gd + android/: ブリッジ Java ソース、vendoring した .aar/.jar は git 管理外）
-src/
-  lib.rs        ExtensionLibrary エントリ
-  ffi.rs        repr(C) 構造体 / enum / 関数ポインタ型（RE した ABI）
-  native.rs     XREAL .so の dlopen/dlsym
-  session.rs    安全なライフサイクル + 座標変換
-  node.rs       XrealHeadTracker（Node3D）= 3DoF MVP ノード
-demo/           最小 Godot シーン
-jniLibs/        vendoring した XREAL .so（git 管理外）+ ビルド成果物
-scripts/        build.ps1 / build.sh（パイプライン）+ vendor_xreal_libs.ps1（ランタイム一式の配置）
-docs/           guides / reference / plans / archive — 目次は docs/README.md
+godot_xreal.gdextension  GDExtension マニフェスト（Android .so + デスクトップスタブ + dlopen 依存）
+addons/godot_xreal/      インストール可能なアドオン
+  plugin.cfg/.gd         EditorPlugin — エディタ dock も登録
+  export_plugin.gd       Android エクスポート: manifest・権限・.aar/assets ステージング
+  xreal_rig.tscn         XrealHeadTracker + Camera3D リグ
+  editor/                dock: vendor_import_dock.gd（SDK 取込）, image_db_dock.gd
+  android/               ブリッジ Java ソース + nr_plugins.json（vendoring した .aar は git 管理外）
+src/                     Rust GDExtension 本体
+  lib.rs                 ExtensionLibrary エントリ
+  ffi.rs / native.rs     RE した ABI（repr(C) 構造体）+ XREAL .so の dlopen/dlsym
+  session.rs/jni_bridge.rs  セッションのライフサイクル + Android Activity 取得
+  signal_guard.rs        null-NativeGlasses teardown クラッシュ回避
+  node.rs                XrealHeadTracker（Node3D）
+  system.rs              XrealSystem（RefCounted）+ XrealAR（Node — AR 変化シグナル）
+  camera_feed.rs         XrealCameraFeed（CameraFeed）= RGB カメラ
+  hand_tracking.rs       XrealHandTracker（Node）→ XRHandTracker
+  depth_mesh.rs · metrics.rs · video_encoder.rs · controller_probe.rs
+                         AR メッシュ · レンダーメトリクス · FPV H.264 配信 · スマホ IMU ポインタ
+  gl.rs / unity_plugin.rs   GLES + Unity ネイティブプラグイン emulation（表示パス）
+  glasses_events.rs / native_error.rs   キャッシュ型イベント funnel
+demo/                    AR デモ（main.tscn + 各 manager: hand/anchor/image/mesh/stream/
+                         capture/blend + スマホタッチコントローラ）
+dummy/                   デスクトップ GDExtension スタブ（gdext_dummy.c）= エディタ用
+jniLibs/                 vendoring した XREAL .so（git 管理外）+ ビルド成果物 libgodot_xreal.so
+scripts/                 build + vendor_xreal_libs + build_dummy_libs + build_image_db（.ps1/.sh）
+.github/workflows/       CI（fmt/clippy/test/build）+ Release（プリビルトアドオン）
+docs/                    guides / reference / plans / archive — 目次は docs/README.md
 ```
 
 ## ライセンス

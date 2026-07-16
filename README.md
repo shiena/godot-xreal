@@ -97,7 +97,7 @@ next to the GDExtension via `godot_xreal.gdextension` `[dependencies]` and `dlop
 | `libXREALXRPlugin.so` | XR-plugin compositor / display C ABI |
 | `libVulkanSupport.so` | support lib the two above need |
 
-**5 `.aar` → `addons/godot_xreal/android/`** — shipped into the APK by the addon's export plugin
+**7 `.aar` → `addons/godot_xreal/android/`** — shipped into the APK by the addon's export plugin
 (`export_plugin.gd`): the Java/JNI layer + manifest entries the glasses need. They also carry the
 NR native libs (`jni/arm64-v8a/*.so`), which Gradle merges into the APK — so those are **not**
 extracted separately. All copied from `Runtime/Plugins/Android/`:
@@ -107,6 +107,8 @@ extracted separately. All copied from `Runtime/Plugins/Android/`:
 | `nr_loader.aar` | NR loader Java layer | `libnr_loader.so` |
 | `nr_api.aar` | NR API Java layer | `libnr_api.so`, `libnr_plugin_6dof.so`, `libnr_rgb_camera.so` |
 | `nr_common.aar` | NR common layer | `libnr_libusb.so` (plus QNN/SNPE libs) |
+| `nr_spatial_anchor.aar` | spatial-anchor backend | `libnr_spatial_anchor.so` |
+| `nr_image_tracking.aar` | image-tracking backend | `libnr_image_tracking.so` |
 | `GlassesDisplayPlugEvent-2.4.2.aar` | glasses-detection `GlassesInitProvider` | — |
 | `Log-Control-1.2.aar` | `LogControl` referenced by the above — **required**, or the app crashes before Godot starts | — |
 
@@ -177,20 +179,33 @@ XrealHeadTracker (Node3D)   # rotation driven by native head pose
 ## Layout
 
 ```
-addons/godot_xreal/   the installable addon (plugin.cfg, plugin.gd, xreal_rig.tscn,
-                      export_plugin.gd + android/: bridge Java source, vendored .aar/.jar git-ignored)
-src/
-  lib.rs        ExtensionLibrary entry
-  ffi.rs        repr(C) structs / enums / fn-pointer types (the RE'd ABI)
-  native.rs     dlopen/dlsym of the XREAL .so files
-  session.rs    safe lifecycle + session bootstrap + coordinate conversion
-  jni_bridge.rs Android Activity acquisition for the session bootstrap
-  node.rs       XrealHeadTracker (Node3D) — the 3DoF MVP node
-  system.rs     XrealSystem (RefCounted) — read-only SDK info
-demo/           demo scene (main.tscn + main.gd) with a status UI
-jniLibs/        vendored XREAL .so (git-ignored) + built libgodot_xreal.so
-scripts/        build.ps1 / build.sh (pipeline) + vendor_xreal_libs.ps1 (stage all runtime pieces)
-docs/           guides / reference / plans / archive — see docs/README.md for the index
+godot_xreal.gdextension  GDExtension manifest (Android .so + desktop stubs + dlopen deps)
+addons/godot_xreal/      the installable addon
+  plugin.cfg/.gd         EditorPlugin — also registers the editor docks
+  export_plugin.gd       Android export: manifest, permissions, .aar/assets staging
+  xreal_rig.tscn         XrealHeadTracker + Camera3D rig
+  editor/                docks: vendor_import_dock.gd (SDK import), image_db_dock.gd
+  android/               bridge Java source + nr_plugins.json (vendored .aar git-ignored)
+src/                     the Rust GDExtension
+  lib.rs                 ExtensionLibrary entry
+  ffi.rs / native.rs     RE'd ABI (repr(C) structs) + dlopen/dlsym of the XREAL .so
+  session.rs/jni_bridge.rs  session lifecycle + Android Activity acquisition
+  signal_guard.rs        null-NativeGlasses teardown crash workaround
+  node.rs                XrealHeadTracker (Node3D)
+  system.rs              XrealSystem (RefCounted) + XrealAR (Node — AR-change signals)
+  camera_feed.rs         XrealCameraFeed (CameraFeed) — RGB camera
+  hand_tracking.rs       XrealHandTracker (Node) → XRHandTracker
+  depth_mesh.rs · metrics.rs · video_encoder.rs · controller_probe.rs
+                         AR mesh · render metrics · FPV H.264 streaming · phone-IMU pointer
+  gl.rs / unity_plugin.rs   GLES + Unity native-plugin emulation (display path)
+  glasses_events.rs / native_error.rs   cached event funnels
+demo/                    AR demo (main.tscn + managers: hand/anchor/image/mesh/stream/
+                         capture/blend + phone touch controller)
+dummy/                   desktop GDExtension stubs (gdext_dummy.c) so the editor loads
+jniLibs/                 vendored XREAL .so (git-ignored) + built libgodot_xreal.so
+scripts/                 build + vendor_xreal_libs + build_dummy_libs + build_image_db (.ps1/.sh)
+.github/workflows/       CI (fmt/clippy/test/build) + Release (prebuilt addon)
+docs/                    guides / reference / plans / archive — see docs/README.md for the index
 ```
 
 ## License
