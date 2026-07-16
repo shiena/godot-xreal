@@ -114,6 +114,9 @@ public final class XrealBridge {
 			ensureNativeLibrariesLoaded();
 			nativeRegisterActivity(activity);
 			registerDisplayListener(activity);
+			// Multi-resume: auto show/hide a floating "return" button on the phone while the
+			// glasses app runs in the background (see XrealFloatingReturnButton).
+			XrealFloatingReturnButton.init(activity);
 			Display currentDisplay = activity.getWindowManager().getDefaultDisplay();
 			Log.i(TAG, BRIDGE_VERSION + ": Activity registered with the godot-xreal GDExtension on display "
 					+ (currentDisplay == null ? -1 : currentDisplay.getDisplayId()));

@@ -47,7 +47,7 @@ XREAL Air 2 Ultra）で実機確認。以下はすべてコミュニティによ
 | **診断** — セッション/トラッキング状態、HMD クロック、プラグイン版 | ✅ | `XrealSystem` 経由。 |
 | **オンスクリーン・タッチコントローラ**（スマホ画面） | ✅（デモ） | アプリ層の Godot UI（`demo/touch_controller.gd`）: カスタマイズ可能なタッチパッド+ボタン→シグナル、スマホ振動ハプティクス。スマホにコントローラ・グラスに 3D を表示（画面分離）。ネイティブ非依存で SDK の `XREALVirtualController` に相当。 |
 | **スマホ 3D ポインター**（ホスト IMU） | ✅（デモ） | スマホを傾けてグラス内に 3D レイを飛ばす（`demo/phone_pointer.gd`）。姿勢は `XrealSystem.poll_controller()` が露出する NRController の生 IMU（`accel`→ピッチ/ロール, `gyro`→ヨー）を GDScript で融合。本機では NRController の**融合ポーズ**も Godot 内蔵 `Input.get_gyroscope()` も空だったため。レイキャストで当たったオブジェクトをハイライト・トリガーで選択、オンスクリーンの左右手切替でレイの原点を切替、gyro ドリフトはバイアス学習+デッドゾーンで抑制。`recenter` で正面リセット。 |
-| **マルチレジューム** — スマホを別アプリに切替えてもグラスのアプリが継続 | ✅ | 実機確認: Home/別アプリ後もグラス側でヘッドトラッキング+カメラが更新継続。manifest 足場（`nr_features=multiResume`+`NRFakeActivity`）で成立。フローティング「戻る」ボタンは**不可**（自前オーバーレイは Godot の GL サーフェスを乱す・NR `FloatingManager` は非 Unity アプリから不可）。 |
+| **マルチレジューム** — スマホを別アプリに切替えてもグラスのアプリが継続 | ⚠️ 一部 | アプリ**プロセス**は背景でも生存（manifest 足場 `nr_features=multiResume`+`NRFakeActivity`、companion はグラス側 display で resumed 維持）。フローティング「戻る」ボタンは**実装・実機検証済み**（`XrealFloatingReturnButton`: Unity 非依存の `TYPE_APPLICATION_OVERLAY` — ドラッグ移動・タップで復帰・multiResume でゲート・AAR 不要。`docs/archive/codex-floatingmanager-analysis.md`）。**ただし背景化中はグラスの*描画*が停止**（Godot が onPause で render スレッドを pause → `EGL_BAD_SURFACE`）、復帰で再開 — 調査中（旧「Home 後も描画継続」の記述は疑わしい）。 |
 
 未実装: アプリカメラの 6DoF 位置、画像/平面トラッキング、空間アンカー、メッシング、
 音声/写真キャプチャ、NRSDK の高レベル知覚機能。（平面/画像/アンカー/メッシュは ARCore・AR Foundation
