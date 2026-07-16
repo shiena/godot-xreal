@@ -3,7 +3,7 @@
 //! Signatures here are **confirmed by reverse engineering** the binaries (C++ mangled
 //! names + AArch64 disassembly of the C wrappers in `libXREALNativeSessionManager.so`),
 //! cross-checked against the Unity SDK's C# `[DllImport]` declarations. See
-//! `docs/reverse-engineering.md` for the derivation. Items still flagged `RE` need
+//! `docs/reference/reverse-engineering.md` for the derivation. Items still flagged `RE` need
 //! on-device confirmation.
 
 use std::ffi::{c_char, c_void};
@@ -94,7 +94,7 @@ pub struct UserDefinedSettings {
 
 // ---- Resolved function-pointer types -------------------------------------------------
 //
-// RE basis (see docs/reverse-engineering.md):
+// RE basis (see docs/reference/reverse-engineering.md):
 //   - mangled `XREALNativeSessionManager::GetHeadPoseAtTime(unsigned long, float*)`
 //   - mangled `XREALNativeSessionManager::GetHMDTimeNanos(unsigned long*)`  <- out-param!
 //   - C wrappers tail-call the methods, so the C export return == the method return
@@ -119,7 +119,7 @@ pub type FnGetHeadPoseAtTime = unsafe extern "C" fn(u64, *mut NrPose) -> i32;
 /// reprojects the glasses layer with (so driving the eye cameras from it should yield a
 /// head-locked peek window). Returns 1 on success. The internal layout of the 16 floats
 /// (quaternion offset/order, or a 4×4 matrix) is pinned by an on-device log before we
-/// convert it; see `docs/glasses-display-position.md`.
+/// convert it; see `docs/archive/glasses-display-position.md`.
 pub type FnGetHeadPoseDisplay = unsafe extern "C" fn(u64, *mut [f32; 16]) -> i32;
 
 /// `void XREALLoadAPI(void)` — wires the session-manager perception delegate; must run
@@ -177,7 +177,7 @@ pub type FnQueryInt = unsafe extern "C" fn() -> i32;
 /// directly to try to kick perception without the full XR-subsystem host.
 pub type FnSwitchTrackingType = unsafe extern "C" fn(i32) -> bool;
 
-// --- RGB camera (libXREALXRPlugin.so, flat C ABI; see docs/camera-feed-plan.md) ---
+// --- RGB camera (libXREALXRPlugin.so, flat C ABI; see docs/plans/camera-feed-plan.md) ---
 
 /// `NRSize2i` / Unity `Vector2Int` — plane or frame dimensions (RGB camera).
 #[repr(C)]

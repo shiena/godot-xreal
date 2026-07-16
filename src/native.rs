@@ -83,7 +83,7 @@ pub struct XrealNative {
     get_tracking_type: Option<FnQueryInt>,
     switch_tracking_type: Option<FnSwitchTrackingType>,
 
-    // RGB camera (libXREALXRPlugin.so, flat C ABI; see docs/camera-feed-plan.md). Poll path.
+    // RGB camera (libXREALXRPlugin.so, flat C ABI; see docs/plans/camera-feed-plan.md). Poll path.
     rgb_start_capture: Option<FnStartRgbCameraCapture>,
     rgb_stop_capture: Option<FnStopRgbCameraCapture>,
     rgb_try_acquire_latest: Option<FnTryAcquireLatestImage>,
@@ -133,7 +133,7 @@ pub struct XrealNative {
     //
     // The static is at compile-time offset 0xdb400 in libXREALXRPlugin.so.
     // We recover the runtime base by subtracting CreateFrame's compile-time offset
-    // (0x53bd8) from its runtime address. See docs/reverse-engineering.md.
+    // (0x53bd8) from its runtime address. See docs/reference/reverse-engineering.md.
     display_manager_desc_ptr: Option<*mut c_void>,
 }
 
@@ -1061,7 +1061,7 @@ impl XrealNative {
                 .as_ref()
                 .and_then(|l| l.get(b"SwitchTrackingType\0").ok().map(|s| *s));
 
-            // RGB camera exports (libXREALXRPlugin.so). See docs/camera-feed-plan.md.
+            // RGB camera exports (libXREALXRPlugin.so). See docs/plans/camera-feed-plan.md.
             let rgb_start_capture: Option<FnStartRgbCameraCapture> = plugin_lib
                 .as_ref()
                 .and_then(|l| l.get(b"StartRGBCameraDataCapture\0").ok().map(|s| *s));
@@ -1298,7 +1298,7 @@ impl XrealNative {
     /// Fetch the **display** subsystem head pose (libXREALXRPlugin.so `GetHeadPoseAtTime`) as the
     /// raw 16-float block it writes — the pose the compositor reprojects with. `None` when the
     /// export is absent or the query fails. The 16-float layout (quaternion offset/order vs 4×4
-    /// matrix) is decoded caller-side after an on-device pin-down; see `docs/glasses-display-position.md`.
+    /// matrix) is decoded caller-side after an on-device pin-down; see `docs/archive/glasses-display-position.md`.
     pub fn head_pose_display(&self, time_ns: u64) -> Option<[f32; 16]> {
         let f = self.xp_get_head_pose?;
         let mut raw = [0.0_f32; 16];

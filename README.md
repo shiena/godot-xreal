@@ -18,8 +18,8 @@ engine-agnostic C ABI (`libXREALNativeSessionManager.so` → `XREALGetHeadPoseAt
 `libXREALXRPlugin.so` → 274 exports incl. an OpenXR-style compositor layer API). So instead of
 translating C#, this extension `dlopen`s the libraries and feeds Godot directly. The obfuscated
 lower NRSDK proc table (`libnr_api.so` / `NRGetProcAddr`) is avoided. ABI derivation:
-[`docs/reverse-engineering.md`](docs/reverse-engineering.md); the RE'd functions and their
-GDScript surface: [`docs/native-api-reference.md`](docs/native-api-reference.md).
+[`docs/reference/reverse-engineering.md`](docs/reference/reverse-engineering.md); the RE'd functions and their
+GDScript surface: [`docs/reference/native-api-reference.md`](docs/reference/native-api-reference.md).
 
 ## Platform
 
@@ -37,7 +37,7 @@ community-reverse-engineered interop, not an official API.
 | **Head tracking** (orientation: pitch / yaw / roll) | ✅ | From the XR-plugin display pose; drives the eye cameras. |
 | **Tracking mode** 6DoF / 3DoF / 0DoF | ✅ | Selectable (`xreal/tracking_type` / `XrealSystem.set_tracking_type` / `debug.xreal.tracking_type`). |
 | **Stereo glasses display** — head-locked peek window | ✅ | World-locked 3D through the glasses. **Multipass** (both eyes); it is the only stereo mode (no selector). |
-| **Multiview** stereo | ❌ Shelved | Right eye is black — the NR compositor (`libnr_api`) can't import our client `GL_TEXTURE_2D_ARRAY`, and it gives no benefit on this two-SubViewport rig anyway. The code is kept but disabled; dev-only escape `setprop debug.xreal.force_multiview 1`. See `docs/codex-righteye-analysis.md`. |
+| **Multiview** stereo | ❌ Shelved | Right eye is black — the NR compositor (`libnr_api`) can't import our client `GL_TEXTURE_2D_ARRAY`, and it gives no benefit on this two-SubViewport rig anyway. The code is kept but disabled; dev-only escape `setprop debug.xreal.force_multiview 1`. See `docs/archive/codex-righteye-analysis.md`. |
 | **Recenter** | ✅ | Resets the forward direction (SDK `NativePerception::Recenter`). |
 | **RGB camera** as a Godot `CameraFeed` | ✅ | Full-colour, shown in-scene on a head-locked quad. **Requires 3DoF** (it shares the camera with 6DoF SLAM). |
 | **Glasses input** — physical keys (MENU/MULTI: click/double/long) | ✅ | Godot signals (`key_event`, `key_state_changed`). |
@@ -49,13 +49,13 @@ community-reverse-engineered interop, not an official API.
 
 Not implemented: 6DoF position for the app camera, hand/image/plane tracking, spatial anchors, meshing,
 audio/photo capture, the NRSDK's higher-level perception features. (Plane / image / anchor / mesh are
-portable without ARCore or AR Foundation — feasibility survey: [`docs/ar-features-plan.md`](docs/ar-features-plan.md).)
+portable without ARCore or AR Foundation — feasibility survey: [`docs/plans/ar-features-plan.md`](docs/plans/ar-features-plan.md).)
 
 ## Build
 
 The GDExtension is plain godot-rust; the one project-specific step is a **prerequisite** you do once —
 vendoring the XREAL native libraries — before the Android export. Full command reference (desktop
-iteration, manual `cargo ndk` / Gradle steps, signing): [`docs/build-and-release.md`](docs/build-and-release.md).
+iteration, manual `cargo ndk` / Gradle steps, signing): [`docs/guides/build-and-release.md`](docs/guides/build-and-release.md).
 
 To open the project in a **desktop editor** without a missing-library error, build the do-nothing
 desktop stubs once after cloning: `pwsh scripts/build_dummy_libs.ps1` (or
@@ -178,7 +178,7 @@ src/
 demo/           demo scene (main.tscn + main.gd) with a status UI
 jniLibs/        vendored XREAL .so (git-ignored) + built libgodot_xreal.so
 scripts/        build.ps1 / build.sh (pipeline) + vendor_xreal_libs.ps1 (stage all runtime pieces)
-docs/           port plan + reverse-engineering notes
+docs/           guides / reference / plans / archive — see docs/README.md for the index
 ```
 
 ## License

@@ -158,7 +158,7 @@ impl XrealSystem {
 
     /// Discover + create + start the NRController subsystem (`libnr_loader.so`) and keep it alive for
     /// `poll_controller`. Returns a one-line diagnostic (count / id / connected & handheld type).
-    /// The phone-as-3D-pointer source (docs/input-plan.md Phase C).
+    /// The phone-as-3D-pointer source (docs/plans/input-plan.md Phase C).
     #[func]
     fn start_controller(&self) -> GString {
         crate::controller_probe::start().as_str().into()
@@ -215,7 +215,7 @@ impl XrealSystem {
     }
 
     // NOTE: there is no stereo-mode selector. The port always uses Multipass — Multiview is shelved
-    // (right eye black in the NR compositor, no benefit on this rig; see docs/codex-righteye-analysis.md).
+    // (right eye black in the NR compositor, no benefit on this rig; see docs/archive/codex-righteye-analysis.md).
     // The Multiview code is kept and reachable only via `adb shell setprop debug.xreal.force_multiview 1`.
 
     /// Select the head-tracking mode applied when the native session **bootstraps** (a startup

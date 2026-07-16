@@ -34,7 +34,7 @@ const XREAL_ACTION_LONG_PRESS := 3
 var _tracker: Node3D
 var _system: Object
 var _extension_loaded := false
-# XREAL RGB camera as a Godot CameraFeed (see docs/camera-feed-plan.md), shown on the
+# XREAL RGB camera as a Godot CameraFeed (see docs/plans/camera-feed-plan.md), shown on the
 # head-locked cam_panel quad via its YCbCr→RGB ShaderMaterial (both defined in ar_scene.tscn).
 var _cam_feed: Object
 var _camera_enabled := false
@@ -59,7 +59,7 @@ func _ready() -> void:
 	if _extension_loaded:
 		_system = ClassDB.instantiate(&"XrealSystem")
 		# (No stereo-mode selector: the port always uses Multipass. Multiview is shelved
-		# -- docs/codex-righteye-analysis.md -- reachable only via `setprop debug.xreal.force_multiview 1`.)
+		# -- docs/archive/codex-righteye-analysis.md -- reachable only via `setprop debug.xreal.force_multiview 1`.)
 		# Head-tracking mode from the project setting `xreal/tracking_type`
 		# (0 = 6DoF [recommended], 1 = 3DoF, 2 = 0DoF). Same rules as above -- read once at
 		# bootstrap; absent (-1) falls back to the `debug.xreal.tracking_type` property / default.
@@ -134,7 +134,7 @@ func _spawn_rig() -> void:
 		camera.current = true
 		add_child(camera)
 
-## Expose the XREAL glasses RGB camera as a Godot CameraFeed (docs/camera-feed-plan.md), register it
+## Expose the XREAL glasses RGB camera as a Godot CameraFeed (docs/plans/camera-feed-plan.md), register it
 ## with the CameraServer, and show it on the head-locked cam_panel quad (defined in ar_scene.tscn).
 ## The feed is driven per-frame from _process (poll_frame grabs the latest frame → set_rgb_image).
 func _setup_camera_feed() -> void:

@@ -97,7 +97,7 @@ Vendor them once from a local copy of the package (nothing is downloaded):
        - 5 .aar -> addons/godot_xreal/android/ (shipped by the addon's export plugin; they also
          carry the NR native libs, which Gradle merges into the APK)
      (The XrealBridge Java sources are compiled by the export's gradle build — no JDK step here.)
-See the README "Prerequisite: vendor the XREAL runtime libraries" and docs/build-and-release.md.
+See the README "Prerequisite: vendor the XREAL runtime libraries" and docs/guides/build-and-release.md.
 '@
     exit 1
 }

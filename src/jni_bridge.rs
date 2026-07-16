@@ -3,7 +3,7 @@
 //! `InitUserDefinedSettings` needs the host `Activity` as a JNI `jobject` (the Unity SDK
 //! calls it `unityActivity`). On Android we read it from the process-wide
 //! [`ndk_context`]. If nothing has published a context yet, [`activity_ptr`] returns
-//! `None` and the session bootstrap reports "no Android Activity" (see `docs/port-plan.md`).
+//! `None` and the session bootstrap reports "no Android Activity" (see `docs/plans/port-plan.md`).
 //!
 //! **Device-confirmed:** Godot does NOT populate `ndk_context` (it uses its own
 //! Java↔native bridge, not the `ndk-context`/`android-activity` crates). So

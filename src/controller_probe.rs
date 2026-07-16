@@ -1,5 +1,5 @@
 //! NRController raw-IMU reader (`libnr_loader.so`) — the sensor source for the phone-as-3D-pointer
-//! (docs/input-plan.md Phase C). Signatures RE-confirmed by disassembly (codex, 2026-07-14).
+//! (docs/plans/input-plan.md Phase C). Signatures RE-confirmed by disassembly (codex, 2026-07-14).
 //!
 //! Findings on this host (XREAL One Pro + phone): the controller registers as a touch+button
 //! "handset" (`handheld_type=2`) and its **raw IMU is live** (accelerometer / gyroscope /

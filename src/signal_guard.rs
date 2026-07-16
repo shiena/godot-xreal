@@ -175,7 +175,7 @@ pub fn patch_handle_action_callback(lib_base: usize) {
 /// `shared_ptr<DisplayOverlay>` into `DisplayManager+0x128`; the fall-through `0x6dc9c` emplaces a
 /// `DummyDisplayOverlay`.
 ///
-/// RE (codex + our cross-check, see `docs/codex-multiview-analysis.md`): the previous `cbz→nop`
+/// RE (codex + our cross-check, see `docs/archive/codex-multiview-analysis.md`): the previous `cbz→nop`
 /// forced the **dummy** in Multiview. `DummyDisplayOverlay::InitSwapchain @0x70e54` sets `overlay+0x8 = 1`
 /// (and leaves the swapchain handle `overlay+0x18 == 0`); `OverlayBase::CreateBuffer` still runs
 /// (dummy `GetRecommandBufferCount @0x70e60` = 1) so ONE array texture is created — but because
@@ -194,7 +194,7 @@ pub fn patch_create_display_layer(lib_base: usize) {
     // DisplayOverlay ctor's `overlay+0x14 = 2` — the value `DisplayOverlay::CreateViewport @0xa6a68`
     // tests to build TWO viewports (viewport[0] layer 0 = left, viewport[1] layer 1 = right) for the
     // one array swapchain. Without it our path built only ONE viewport (component 6), so the compositor
-    // never presented array layer 1 and the right eye was black. See docs/codex-righteye-analysis.md.
+    // never presented array layer 1 and the right eye was black. See docs/archive/codex-righteye-analysis.md.
     let viewport_addr = lib_base + 0x6dc60;
     let mov_w21_2: u32 = 0x5280_0055; // mov w21, #2
 

@@ -15,7 +15,7 @@
 //! Struct layouts and the graphics GUID/enum constants come from Unity's PUBLIC PluginAPI
 //! headers (`IUnityInterface.h`, `IUnityGraphics.h`). The XR GUIDs/provider layouts are
 //! **RE / unverified**, recovered from `libXREALXRPlugin.so` AArch64 disassembly and
-//! relocation tables; see `docs/reverse-engineering.md`.
+//! relocation tables; see `docs/reference/reverse-engineering.md`.
 
 use std::ffi::{c_char, c_void, CStr};
 use std::ptr;
@@ -124,7 +124,7 @@ struct RegisteredGfxThreadProvider {
 
 /// `IUnityXRDisplayInterface` (Unity XR SDK `IUnityXRDisplay.h`). Slot order is confirmed by
 /// disassembly of the `DisplayManager` wrappers that call each slot (see
-/// `docs/frame-submission-plan.md`). The SDK reaches through +0x18/+0x20/+0x28 to make the engine
+/// `docs/plans/frame-submission-plan.md`). The SDK reaches through +0x18/+0x20/+0x28 to make the engine
 /// allocate/query/free its render textures; the earlier 3-member struct was truncated there.
 #[repr(C)]
 struct IUnityXrDisplay {
@@ -173,7 +173,7 @@ struct XrTexture {
     /// The `color_format` and `flags` the SDK passed to `CreateTexture`. `QueryTextureDesc` must echo
     /// them back (esp. for the Multiview 2-layer array — reporting a 1-layer/flags-0 descriptor for a
     /// 2-layer object mis-registers the NR swapchain so layer 1 never gets our content; the right eye
-    /// then shows a fixed cleared gray. See docs/codex-righteye-analysis.md.
+    /// then shows a fixed cleared gray. See docs/archive/codex-righteye-analysis.md.
     color_format: u32,
     flags: u32,
 }
@@ -597,7 +597,7 @@ pub fn call_input_update_hmd() -> i32 {
         unsafe { std::mem::transmute(provider.update_device_state) };
     let mut buf = [0u8; 1024];
     // deviceId 0 = HMD; updateType 1 = BeforeRender. RE (codex + our cross-check, see
-    // docs/codex-headlock-analysis.md): InputManager::UpdateHMDState @0x7aa3c calls
+    // docs/archive/codex-headlock-analysis.md): InputManager::UpdateHMDState @0x7aa3c calls
     // DisplayManager::OnBeforeRender @0x66fa8 ONLY when updateType == 1 (guard `cmp w1,#0x1; b.ne`
     // @0x7aa68). OnBeforeRender refreshes DM+0x100, which SubmitFrame passes to
     // NRFrameSetRenderingPose(frame, *(DM+0x100)) — the pose the compositor reprojects the layer
@@ -1218,7 +1218,7 @@ pub fn run_frame_tick() {
     // Multiview is ONE render pass with TWO renderParams (not two passes). The RIGHT eye's
     // renderParams[1] lives at desc+0x80 (EyeProj base 0x78), NOT renderPasses[1] (desc+0xfc, which
     // is 0 here). Reading eye 1 from desc+0xfc gave the right eye a garbage/degenerate frustum → the
-    // right SubViewport rendered black → right-eye-black. See docs/codex-righteye-analysis.md.
+    // right SubViewport rendered black → right-eye-black. See docs/archive/codex-righteye-analysis.md.
     let multiview = pass_count == 1 && rp0_count >= 2 && tex_ids[0] != 0 && tex_ids[1] == 0;
 
     // Each renderParams block carries the SDK's per-eye projection (half-angle tangents at

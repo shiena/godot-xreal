@@ -73,7 +73,7 @@ fn android_prop_i32(key: &[u8]) -> Option<i32> {
 /// Stereo rendering mode for `InitUserDefinedSettings`. The port always uses **Multipass** (`0`): the
 /// working, complete path (both eyes + camera + tracking). Multiview (`2`) is **shelved** — the NR
 /// compositor (`libnr_api`) can't import our client `GL_TEXTURE_2D_ARRAY` so the right eye is black,
-/// and our two-SubViewport rig gets no single-pass benefit anyway (see `docs/codex-righteye-analysis.md`).
+/// and our two-SubViewport rig gets no single-pass benefit anyway (see `docs/archive/codex-righteye-analysis.md`).
 ///
 /// There is no user-facing stereo-mode selector (removed on purpose). The Multiview code paths are kept
 /// and a developer can still exercise them with `adb shell setprop debug.xreal.force_multiview 1`.
@@ -100,7 +100,7 @@ fn stereo_rendering_mode() -> i32 {
 /// orientation incl. roll and has no drift; the recommended mode), `1` = MODE_3DOF (pure IMU, no
 /// position), `2` = MODE_0DOF. Defaults to MODE_6DOF. NOTE: the eye-camera rotation comes from the
 /// XR-plugin DISP pose (`node.rs`), not the compact session-manager `NrPose`, which is
-/// horizon-stabilized in every mode (`docs/roll-tracking-investigation.md`).
+/// horizon-stabilized in every mode (`docs/archive/roll-tracking-investigation.md`).
 fn tracking_mode() -> i32 {
     const DEFAULT: i32 = TrackingType::Mode6Dof as i32;
 
@@ -455,7 +455,7 @@ impl XrealSession {
         native.head_pose_display(time_ns)
     }
 
-    /// Whether the RGB-camera C ABI resolved (see `docs/camera-feed-plan.md`).
+    /// Whether the RGB-camera C ABI resolved (see `docs/plans/camera-feed-plan.md`).
     pub fn rgb_camera_available(&self) -> bool {
         self.native
             .lock()

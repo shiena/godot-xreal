@@ -16,7 +16,7 @@
 #
 # Nothing is downloaded — you supply a local copy of the package. nractivitylife*.aar is
 # DELIBERATELY EXCLUDED: its NRXRActivity/NRXRApp launcher is Unity-specific (instantiates
-# com.unity3d.player.UnityPlayer) and must not ship in a Godot app. See docs/android-setup.md.
+# com.unity3d.player.UnityPlayer) and must not ship in a Godot app. See docs/guides/android-setup.md.
 #
 # Usage:
 #   ./scripts/vendor_xreal_libs.sh <package-root-or-com.xreal.xr.tar.gz>

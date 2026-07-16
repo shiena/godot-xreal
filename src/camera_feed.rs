@@ -3,7 +3,7 @@
 //! Subclasses `CameraFeed` (the idiomatic custom-camera-source pattern): `activate_feed` starts the
 //! XREAL RGB capture, `deactivate_feed` stops it, and `poll_frame()` — called each frame by a driver
 //! (e.g. the demo's `_process`) — pushes the latest frame into the feed. Spike scope: pushes the
-//! **Y plane** as grayscale `RGB8` via `set_rgb_image`. See `docs/camera-feed-plan.md`.
+//! **Y plane** as grayscale `RGB8` via `set_rgb_image`. See `docs/plans/camera-feed-plan.md`.
 //!
 //! Usage (GDScript):
 //! ```gdscript

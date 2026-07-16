@@ -40,5 +40,5 @@ Thumbs.db
 
 
 # XREAL addon vendored binaries (AARs) — vendored locally
-# (see docs/android-export-plugin-migration.md), like jniLibs/*.so.
+# (see docs/plans/android-export-plugin-migration.md), like jniLibs/*.so.
 /addons/godot_xreal/android/*.aar

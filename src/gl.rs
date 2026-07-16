@@ -1,6 +1,6 @@
 //! Minimal GLES3 binding for the XREAL display path.
 //!
-//! `libXREALXRPlugin.so`'s display provider (see `docs/frame-submission-plan.md`) asks the
+//! `libXREALXRPlugin.so`'s display provider (see `docs/plans/frame-submission-plan.md`) asks the
 //! engine to allocate its render textures through `IUnityXRDisplay::CreateTexture`. This module
 //! is that engine side: it `dlopen`s `libGLESv3.so` and exposes just enough GL to allocate a
 //! texture and copy pixels into it.

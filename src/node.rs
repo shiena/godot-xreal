@@ -117,7 +117,7 @@ impl INode3D for XrealHeadTracker {
         RenderingServer::singleton().call_on_render_thread(&callable);
         // Primary: drive the eye cameras from the **display** InputManager pose — the exact pose the
         // compositor reprojects the glasses layer against (full orientation incl. ROLL, which the
-        // compact session-manager NrPose lacks; see docs/roll-tracking-investigation.md). Sharing one
+        // compact session-manager NrPose lacks; see docs/archive/roll-tracking-investigation.md). Sharing one
         // pose between our render and the compositor is what makes a correct peek window on all axes.
         // CRASH RULE (device-confirmed): never query BOTH head_pose_display() and head_pose() in the
         // same frame → SIGSEGV 0x3f800000. So the session-manager read is a fallback used ONLY when
@@ -457,7 +457,7 @@ impl XrealHeadTracker {
 
     /// Catch-all for every native glasses event, including types without a dedicated
     /// signal (temperature, screen on/off, disconnect reason…). Values are the raw
-    /// `GlassesEventData` fields; see `XREALActionType` in `docs/input-plan.md`.
+    /// `GlassesEventData` fields; see `XREALActionType` in `docs/plans/input-plan.md`.
     #[signal]
     fn glasses_event(action_type: i64, para: i64, para2: i64, para3: f64);
 
