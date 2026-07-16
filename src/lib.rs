@@ -19,6 +19,7 @@ mod ffi;
 mod gl;
 mod glasses_events;
 mod jni_bridge;
+mod metrics;
 mod native;
 mod native_error;
 mod node;

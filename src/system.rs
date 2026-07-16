@@ -256,4 +256,70 @@ impl XrealSystem {
             .map(|s| GString::from(s.diagnostics().as_str()))
             .unwrap_or_else(|| GString::from("session unavailable"))
     }
+
+    // --- Render metrics (XREAL SDK NRMetrics, queried directly — see src/metrics.rs) ---------------
+    //
+    // These read the process-global NR compositor metrics service (the same numbers the SDK's own
+    // `DisplayManager::UpdateMetrics` reports to Unity's stat sink; we neuter that sink and query NR
+    // directly). The handle is created + started lazily on first read, so the first calls after launch
+    // may return the "unavailable" sentinel until the NR runtime is up. Poll each frame or on a timer.
+
+    /// Present rate in frames/second (compositor, integer ~60). `-1.0` while the metrics handle is
+    /// not up yet.
+    #[func]
+    fn get_present_fps(&self) -> f64 {
+        crate::metrics::present_fps().map(f64::from).unwrap_or(-1.0)
+    }
+
+    /// Frames dropped by the compositor. `-1` while the metrics handle is not up yet.
+    #[func]
+    fn get_dropped_frame_count(&self) -> i64 {
+        crate::metrics::dropped_frame_count().map(i64::from).unwrap_or(-1)
+    }
+
+    /// Frames presented early. `-1` while the metrics handle is not up yet.
+    #[func]
+    fn get_early_frame_count(&self) -> i64 {
+        crate::metrics::early_frame_count().map(i64::from).unwrap_or(-1)
+    }
+
+    /// Present count for the current frame (FPC). `-1` while the metrics handle is not up yet.
+    #[func]
+    fn get_frame_present_count(&self) -> i64 {
+        crate::metrics::frame_present_count().map(i64::from).unwrap_or(-1)
+    }
+
+    /// Extended (re-projected/stale) frame count (EFC). `-1` while the metrics handle is not up yet.
+    #[func]
+    fn get_extended_frame_count(&self) -> i64 {
+        crate::metrics::extended_frame_count().map(i64::from).unwrap_or(-1)
+    }
+
+    /// Teared frame count. `-1` when unavailable (also the SDK's own "not tracked" sentinel).
+    #[func]
+    fn get_teared_frame_count(&self) -> i64 {
+        crate::metrics::teared_frame_count().map(i64::from).unwrap_or(-1)
+    }
+
+    /// Compositor frame composite time in milliseconds. `-1.0` while the metrics handle is not up yet.
+    #[func]
+    fn get_frame_composite_time_ms(&self) -> f64 {
+        crate::metrics::frame_composite_time_ns()
+            .map(|ns| ns as f64 * 1e-6)
+            .unwrap_or(-1.0)
+    }
+
+    /// App frame latency (motion-to-photon input) in milliseconds. `-1.0` while unavailable.
+    #[func]
+    fn get_app_frame_latency_ms(&self) -> f64 {
+        crate::metrics::app_frame_latency_ns()
+            .map(|ns| ns as f64 * 1e-6)
+            .unwrap_or(-1.0)
+    }
+
+    /// One-line diagnostic / start status of the render-metrics handle.
+    #[func]
+    fn get_render_metrics_diagnostics(&self) -> GString {
+        GString::from(crate::metrics::diagnostics().as_str())
+    }
 }
