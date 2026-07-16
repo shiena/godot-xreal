@@ -8,7 +8,7 @@ that reuses the SDK's **native** libraries instead of its Unity C# layer.
 
 > **⚠️ Unofficial & experimental.** This is an independent community project — **not affiliated with,
 > endorsed by, or supported by XREAL**. "XREAL" and the SDK are the property of their respective
-> owners; the native libraries are **not** bundled — you vendor them yourself as a build prerequisite (see [Build](#build)).
+> owners; the native libraries are **not** bundled — you vendor them yourself as a build prerequisite (see [Prerequisite](#prerequisite-vendor-the-xreal-runtime-libraries)).
 > It works by reverse-engineering the vendored SDK's C ABI for interop — use at your own risk.
 
 ## Why a native port (not a C# translation)
@@ -55,20 +55,7 @@ Not implemented: 6DoF position for the app camera, image tracking, meshing, audi
 (Image / mesh are portable without ARCore or AR Foundation and their C ABI is already RE'd — see
 [`docs/plans/ar-features-plan.md`](docs/plans/ar-features-plan.md).)
 
-## Build
-
-The GDExtension is plain godot-rust; the one project-specific step is a **prerequisite** you do once —
-vendoring the XREAL native libraries — before the Android export. Full command reference (desktop
-iteration, manual `cargo ndk` / Gradle steps, signing): [`docs/guides/build-and-release.md`](docs/guides/build-and-release.md).
-
-To open the project in a **desktop editor** without a missing-library error, build the do-nothing
-desktop stubs once after cloning: `pwsh scripts/build_dummy_libs.ps1` (or
-`./scripts/build_dummy_libs.sh`) — needs only clang + lld, cross-compiles every desktop target from
-any host. The extension is Android-only, but Godot can't express that, so the `.gdextension` points
-desktop platforms at these stubs ([`dummy/gdext_dummy.c`](dummy/gdext_dummy.c)); they register
-nothing and are not committed.
-
-### Prerequisite: vendor the XREAL runtime libraries
+## Prerequisite: vendor the XREAL runtime libraries
 
 The XREAL native libraries are **not** included in this repo (they remain under XREAL's terms). Obtain
 them from the **XREAL SDK for Unity** — the `com.xreal.xr` package, shipped as a tgz
@@ -122,6 +109,19 @@ export plugin and compiled by the export's Gradle run.
 **Never copy `nractivitylife*.aar`** — its launcher is Unity-only and breaks a Godot app. (The
 QNN/SNPE libs inside `nr_common.aar` are unused by this extension but ride into the APK with the
 aar.)
+
+## Build
+
+The GDExtension is plain godot-rust — vendor the XREAL libraries first (above), then build. Full
+command reference (desktop iteration, manual `cargo ndk` / Gradle steps, signing):
+[`docs/guides/build-and-release.md`](docs/guides/build-and-release.md).
+
+To open the project in a **desktop editor** without a missing-library error, build the do-nothing
+desktop stubs once after cloning: `pwsh scripts/build_dummy_libs.ps1` (or
+`./scripts/build_dummy_libs.sh`) — needs only clang + lld, cross-compiles every desktop target from
+any host. The extension is Android-only, but Godot can't express that, so the `.gdextension` points
+desktop platforms at these stubs ([`dummy/gdext_dummy.c`](dummy/gdext_dummy.c)); they register
+nothing and are not committed.
 
 ### Build & install
 
