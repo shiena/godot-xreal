@@ -158,17 +158,28 @@ pub fn patch_handle_action_callback(lib_base: usize) {
     );
 }
 
-/// Runtime code-patch: replace `cbz w8, 0x6dd18` at `CreateDisplayLayer+8`
-/// (lib_base + 0x6dc98) with `nop` (0xD503201F).
+/// Runtime code-patch: replace `cbz w8, 0x6dd18` at `CreateDisplayLayer+0x80`
+/// (lib_base + 0x6dc98) with `b 0x6dd18` (`0x14000020`) — force the **real `DisplayOverlay`**
+/// branch instead of the `DummyDisplayOverlay` fall-through.
 ///
-/// Without this patch, `CreateDisplayLayer` creates a `DummyDisplayOverlay` (no textures,
-/// no swapchain) when the gate byte at lib+0xdb410 is 0 — our case. With this patch it
-/// always takes the `DisplayOverlay` branch, which calls `OverlayBase::CreateBuffer` →
-/// `NativeRendering::CreateSwapchainEx` → 7 GL textures → `NativeRendering::SetSwapChainBuffers`.
+/// This branch is on `CreateDisplayLayer`'s **Multiview (`stereo_rendering_mode == 2`)** path only
+/// (a stereo-mode split at lib+0x6dc50 sends Multipass down a separate two-overlay path that already
+/// picks the real `DisplayOverlay`, so this patch is a no-op for Multipass). Target `0x6dd18` emplaces
+/// `shared_ptr<DisplayOverlay>` into `DisplayManager+0x128`; the fall-through `0x6dc9c` emplaces a
+/// `DummyDisplayOverlay`.
+///
+/// RE (codex + our cross-check, see `docs/codex-multiview-analysis.md`): the previous `cbz→nop`
+/// forced the **dummy** in Multiview. `DummyDisplayOverlay::InitSwapchain @0x70e54` sets `overlay+0x8 = 1`
+/// (and leaves the swapchain handle `overlay+0x18 == 0`); `OverlayBase::CreateBuffer` still runs
+/// (dummy `GetRecommandBufferCount @0x70e60` = 1) so ONE array texture is created — but because
+/// `overlay+0x8 != 0`, `PopulateNextFrameDesc` skips `OverlayBase::SetSwapChainBuffers`, so
+/// `QueryTextureDesc` is never called and our texture is never registered with the NR swapchain →
+/// black. The real `DisplayOverlay` (via `OverlayBase::InitSwapchain @0xa7fe0`) creates the swapchain,
+/// leaves `overlay+0x8 == 0`, and lets `SetSwapChainBuffers` → `QueryTextureDesc` register the texture.
 #[cfg(target_os = "android")]
 pub fn patch_create_display_layer(lib_base: usize) {
-    let patch_addr = lib_base + 0x6dc98; // cbz w8, 0x6dd18 (skip to DummyDisplayOverlay)
-    let nop: u32 = 0xD503_201F;
+    let patch_addr = lib_base + 0x6dc98; // cbz w8, 0x6dd18 → force `b 0x6dd18` (real DisplayOverlay)
+    let branch_real: u32 = 0x1400_0020; // b 0x6dd18 (delta 0x80, imm26 0x20)
     let page_size: usize = 4096;
     let page_addr = (patch_addr & !(page_size - 1)) as *mut libc::c_void;
 
@@ -182,7 +193,7 @@ pub fn patch_create_display_layer(lib_base: usize) {
             godot::global::godot_print!("[xreal] patch_display_layer: mprotect(RWX) failed");
             return;
         }
-        *(patch_addr as *mut u32) = nop;
+        *(patch_addr as *mut u32) = branch_real;
         core::arch::asm!(
             "dc cvau,{a}", "dsb ish", "ic ivau,{a}", "dsb ish", "isb",
             a = in(reg) patch_addr,
@@ -190,8 +201,8 @@ pub fn patch_create_display_layer(lib_base: usize) {
         libc::mprotect(page_addr, page_size, libc::PROT_READ | libc::PROT_EXEC);
     }
     godot::global::godot_print!(
-        "[xreal] patch_display_layer: patched CreateDisplayLayer+8 at {patch_addr:#018x} \
-         cbz→nop (force real DisplayOverlay, CreateBuffer, 7 GL textures)"
+        "[xreal] patch_display_layer: patched CreateDisplayLayer at {patch_addr:#018x} \
+         cbz→b 0x6dd18 (force real DisplayOverlay so Multiview registers the swapchain texture)"
     );
 }
 
