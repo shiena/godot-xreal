@@ -52,6 +52,9 @@ var _cam_failed := false
 var _plane_enabled := false
 # Running count of tracked planes (added − removed), logged for on-device verification.
 var _plane_total := 0
+# One-shot AR-feature availability diagnostic: logs which native AR ABIs resolved on this device,
+# a short delay after boot (so the session has come up). See docs/plans/ar-features-plan.md.
+var _ar_diag_frames := 0
 # Detected-plane visualization: a thin, semi-transparent box overlaid on each plane's bounds,
 # keyed by plane id. World-locked (children of Main, like the hand joints) so they sit on the real
 # surface as the head moves. On the see-through display the translucent fill reads as a tint.
@@ -264,6 +267,13 @@ func _on_tc_menu() -> void:
 func _on_tc_camera(on: bool) -> void:
 	print("[demo] camera toggle -> %s" % ("on" if on else "off"))
 	if on:
+		# Gate on the device actually having an RGB camera (IsHMDFeatureSupported). The Air 2 Ultra
+		# has none — opening it there froze the app — so refuse and flip the toggle back off.
+		if _system and _system.has_method(&"is_camera_supported") and not _system.is_camera_supported():
+			push_warning("[demo] this device has no RGB camera (e.g. Air 2 Ultra) — camera unavailable")
+			_camera_enabled = false
+			_set_controller_toggle("camera", false)
+			return
 		_cam_failed = false
 		_camera_enabled = true
 		if _system and _system.has_method(&"switch_tracking_type"):
@@ -280,23 +290,26 @@ func _on_tc_camera(on: bool) -> void:
 			_cam_panel.visible = false
 
 ## Phone-menu "平面検出" toggle → enable/disable plane detection at runtime. Needs a live 6DoF
-## session (Air 2 Ultra), so turning it on switches tracking to 6DoF. Unavailable on devices
-## without the plane C ABI (e.g. One Pro): the toggle flips itself back off.
+## session, so turning it on switches tracking to 6DoF. Gated on the plane C ABI being available;
+## planes then stream in via poll_planes (which may take a moment / need a live 6DoF session).
 func _on_tc_plane(on: bool) -> void:
 	print("[demo] plane toggle -> %s" % ("on" if on else "off"))
 	if not _system:
 		_set_controller_toggle("plane", false)
 		return
 	if on:
+		# Gate on the ABI being resolved (not on set_plane_detection_mode's return — the SDK discards
+		# that value too, and it reads false even when the mode takes; XREALPlaneSubsystem.cs). Enable
+		# optimistically and let poll_planes surface whatever the SDK detects.
+		if _system.has_method(&"is_plane_detection_available") and not _system.is_plane_detection_available():
+			push_warning("[demo] plane detection ABI unavailable on this device — toggle disabled")
+			_set_controller_toggle("plane", false)
+			return
 		if _system.has_method(&"switch_tracking_type"):
 			_system.switch_tracking_type(XREAL_TRACKING_6DOF)
-		var ok := false
 		if _system.has_method(&"set_plane_detection_mode"):
-			ok = bool(_system.set_plane_detection_mode(XREAL_PLANE_BOTH))
-		_plane_enabled = ok
-		if not ok:
-			push_warning("[demo] plane detection unavailable on this device — toggle disabled")
-			_set_controller_toggle("plane", false)
+			_system.set_plane_detection_mode(XREAL_PLANE_BOTH)
+		_plane_enabled = true
 	else:
 		_plane_enabled = false
 		if _system.has_method(&"set_plane_detection_mode"):
@@ -389,6 +402,16 @@ func _on_wearing_changed(wearing: bool) -> void:
 		_on_recenter_pressed()
 
 func _process(_delta: float) -> void:
+	# One-shot AR-feature availability diagnostic, ~2 s in (once the session has had time to come up),
+	# so a glance at logcat shows which native AR ABIs this device exposes.
+	if _ar_diag_frames >= 0 and _system:
+		_ar_diag_frames += 1
+		if _ar_diag_frames == 120:
+			_ar_diag_frames = -1  # done
+			var cam: bool = _system.is_camera_supported() if _system.has_method(&"is_camera_supported") else false
+			var plane: bool = _system.is_plane_detection_available() if _system.has_method(&"is_plane_detection_available") else false
+			var anchor: bool = _system.is_anchor_available() if _system.has_method(&"is_anchor_available") else false
+			print("[demo] AR features: camera=%s plane=%s anchor=%s" % [cam, plane, anchor])
 	# Lazily set up the camera ONLY once head tracking is live — starting the capture before the
 	# glasses/tracking are up races (and in 6DoF would fight the SLAM camera). See _setup_camera_feed.
 	if _camera_enabled and not _cam_failed and _cam_feed == null and _tracker and _tracker.has_method(&"is_tracking") \
