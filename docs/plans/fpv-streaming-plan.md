@@ -43,8 +43,10 @@ EGL context**, so the call must be on the render thread.
 - **`XrealSystem`** `#[func]`s: `stream_start` / `stream_push_frame` / `stream_stop` / `is_stream_active`.
 - **Vendor**: `libmedia_codec.so` → `jniLibs/arm64-v8a/` (vendor_xreal_libs.{sh,ps1}, godot_xreal.gdextension
   `[dependencies]`, build.{sh,ps1}). App is `gl_compatibility` (GLES), matching the encoder's GL texture input.
-- **`demo/stream_manager.gd`** (phone-menu "配信" toggle, 操作 tab — works on any glasses since it streams
-  the RENDERED view, not the One-Series-only RGB camera): renders the head-locked view into a SubViewport,
+- **`demo/stream_manager.gd`** (phone-menu "配信" toggle, カメラ tab — like the SDK's cast this is an
+  **Eyes/RGB-camera feature (One Series only)**; gated on `is_camera_supported()` so the encoder is never
+  opened on the camera-less Air 2 Ultra, avoiding the same freeze the camera hit): renders the head-locked
+  view into a SubViewport,
   gets its GL id via `RenderingServer.texture_get_native_handle`, and each frame pushes it inside a
   `RenderingServer.call_on_render_thread` callback (so `HWEncoderUpdateSurface` runs on the render thread).
 - **Receiving server**: `log/stream_server/` (gitignored) — `receive.ps1` runs ffplay/ffmpeg against

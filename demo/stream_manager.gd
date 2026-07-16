@@ -1,7 +1,8 @@
 extends Node
 ## First-person-view streaming demo. Renders the AR scene from the head POV into a SubViewport and
 ## streams its GL texture with the libmedia_codec HW encoder (XrealSystem.stream_*), driven by the
-## phone-menu "配信" toggle. Works on any glasses (it streams the rendered view, not the RGB camera).
+## phone-menu "配信" toggle (カメラ tab). Like the SDK's cast this is an Eyes/RGB-camera feature — gated
+## to One Series via is_camera_supported() so it never opens the encoder on the camera-less Air 2 Ultra.
 ##
 ## The encoder reads the GL texture on the render thread, so the per-frame push runs inside a
 ## RenderingServer.call_on_render_thread callback. See docs/plans/fpv-streaming-plan.md and the
@@ -32,6 +33,12 @@ func set_enabled(on: bool) -> bool:
 	if not _system or not _system.has_method(&"stream_start"):
 		return false
 	if on:
+		# The SDK's first-person-view cast is an Eyes/RGB-camera feature (One Series only). Gate on the
+		# same IsHMDFeatureSupported(RGB_CAMERA) check as the camera so the HW encoder is never opened on
+		# the Air 2 Ultra (no Eyes) — avoiding the freeze the camera hit there.
+		if _system.has_method(&"is_camera_supported") and not _system.is_camera_supported():
+			push_warning("[demo] FPV streaming needs an Eye-equipped device (One Series) — unavailable")
+			return false
 		_ensure_viewport()
 		var url := STREAM_TARGET
 		if url.is_empty():
