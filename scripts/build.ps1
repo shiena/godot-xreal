@@ -62,9 +62,11 @@ function Adbx { if ($Device) { & $Adb -s $Device @args } else { & $Adb @args } }
 # The XREAL runtime pieces the APK must bundle. They are NOT in this repo — vendor them from the
 # XREAL SDK for Unity (see README / the guide below):
 #   - 3 core .so in jniLibs/arm64-v8a (packed via godot_xreal.gdextension [dependencies])
-#   - 5 .aar + the compiled xreal_bridge.jar in addons/godot_xreal/android (shipped into the APK
-#     by the addon's export_plugin.gd: Java/JNI layer + manifest merge; the aars also carry the
-#     NR native libs, which Gradle merges into the APK)
+#   - 5 .aar in addons/godot_xreal/android (shipped into the APK by the addon's export_plugin.gd:
+#     Java/JNI layer + manifest merge; the aars also carry the NR native libs, which Gradle
+#     merges into the APK)
+# The XrealBridge Java sources are compiled by the export's gradle build (export_plugin.gd
+# stages them into the build template) — nothing to vendor for those.
 # This checks both before an export and stops with instructions if anything is missing; it never
 # downloads anything.
 $RequiredLibs = @(
@@ -72,7 +74,7 @@ $RequiredLibs = @(
 )
 $RequiredAddonFiles = @(
     'nr_loader.aar', 'nr_api.aar', 'nr_common.aar',
-    'GlassesDisplayPlugEvent-2.4.2.aar', 'Log-Control-1.2.aar', 'xreal_bridge.jar'
+    'GlassesDisplayPlugEvent-2.4.2.aar', 'Log-Control-1.2.aar'
 )
 function Require-VendoredLibs {
     $jniDir = Join-Path $repoRoot 'jniLibs\arm64-v8a'
@@ -94,8 +96,7 @@ Vendor them once from a local copy of the package (nothing is downloaded):
        - 3 core .so -> jniLibs/arm64-v8a/      (dlopen'd by the GDExtension)
        - 5 .aar -> addons/godot_xreal/android/ (shipped by the addon's export plugin; they also
          carry the NR native libs, which Gradle merges into the APK)
-       - xreal_bridge.jar -> addons/godot_xreal/android/ (compiled from the committed Java source;
-         needs a JDK `javac` + an Android SDK platform android.jar)
+     (The XrealBridge Java sources are compiled by the export's gradle build — no JDK step here.)
 See the README "Prerequisite: vendor the XREAL runtime libraries" and docs/build-and-release.md.
 '@
     exit 1

@@ -1,8 +1,8 @@
 #requires -Version 7
 <#
 .SYNOPSIS
-    Vendor everything the Android export needs out of the Unity `com.xreal.xr` package,
-    in one go (all destinations are git-ignored):
+    Vendor the XREAL runtime libraries the Android export needs out of the Unity `com.xreal.xr`
+    package, in one go (all destinations are git-ignored):
 
       - 3 core .so       -> jniLibs/arm64-v8a/           (copied; dlopen'd by the GDExtension,
                                                           packed via godot_xreal.gdextension)
@@ -11,9 +11,9 @@
                                                           also merges each .aar's jni/arm64-v8a/*.so
                                                           — the NR libs — into the APK, so they are
                                                           NOT extracted separately)
-      - xreal_bridge.jar -> addons/godot_xreal/android/  (compiled from the committed Java source;
-                                                          needs a JDK `javac` + an Android SDK
-                                                          platform `android.jar`)
+
+    Extraction only — the XrealBridge Java sources are compiled by the export's gradle build
+    (export_plugin.gd stages them into the build template), not here.
 
     Nothing is downloaded — you supply a local copy of the package. nractivitylife*.aar is
     DELIBERATELY EXCLUDED: its NRXRActivity/NRXRApp launcher is Unity-specific (instantiates
@@ -24,9 +24,6 @@
     `com.xreal.xr.tar.gz` archive itself — the archive is extracted to a temp dir (removed
     afterwards) and its `package/` root is used.
 
-.PARAMETER SkipJar
-    Skip compiling xreal_bridge.jar (e.g. no JDK on this machine; an already-built jar is kept).
-
 .EXAMPLE
     pwsh scripts/vendor_xreal_libs.ps1 -XrealPackage "C:\Users\shien\dev\tmp_xreal\com.xreal.xr\package"
 
@@ -35,8 +32,7 @@
 #>
 param(
     [Parameter(Mandatory = $true)]
-    [string]$XrealPackage,
-    [switch]$SkipJar
+    [string]$XrealPackage
 )
 
 $ErrorActionPreference = 'Stop'
@@ -122,62 +118,12 @@ try {
         Write-Host "aar  $aar"
     }
 
-    # --- 3) xreal_bridge.jar -> addons/godot_xreal/android, compiled from the committed Java source.
-    #        Needs javac/jar (a JDK) and an Android SDK platform android.jar for the classpath.
-    $jarOut = Join-Path $addonDir 'xreal_bridge.jar'
-    if (-not $SkipJar) {
-        $javac = Get-Command javac -ErrorAction SilentlyContinue
-        $androidJar = $null
-        foreach ($sdk in @($env:ANDROID_HOME, $env:ANDROID_SDK_ROOT, (Join-Path $env:LOCALAPPDATA 'Android\Sdk'))) {
-            if (-not $sdk -or -not (Test-Path (Join-Path $sdk 'platforms'))) { continue }
-            $androidJar = Get-ChildItem (Join-Path $sdk 'platforms') -Directory -Filter 'android-*' |
-                Sort-Object { [int]('0' + ($_.Name -replace '\D', '')) } -Descending |
-                ForEach-Object { Join-Path $_.FullName 'android.jar' } |
-                Where-Object { Test-Path $_ } |
-                Select-Object -First 1
-            if ($androidJar) { break }
-        }
-        if (-not $javac -or -not $androidJar) {
-            $why = if (-not $javac) { 'javac (JDK) not on PATH' } else { "no android.jar under ANDROID_HOME/ANDROID_SDK_ROOT/%LOCALAPPDATA%\Android\Sdk" }
-            if (Test-Path $jarOut) {
-                Write-Warning "xreal_bridge.jar NOT rebuilt ($why) — keeping the existing jar."
-            }
-            else {
-                Write-Warning ("Cannot build xreal_bridge.jar ($why). Build it manually:`n" +
-                    "  javac -encoding UTF-8 -source 8 -target 8 -classpath <sdk>/platforms/android-NN/android.jar ``
-    -d out addons/godot_xreal/android/src/com/godot/game/*.java`n" +
-                    "  jar cf addons/godot_xreal/android/xreal_bridge.jar -C out .")
-            }
-        }
-        else {
-            $jarTool = Join-Path (Split-Path $javac.Source) 'jar.exe'
-            if (-not (Test-Path $jarTool)) { $jarTool = 'jar' }
-            # The sources are Java-8-compatible; a JDK 8 javac rejects `-source 11` outright, so
-            # match the language level to the installed JDK (8 on JDK 8, 11 on JDK 11+).
-            $javacMajor = if (((& $javac.Source -version 2>&1) -join ' ') -match '(\d+)(?:\.(\d+))?') {
-                if ($Matches[1] -eq '1') { [int]$Matches[2] } else { [int]$Matches[1] }
-            } else { 11 }
-            $lang = if ($javacMajor -ge 11) { '11' } else { '8' }
-            $classesDir = Join-Path ([System.IO.Path]::GetTempPath()) "xreal_bridge_$([guid]::NewGuid().ToString('n'))"
-            New-Item -ItemType Directory -Path $classesDir | Out-Null
-            try {
-                $javaSrc = Get-ChildItem (Join-Path $addonDir 'src/com/godot/game') -Filter '*.java' | ForEach-Object FullName
-                & $javac.Source -encoding UTF-8 -source $lang -target $lang -nowarn -classpath $androidJar -d $classesDir @javaSrc
-                if ($LASTEXITCODE -ne 0) { throw "javac failed (exit $LASTEXITCODE)" }
-                & $jarTool cf $jarOut -C $classesDir .
-                if ($LASTEXITCODE -ne 0) { throw "jar failed (exit $LASTEXITCODE)" }
-                Write-Host "jar  xreal_bridge.jar  (classpath $androidJar)"
-            }
-            finally { Remove-Item -Recurse -Force $classesDir -ErrorAction SilentlyContinue }
-        }
-    }
-
     # --- Final verification: everything the export needs (build.ps1/build.sh check the same lists).
     $missing = @()
     foreach ($lib in $coreLibs) {
         if (-not (Test-Path (Join-Path $jniDir $lib))) { $missing += "jniLibs/arm64-v8a/$lib" }
     }
-    foreach ($f in ($aars + 'xreal_bridge.jar')) {
+    foreach ($f in $aars) {
         if (-not (Test-Path (Join-Path $addonDir $f))) { $missing += "addons/godot_xreal/android/$f" }
     }
 
@@ -187,7 +133,7 @@ try {
         $missing | ForEach-Object { Write-Host "  - $_" }
         exit 1
     }
-    Write-Host "Done: 3 core .so -> jniLibs/arm64-v8a, 5 .aar + xreal_bridge.jar -> addons/godot_xreal/android." -ForegroundColor Green
+    Write-Host "Done: 3 core .so -> jniLibs/arm64-v8a, 5 .aar -> addons/godot_xreal/android." -ForegroundColor Green
     Write-Host "(NR .so ship via the .aar; nractivitylife*.aar deliberately excluded — Unity-only launcher.)"
 }
 finally {

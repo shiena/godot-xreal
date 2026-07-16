@@ -92,9 +92,9 @@ extracted separately. All copied from `Runtime/Plugins/Android/`:
 | `GlassesDisplayPlugEvent-2.4.2.aar` | glasses-detection `GlassesInitProvider` | — |
 | `Log-Control-1.2.aar` | `LogControl` referenced by the above — **required**, or the app crashes before Godot starts | — |
 
-**`xreal_bridge.jar` → `addons/godot_xreal/android/`** — *not* from the SDK: the script compiles it
-from the committed Java source (`addons/godot_xreal/android/src/`); needs a JDK (`javac`) and an
-Android SDK platform `android.jar` (skip with `-SkipJar` if a built jar is already in place).
+**XrealBridge Java sources** — *not* vendored and *not* pre-compiled: the committed sources
+(`addons/godot_xreal/android/src/`) are staged into the gradle build template by the addon's
+export plugin and compiled by the export's Gradle run.
 
 **Never copy `nractivitylife*.aar`** — its launcher is Unity-only and breaks a Godot app. (The
 QNN/SNPE libs inside `nr_common.aar` are unused by this extension but ride into the APK with the

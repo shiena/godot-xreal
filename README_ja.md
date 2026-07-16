@@ -90,10 +90,9 @@ pwsh scripts/vendor_xreal_libs.ps1 -XrealPackage <…>/package
 | `GlassesDisplayPlugEvent-2.4.2.aar` | グラス検出 `GlassesInitProvider` | — |
 | `Log-Control-1.2.aar` | 上記が参照する `LogControl` — **必須**（欠けると Godot 起動前にクラッシュ） | — |
 
-**`xreal_bridge.jar` → `addons/godot_xreal/android/`** — SDK 由来では*なく*、コミット済みの
-Java ソース（`addons/godot_xreal/android/src/`）からスクリプトがビルド。JDK（`javac`）と
-Android SDK の platform `android.jar` が必要です（ビルド済み jar がある場合は `-SkipJar` で
-スキップ可）。
+**XrealBridge の Java ソース** — vendoring も事前コンパイルも*不要*: コミット済みのソース
+（`addons/godot_xreal/android/src/`）をアドオンのエクスポートプラグインが gradle ビルド
+テンプレートに配置し、エクスポート時の Gradle がコンパイルします。
 
 **`nractivitylife*.aar` はコピー禁止** — ランチャーが Unity 専用のため Godot アプリでは起動不能に
 なります。（`nr_common.aar` 内の QNN/SNPE 系 `.so` は本拡張では未使用ですが、`.aar` ごと APK に

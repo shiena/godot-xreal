@@ -38,7 +38,6 @@ jniLibs
 Thumbs.db
 
 
-# XREAL addon vendored binaries (AARs) + built bridge JAR — vendor/build locally
+# XREAL addon vendored binaries (AARs) — vendored locally
 # (see docs/android-export-plugin-migration.md), like jniLibs/*.so.
 /addons/godot_xreal/android/*.aar
-/addons/godot_xreal/android/*.jar
