@@ -29,8 +29,8 @@ still loads (for scene editing) but head tracking is inert.
 
 ## Supported features
 
-Verified on XREAL One Pro with the **XREAL SDK for Unity 3.1.0** native libraries. Everything below is
-community-reverse-engineered interop, not an official API.
+Verified on XREAL One Pro (and hand tracking on the XREAL Air 2 Ultra) with the **XREAL SDK for Unity
+3.1.0** native libraries. Everything below is community-reverse-engineered interop, not an official API.
 
 | Feature | Status | Notes |
 |---|---|---|
@@ -39,7 +39,9 @@ community-reverse-engineered interop, not an official API.
 | **Stereo glasses display** — head-locked peek window | ✅ | World-locked 3D through the glasses. **Multipass** (both eyes); it is the only stereo mode (no selector). |
 | **Multiview** stereo | ❌ Shelved | Right eye is black — the NR compositor (`libnr_api`) can't import our client `GL_TEXTURE_2D_ARRAY`, and it gives no benefit on this two-SubViewport rig anyway. The code is kept but disabled; dev-only escape `setprop debug.xreal.force_multiview 1`. See `docs/archive/codex-righteye-analysis.md`. |
 | **Recenter** | ✅ | Resets the forward direction (SDK `NativePerception::Recenter`). |
+| **Hand tracking** (26-joint, both hands) → Godot `XRHandTracker` | ✅ (Air 2 Ultra) | Live hand joints fed to two `XRServer` hand trackers (`/user/hand_tracker/{left,right}`); the demo draws world-locked joint spheres. **Air 2 Ultra only** — the One Pro lacks the outward cameras (`IsHandTrackingSupported()==false`). Enabled via the internal `SetHandTrackingEnabled` + `input_source=3`. See [`docs/plans/hand-tracking-plan.md`](docs/plans/hand-tracking-plan.md). |
 | **RGB camera** as a Godot `CameraFeed` | ✅ | Full-colour, shown in-scene on a head-locked quad. **Requires 3DoF** (it shares the camera with 6DoF SLAM). |
+| **Render metrics** — present FPS / dropped / early / latency | ✅ | Live compositor stats via the `NRMetrics*` API (queried directly, not the Unity `UpdateMetrics` sink), on `XrealSystem` (`get_present_fps()`, `get_dropped_frame_count()`, …). See [`docs/plans/render-metrics-gdscript-plan.md`](docs/plans/render-metrics-gdscript-plan.md). |
 | **Glasses input** — physical keys (MENU/MULTI: click/double/long) | ✅ | Godot signals (`key_event`, `key_state_changed`). |
 | **Wear sensor / brightness / volume / electrochromic / USB hot-plug** | ✅ | Signals (`wearing_changed`, `brightness_changed`, `glasses_connected`, …). |
 | **Diagnostics** — session / tracking state, HMD clock, plugin version | ✅ | Via `XrealSystem`. |
@@ -47,7 +49,7 @@ community-reverse-engineered interop, not an official API.
 | **Phone 3D pointer** (host IMU) | ✅ (demo) | Tilt the phone to aim a 3D ray in the glasses (`demo/phone_pointer.gd`). Orientation is fused in GDScript from the NRController's raw IMU (`accel` → pitch/roll, `gyro` → yaw) exposed by `XrealSystem.poll_controller()` — the NRController *fused pose* and Godot's own `Input.get_gyroscope()` both read empty on this host. The ray raycasts to highlight what it hits and the trigger selects it; an on-screen left/right-hand toggle switches the beam origin; gyro drift is damped by bias-learning + a deadzone. `recenter` sets forward. |
 | **Multi-resume** — glasses app keeps running when the phone switches apps | ✅ | Verified: after Home / another app, head tracking + camera keep updating on the glasses. From the manifest scaffolding (`nr_features=multiResume` + `NRFakeActivity`). A floating "return" button is **not** feasible (a self-overlay disturbs Godot's GL surface; the NR `FloatingManager` isn't accessible to a non-Unity app). |
 
-Not implemented: 6DoF position for the app camera, hand/image/plane tracking, spatial anchors, meshing,
+Not implemented: 6DoF position for the app camera, image/plane tracking, spatial anchors, meshing,
 audio/photo capture, the NRSDK's higher-level perception features. (Plane / image / anchor / mesh are
 portable without ARCore or AR Foundation — feasibility survey: [`docs/plans/ar-features-plan.md`](docs/plans/ar-features-plan.md).)
 
@@ -160,7 +162,9 @@ XrealHeadTracker (Node3D)   # rotation driven by native head pose
 | | `set_display_bypass_psensor(bypass) -> int` | Keep the display on while the glasses are not worn (SDK status). |
 | | `get_hmd_time_nanos() -> int` | Native HMD clock (ns, `0` when down). |
 | | `get_head_rotation() -> Quaternion` | Latest head rotation without a tracker node. |
+| | `get_present_fps() / get_dropped_frame_count() / get_early_frame_count() / …` | Live compositor render metrics (`NRMetrics*`). |
 | | `get_diagnostics() -> String` | One-line perception-pipeline diagnostic. |
+| `XrealHandTracker` (Node) | (registers trackers) | Publishes XREAL hand tracking to `XRServer` as two `XRHandTracker`s (`/user/hand_tracker/{left,right}`), updated each frame. Add it to the scene; drive a hand skeleton with `XRHandModifier3D` or read the trackers directly. **Air 2 Ultra only.** |
 
 ## Layout
 

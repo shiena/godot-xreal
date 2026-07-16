@@ -28,8 +28,9 @@ XREAL のネイティブは **Android arm64 のみ** のため、対応端末（
 
 ## 対応機能
 
-**XREAL SDK for Unity 3.1.0** のネイティブライブラリを用いて XREAL One Pro で実機確認。以下はすべて
-コミュニティによるリバースエンジニアリングでの相互運用であり、公式 API ではありません。
+**XREAL SDK for Unity 3.1.0** のネイティブライブラリを用いて XREAL One Pro（ハンドトラッキングは
+XREAL Air 2 Ultra）で実機確認。以下はすべてコミュニティによるリバースエンジニアリングでの相互運用で
+あり、公式 API ではありません。
 
 | 機能 | 状態 | 補足 |
 |---|---|---|
@@ -38,7 +39,9 @@ XREAL のネイティブは **Android arm64 のみ** のため、対応端末（
 | **ステレオ表示** — ヘッドロックの覗き窓 | ✅ | グラス越しにワールド固定 3D。**Multipass**（両眼）。唯一のステレオモード（セレクタなし）。 |
 | **Multiview** ステレオ | ❌ 棚上げ | 右目が黒 — NR コンポジタ（`libnr_api`）が我々の client `GL_TEXTURE_2D_ARRAY` を取り込めず、かつ本リグ（2 SubViewport 描画）では性能利得も無い。コードは残すが無効化、開発者用エスケープ `setprop debug.xreal.force_multiview 1` のみ。詳細 `docs/archive/codex-righteye-analysis.md`。 |
 | **Recenter** | ✅ | 正面方向をリセット（SDK `NativePerception::Recenter`）。 |
+| **ハンドトラッキング**（両手26関節）→ Godot `XRHandTracker` | ✅（Air 2 Ultra） | 手の関節を2つの `XRServer` ハンドトラッカ（`/user/hand_tracker/{left,right}`）へライブ供給。デモは world-lock した関節球を描画。**Air 2 Ultra 専用** — One Pro は外向きカメラが無く `IsHandTrackingSupported()==false`。有効化は内部 `SetHandTrackingEnabled`+`input_source=3`。詳細 [`docs/plans/hand-tracking-plan.md`](docs/plans/hand-tracking-plan.md)。 |
 | **RGB カメラ**（Godot `CameraFeed`） | ✅ | フルカラーで 3D シーン内のヘッドロックのクアッドに表示。**3DoF 必須**（6DoF SLAM とカメラを共有するため）。 |
+| **レンダーメトリクス** — present FPS / dropped / early / latency | ✅ | コンポジタの実測値を `NRMetrics*` API で直接取得（Unity の `UpdateMetrics` sink は使わない）。`XrealSystem`（`get_present_fps()`, `get_dropped_frame_count()` 等）。詳細 [`docs/plans/render-metrics-gdscript-plan.md`](docs/plans/render-metrics-gdscript-plan.md)。 |
 | **グラス入力** — 物理キー（MENU/MULTI: クリック/ダブル/長押し） | ✅ | Godot シグナル（`key_event`, `key_state_changed`）。 |
 | **装着センサー / 明るさ / 音量 / 調光 / USB ホットプラグ** | ✅ | シグナル（`wearing_changed`, `brightness_changed`, `glasses_connected` 等）。 |
 | **診断** — セッション/トラッキング状態、HMD クロック、プラグイン版 | ✅ | `XrealSystem` 経由。 |
@@ -46,7 +49,7 @@ XREAL のネイティブは **Android arm64 のみ** のため、対応端末（
 | **スマホ 3D ポインター**（ホスト IMU） | ✅（デモ） | スマホを傾けてグラス内に 3D レイを飛ばす（`demo/phone_pointer.gd`）。姿勢は `XrealSystem.poll_controller()` が露出する NRController の生 IMU（`accel`→ピッチ/ロール, `gyro`→ヨー）を GDScript で融合。本機では NRController の**融合ポーズ**も Godot 内蔵 `Input.get_gyroscope()` も空だったため。レイキャストで当たったオブジェクトをハイライト・トリガーで選択、オンスクリーンの左右手切替でレイの原点を切替、gyro ドリフトはバイアス学習+デッドゾーンで抑制。`recenter` で正面リセット。 |
 | **マルチレジューム** — スマホを別アプリに切替えてもグラスのアプリが継続 | ✅ | 実機確認: Home/別アプリ後もグラス側でヘッドトラッキング+カメラが更新継続。manifest 足場（`nr_features=multiResume`+`NRFakeActivity`）で成立。フローティング「戻る」ボタンは**不可**（自前オーバーレイは Godot の GL サーフェスを乱す・NR `FloatingManager` は非 Unity アプリから不可）。 |
 
-未実装: アプリカメラの 6DoF 位置、ハンド/画像/平面トラッキング、空間アンカー、メッシング、
+未実装: アプリカメラの 6DoF 位置、画像/平面トラッキング、空間アンカー、メッシング、
 音声/写真キャプチャ、NRSDK の高レベル知覚機能。（平面/画像/アンカー/メッシュは ARCore・AR Foundation
 不要で移植可能 — 実現性調査: [`docs/plans/ar-features-plan.md`](docs/plans/ar-features-plan.md)。）
 
