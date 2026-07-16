@@ -110,6 +110,9 @@ func _try_register_android_bridge() -> void:
 	var register_bridge := func() -> void:
 		bridge.register(activity)
 		bridge.startCompanionOnXrealDisplayIfNeeded(activity)
+		# Multi-resume: auto-enter Picture-in-Picture on background so the glasses keep rendering
+		# (the app stays paused-but-visible as a phone tile). See docs/plans/background-render-plan.md.
+		bridge.enableAutoEnterPiP(activity)
 
 	activity.runOnUiThread(runtime.createRunnableFromGodotCallable(register_bridge))
 

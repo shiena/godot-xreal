@@ -34,8 +34,16 @@ We do **not** need to ship the AAR and do **not** need `FloatingManager`/`NRXRAp
 permissions this needs (`SYSTEM_ALERT_WINDOW`, `REORDER_TASKS`) are **already injected** by
 `export_plugin.gd`.
 
-> ✅ **Device-verified 2026-07-16** (XREAL One Pro). Implemented as `XrealFloatingReturnButton`
-> (path (b)/(c) below). Confirmed on hardware: the button shows on the phone as a
+> ⚠️ **Superseded 2026-07-16: the floating button was implemented, device-verified, then REMOVED in
+> favour of auto-enter Picture-in-Picture.** The button only solved *returning* to the app; it did
+> **not** keep the glasses rendering while backgrounded (that turned out to be a Godot render-lifecycle
+> issue — `docs/archive/codex-background-render-analysis.md`). PiP solves both (keeps rendering + its
+> tile taps back), so `XrealFloatingReturnButton` was deleted and PiP shipped instead
+> (`docs/plans/background-render-plan.md`). The analysis below stands as the RE record; the "did not
+> materialise" crash and the `TYPE_APPLICATION_OVERLAY` feasibility were all confirmed on device.
+>
+> ✅ **Device-verified 2026-07-16** (XREAL One Pro), while it existed. Implemented as
+> `XrealFloatingReturnButton` (path (b)/(c) below). Confirmed on hardware: the button shows on the phone as a
 > `TYPE_APPLICATION_OVERLAY` window (`dumpsys` `mAttrs={(x,y)(200x200) ty=APPLICATION_OVERLAY}`),
 > **tap returns the app** (`getLaunchIntentForPackage` + `setLaunchDisplayId(0)`), **drag-to-move +
 > edge-snap works**, and it is **gated on `nr_features=multiResume`**. No crash / no `SIGSEGV` — the

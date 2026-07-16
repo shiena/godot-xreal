@@ -1,6 +1,21 @@
 # Background rendering (multi-resume) — Option B implementation plan
 
-Status: **design (codex, 2026-07-16); not implemented.** Follows
+> **Shipped: Milestone 0 (Picture-in-Picture), device-verified 2026-07-16.** The glasses now keep
+> rendering while the app is backgrounded, via auto-enter PiP — **zero engine patch**. Implemented as
+> `XrealBridge.enableAutoEnterPiP(activity)` (a direct `Activity.setPictureInPictureParams` with
+> `setAutoEnterEnabled(true)` + a 16:9 aspect ratio, gated to display 0), driven from
+> `demo/main.gd`. This bypasses Godot's own `isPiPEnabled()` gate, so **no `GodotApp.java` /
+> `godot-lib` edit is needed** (robust across template reinstalls). The manifest already carries
+> `android:supportsPictureInPicture="true"` on the launcher with PiP-adequate `configChanges`.
+> Device-verified: the `frame_tick` submit counter, which **froze** on background before PiP, keeps
+> advancing (`#1500→#2100`) in PiP; `mIsInPictureInPictureMode=true`; return exits PiP and resumes
+> fullscreen. UX trade-off (accepted): a small tile remains on the phone (not a full HOME hide). The
+> floating return button was removed in favour of the PiP tile.
+>
+> **Milestone 1 (SurfaceView reparent, below) is NOT implemented** and is only needed if a *true*
+> full-hide background (no tile) is later required; it needs the ~15-line `godot-lib` guard.
+
+Status: **Milestone 0 shipped; Milestone 1 designed, not implemented.** Follows
 `docs/archive/codex-background-render-analysis.md` (root cause + why the reference Unity app keeps
 rendering). Evidence: decompiled `godot-lib.template_debug.aar` (`4.7.1.stable`, jadx + `javap` on
 `classes.jar`), the reference APK smali, and our sources. "Proven" = from bytecode/smali; "inferred"

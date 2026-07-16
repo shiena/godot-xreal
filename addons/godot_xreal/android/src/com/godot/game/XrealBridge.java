@@ -3,13 +3,16 @@ package com.godot.game;
 import android.app.Activity;
 import android.app.ActivityManager;
 import android.app.ActivityOptions;
+import android.app.PictureInPictureParams;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.hardware.display.DisplayManager;
+import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
+import android.util.Rational;
 import android.view.Display;
 import android.util.DisplayMetrics;
 
@@ -114,9 +117,6 @@ public final class XrealBridge {
 			ensureNativeLibrariesLoaded();
 			nativeRegisterActivity(activity);
 			registerDisplayListener(activity);
-			// Multi-resume: auto show/hide a floating "return" button on the phone while the
-			// glasses app runs in the background (see XrealFloatingReturnButton).
-			XrealFloatingReturnButton.init(activity);
 			Display currentDisplay = activity.getWindowManager().getDefaultDisplay();
 			Log.i(TAG, BRIDGE_VERSION + ": Activity registered with the godot-xreal GDExtension on display "
 					+ (currentDisplay == null ? -1 : currentDisplay.getDisplayId()));
@@ -220,6 +220,36 @@ public final class XrealBridge {
 		Log.i(TAG, BRIDGE_VERSION + ": starting companion Activity on display "
 				+ describeDisplay(xrealDisplay));
 		activity.startActivity(intent, options.toBundle());
+	}
+
+	/**
+	 * Multi-resume: enable auto-enter Picture-in-Picture on the phone-side (display 0) Activity so that
+	 * backgrounding the app enters PiP (a small tile on the phone) instead of stopping it. In PiP the
+	 * Activity is paused-but-visible, so Godot's GL thread and its Surface stay alive and the XREAL
+	 * glasses keep rendering instead of freezing (see docs/plans/background-render-plan.md). This calls
+	 * the Android API directly (independent of Godot's own PiP gate); it needs
+	 * android:supportsPictureInPicture on the launcher Activity (already in the manifest). No-op below
+	 * API 31 (setAutoEnterEnabled) or when called for a non-display-0 Activity (the glasses companion).
+	 * Driven from GDScript (demo/main.gd) alongside {@link #register}.
+	 */
+	public static void enableAutoEnterPiP(Activity activity) {
+		if (activity == null || Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+			return;
+		}
+		try {
+			Display display = activity.getWindowManager().getDefaultDisplay();
+			if (display == null || display.getDisplayId() != Display.DEFAULT_DISPLAY) {
+				return; // only the phone-side main Activity, not the glasses companion
+			}
+			PictureInPictureParams params = new PictureInPictureParams.Builder()
+					.setAspectRatio(new Rational(16, 9))
+					.setAutoEnterEnabled(true)
+					.build();
+			activity.setPictureInPictureParams(params);
+			Log.i(TAG, BRIDGE_VERSION + ": auto-enter PiP enabled (display 0)");
+		} catch (Throwable t) {
+			Log.w(TAG, "enableAutoEnterPiP failed", t);
+		}
 	}
 
 	private static native void nativeRegisterActivity(Activity activity);
