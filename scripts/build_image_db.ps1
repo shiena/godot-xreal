@@ -37,6 +37,9 @@ if (-not $sets -or $sets.Count -eq 0) { throw "No sets in manifest $manifestPath
 
 foreach ($set in $sets) {
     $setName = if ($set.PSObject.Properties.Name -contains 'name') { $set.name } else { 'default' }
+    if ($set.PSObject.Properties.Name -contains 'prebuilt' -and $set.prebuilt) {
+        Write-Host "Set '$setName' is prebuilt ($($set.blob)) — skipped." -ForegroundColor DarkGray; continue
+    }
     if (-not $set.images -or $set.images.Count -eq 0) { Write-Warning "Set '$setName' has no images — skipped."; continue }
 
     # Image-list config: one `<guid:N>|<image path>|<width>` line per image.

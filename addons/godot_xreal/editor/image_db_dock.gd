@@ -270,6 +270,9 @@ func _on_build_pressed() -> void:
 		_set_status("[color=orange]セットがありません（「セット追加」）[/color]")
 		return
 	var cur := _cur_set(data)
+	if bool(cur.get("prebuilt", false)):
+		_set_status("[color=orange]セット '%s' は prebuilt（%s）— ビルド不要[/color]" % [cur.get("name", "?"), cur.get("blob", "")])
+		return
 	var images: Array = cur.get("images", [])
 	if images.is_empty():
 		_set_status("[color=orange]このセットに画像がありません[/color]")

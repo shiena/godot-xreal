@@ -135,6 +135,16 @@ try {
     # --- 3) Host build tool -> addons/godot_xreal/tools/ (NOT shipped in the APK): trackableImageTools
     #        generates the image-tracking reference-image DB blob from PNGs at build time (see
     #        docs/plans/ar-features-plan.md).
+    # Pre-baked AR-marker DB for the image-tracking demo's marker set (InterMarker.bin — same format as
+    # a built image blob; ships as-is). Copied to the demo (gitignored) if present.
+    $markerDbSrc = Join-Path $XrealPackage 'Marker~/InterMarker.bin'
+    if (Test-Path $markerDbSrc) {
+        $demoDir = Join-Path $repo 'demo/image_tracking'
+        New-Item -ItemType Directory -Force -Path $demoDir | Out-Null
+        Copy-Item -Path $markerDbSrc -Destination (Join-Path $demoDir 'markers.bin') -Force
+        Write-Host "asset markers.bin (AR-marker DB)"
+    }
+
     $toolsDir = Join-Path $repo 'addons/godot_xreal/tools'
     New-Item -ItemType Directory -Force -Path $toolsDir | Out-Null
     $toolSrc = Join-Path $XrealPackage 'Tools~/Windows/trackableImageTools.exe'

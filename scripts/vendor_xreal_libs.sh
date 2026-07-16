@@ -117,6 +117,15 @@ done
 #        generates the image-tracking reference-image DB blob from PNGs at build time (see
 #        docs/plans/ar-features-plan.md). Only a MacOS binary exists in the POSIX package layout; on
 #        Linux there is no prebuilt tool (build the blob on a Mac/Windows host, or skip image tracking).
+# Pre-baked AR-marker DB for the image-tracking demo's marker set (InterMarker.bin — same format as a
+# built image blob; ships as-is, no trackableImageTools). Copied to the demo (gitignored) if present.
+marker_db_src="$pkg/Marker~/InterMarker.bin"
+if [ -f "$marker_db_src" ]; then
+    mkdir -p "$repo_root/demo/image_tracking"
+    cp -f "$marker_db_src" "$repo_root/demo/image_tracking/markers.bin"
+    echo "asset markers.bin (AR-marker DB)"
+fi
+
 tools_dir="$repo_root/addons/godot_xreal/tools"
 mkdir -p "$tools_dir"
 case "$(uname -s)" in

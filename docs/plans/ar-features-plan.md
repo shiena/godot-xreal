@@ -171,6 +171,13 @@ enables the first, "画像切替" cycles). **Editor dock** `addons/godot_xreal/e
 per-image width/guid and run the vendored `trackableImageTools` to compile each set's blob;
 `scripts/build_image_db.ps1` does the same headless. Blobs/images gitignored, manifest committed.
 
+**Marker tracking** reuses this path: the SDK's AR-marker DB `Marker~/InterMarker.bin` is the *same*
+protobuf format as a built image blob (11 markers, self-describing — `GetReferenceImageCount`/
+`GetReferenceImage` read them). It ships as a **prebuilt set** (`markers.bin`, vendored by
+vendor_xreal_libs.*, `"prebuilt": true` so the build script / dock skip it) with the 11 baked marker
+guids in the manifest, so it inits + tracks through the exact same `init_image_database` / `poll_images`
+/ `set_image_database` switching. No separate marker API — `画像切替` cycles to it.
+
 
 Ships in **`nr_image_tracking.aar`** (`libnr_image_tracking.so`; matcher
 `libnr_aiimgtrack_algo.so`). Beyond the shared plumbing:
