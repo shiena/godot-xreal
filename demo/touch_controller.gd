@@ -37,6 +37,8 @@ signal stream_toggled(on: bool)
 signal place_pressed()
 ## Momentary "画像切替" button — cycle the active image-tracking set.
 signal image_cycle_pressed()
+## Momentary "撮影" button — capture a photo from the RGB camera.
+signal capture_pressed()
 
 ## Backdrop fill. Opaque by default so the phone shows only the controller (the glasses-bound
 ## 3D preview behind it is hidden); set a translucent alpha to let the 3D show through instead.
@@ -51,6 +53,7 @@ const _buttons := {
 	"hand_r": "右手 ▶",
 	"place": "配置",
 	"image_cycle": "画像切替",
+	"capture": "撮影",
 }
 
 # Toggle buttons (name -> label). Unlike the momentary buttons above they hold an on/off state
@@ -75,7 +78,7 @@ const _toggles := {
 # is gated the same way (main.gd / stream_manager.gd) to avoid a freeze on the camera-less Air 2 Ultra.
 const _tabs := [
 	{"label": "操作", "items": ["trigger", "grip", "menu", "hand_l", "hand_r"]},
-	{"label": "カメラ", "items": ["camera", "stream"]},
+	{"label": "カメラ", "items": ["camera", "capture", "stream"]},
 	{"label": "Air2U", "items": ["place", "plane", "anchor", "image", "image_cycle", "mesh"]},
 ]
 
@@ -248,6 +251,8 @@ func _press(widget: String, pos: Vector2) -> void:
 			place_pressed.emit()
 		"image_cycle":
 			image_cycle_pressed.emit()
+		"capture":
+			capture_pressed.emit()
 	queue_redraw()
 
 func _release(widget: String) -> void:

@@ -63,6 +63,8 @@ var _image_manager: Node3D
 var _mesh_manager: Node3D
 # FPV streaming manager (demo/stream_manager.gd), driven by the phone-menu "配信" toggle.
 var _stream_manager: Node
+# Photo capture manager (demo/capture_manager.gd), driven by the phone-menu "撮影" button.
+var _capture_manager: Node
 # Detected-plane visualization: a thin, semi-transparent box overlaid on each plane's bounds,
 # keyed by plane id. World-locked (children of Main, like the hand joints) so they sit on the real
 # surface as the head moves. On the see-through display the translucent fill reads as a tint.
@@ -190,6 +192,12 @@ func _spawn_rig() -> void:
 		_stream_manager.set_script(load("res://demo/stream_manager.gd"))
 		add_child(_stream_manager)
 		_stream_manager.setup(_system, _tracker)
+		# Photo capture manager (reads the RGB camera feed → JPG; wired the feed in _setup_camera_feed).
+		_capture_manager = Node.new()
+		_capture_manager.name = "CaptureManager"
+		_capture_manager.set_script(load("res://demo/capture_manager.gd"))
+		add_child(_capture_manager)
+		_capture_manager.setup(_system)
 		# Recenter the view to the current head direction once tracking goes live.
 		if _tracker.has_signal(&"display_started"):
 			_tracker.display_started.connect(_on_display_started)
@@ -241,6 +249,9 @@ func _setup_camera_feed() -> void:
 	# eye SubViewports (shared world). Its corner position/size are set in ar_scene.tscn.
 	if _tracker and _cam_panel.get_parent() != _tracker:
 		_cam_panel.reparent(_tracker, false)
+	# Hand the live feed to the photo-capture manager (撮影 reads its Y/CbCr textures).
+	if _capture_manager:
+		_capture_manager.set_feed(_cam_feed)
 
 ## Set up the runtime side of the phone touch controller ($PhoneScreen — its layout and signal
 ## wiring are static in phone_screen.tscn / main.tscn; it only renders on the phone's root
@@ -410,6 +421,11 @@ func _on_tc_place() -> void:
 func _on_tc_image_cycle() -> void:
 	if _image_manager:
 		_image_manager.cycle_set()
+
+## Phone-menu "撮影" button → capture a photo from the RGB camera (demo/capture_manager.gd, One Series).
+func _on_tc_capture() -> void:
+	if _capture_manager:
+		_capture_manager.capture_photo()
 
 ## Create/update the translucent box overlaying one plane's bounds. The plane's `size` is its full
 ## width/height in the plane-local X/Z; `center` offsets the bounds from the pose in that same local
