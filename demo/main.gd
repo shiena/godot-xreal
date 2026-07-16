@@ -55,6 +55,8 @@ var _plane_total := 0
 # One-shot AR-feature availability diagnostic: logs which native AR ABIs resolved on this device,
 # a short delay after boot (so the session has come up). See docs/plans/ar-features-plan.md.
 var _ar_diag_frames := 0
+# Spatial-anchor manager (demo/anchor_manager.gd), driven by the phone-menu "アンカー" toggle + "配置".
+var _anchor_manager: Node3D
 # Detected-plane visualization: a thin, semi-transparent box overlaid on each plane's bounds,
 # keyed by plane id. World-locked (children of Main, like the hand joints) so they sit on the real
 # surface as the head moves. On the see-through display the translucent fill reads as a tint.
@@ -155,6 +157,13 @@ func _spawn_rig() -> void:
 		hand_vis.name = "HandVisualizer"
 		hand_vis.set_script(load("res://demo/hand_visualizer.gd"))
 		add_child(hand_vis)
+		# Spatial-anchor manager (also world-locked under Main). Drives placement (pinch / 配置 button),
+		# poll_anchors visualization, and save/restore — enabled from the phone-menu アンカー toggle.
+		_anchor_manager = Node3D.new()
+		_anchor_manager.name = "AnchorManager"
+		_anchor_manager.set_script(load("res://demo/anchor_manager.gd"))
+		add_child(_anchor_manager)
+		_anchor_manager.setup(_system)
 		# Recenter the view to the current head direction once tracking goes live.
 		if _tracker.has_signal(&"display_started"):
 			_tracker.display_started.connect(_on_display_started)
@@ -315,6 +324,24 @@ func _on_tc_plane(on: bool) -> void:
 		if _system.has_method(&"set_plane_detection_mode"):
 			_system.set_plane_detection_mode(XREAL_PLANE_NONE)
 		_clear_plane_boxes()
+
+## Phone-menu "アンカー" toggle → enable/disable spatial-anchor mode (demo/anchor_manager.gd).
+## Pinch or the "配置" button then drop an anchor at the hand fingertip. Unavailable without the
+## anchor ABI: the toggle flips itself back off.
+func _on_tc_anchor(on: bool) -> void:
+	print("[demo] anchor toggle -> %s" % ("on" if on else "off"))
+	if _anchor_manager == null:
+		_set_controller_toggle("anchor", false)
+		return
+	var enabled: bool = _anchor_manager.set_enabled(on)
+	if on and not enabled:
+		push_warning("[demo] spatial anchors unavailable on this device — toggle disabled")
+		_set_controller_toggle("anchor", false)
+
+## Phone-menu "配置" button → place a spatial anchor at the currently-tracked hand fingertip.
+func _on_tc_place() -> void:
+	if _anchor_manager:
+		_anchor_manager.place_at_fingertip()
 
 ## Create/update the translucent box overlaying one plane's bounds. The plane's `size` is its full
 ## width/height in the plane-local X/Z; `center` offsets the bounds from the pose in that same local

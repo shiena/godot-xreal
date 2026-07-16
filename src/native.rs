@@ -51,6 +51,21 @@ const NR_LOADER_LIB: &str = "libnr_loader.so";
 const GLES_LIB: &str = "libGLESv3.so";
 const EGL_LIB: &str = "libEGL.so";
 
+/// Upper bound on a single AR change-array count. The SDK's change pointers alias internal vectors;
+/// a stale/garbage count (e.g. read during an internal update) would otherwise drive an out-of-bounds
+/// read. Real scenes have at most a handful of planes/anchors, so anything past this is treated as 0.
+const MAX_TRACKABLES: i32 = 1024;
+
+/// Clamp a change-array count to a sane range (`0..=MAX_TRACKABLES`); negative/oversized → 0 + warn.
+fn sane_count(count: i32, what: &str) -> i32 {
+    if (0..=MAX_TRACKABLES).contains(&count) {
+        count
+    } else {
+        godot::global::godot_warn!("[xreal] {what} change count {count} out of range; skipping");
+        0
+    }
+}
+
 /// A detected plane sampled from the plane-detection changes. The `pose` is **Unity space** — convert
 /// on the Godot side (`(x, -y, -z)` / quaternion `(-x, -y, z, w)`). `center`/`size` are plane-local.
 #[derive(Clone, Copy, Debug)]
@@ -1580,9 +1595,20 @@ impl XrealNative {
             });
         }
         Some(PlaneChanges {
-            added: read_planes(changes.added_ptr, changes.added_count, stride),
-            updated: read_planes(changes.updated_ptr, changes.updated_count, stride),
-            removed: read_removed_ids(changes.removed_ptr, changes.removed_count),
+            added: read_planes(
+                changes.added_ptr,
+                sane_count(changes.added_count, "plane added"),
+                stride,
+            ),
+            updated: read_planes(
+                changes.updated_ptr,
+                sane_count(changes.updated_count, "plane updated"),
+                stride,
+            ),
+            removed: read_removed_ids(
+                changes.removed_ptr,
+                sane_count(changes.removed_count, "plane removed"),
+            ),
         })
     }
 
@@ -1665,9 +1691,20 @@ impl XrealNative {
             });
         }
         Some(AnchorChanges {
-            added: read_anchors(changes.added_ptr, changes.added_count, stride),
-            updated: read_anchors(changes.updated_ptr, changes.updated_count, stride),
-            removed: read_removed_ids(changes.removed_ptr, changes.removed_count),
+            added: read_anchors(
+                changes.added_ptr,
+                sane_count(changes.added_count, "anchor added"),
+                stride,
+            ),
+            updated: read_anchors(
+                changes.updated_ptr,
+                sane_count(changes.updated_count, "anchor updated"),
+                stride,
+            ),
+            removed: read_removed_ids(
+                changes.removed_ptr,
+                sane_count(changes.removed_count, "anchor removed"),
+            ),
         })
     }
 

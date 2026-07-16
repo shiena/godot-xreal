@@ -25,6 +25,10 @@ signal hand_selected(is_right: bool)
 signal camera_toggled(on: bool)
 ## Plane-detection toggle flipped (true = on). Independent of the camera toggle.
 signal plane_toggled(on: bool)
+## Spatial-anchor mode toggle flipped (true = on).
+signal anchor_toggled(on: bool)
+## Momentary "配置" button — place a spatial anchor at the hand fingertip now.
+signal place_pressed()
 
 ## Backdrop fill. Opaque by default so the phone shows only the controller (the glasses-bound
 ## 3D preview behind it is hidden); set a translucent alpha to let the 3D show through instead.
@@ -37,14 +41,16 @@ const _buttons := {
 	"menu": "MENU",
 	"hand_l": "◀ 左手",
 	"hand_r": "右手 ▶",
+	"place": "配置",
 }
 
 # Toggle buttons (name -> label). Unlike the momentary buttons above they hold an on/off state
-# (highlighted while on) and fire once on press. Used for the camera / plane-detection switches;
+# (highlighted while on) and fire once on press. Used for the camera / plane / anchor switches;
 # main.gd drives the actual XrealSystem calls and can push state back via set_toggle().
 const _toggles := {
 	"camera": "カメラ",
 	"plane": "平面検出",
+	"anchor": "アンカー",
 }
 
 # Layout, filled by _layout() from the current size.
@@ -137,6 +143,8 @@ func _press(widget: String, pos: Vector2) -> void:
 				camera_toggled.emit(on)
 			"plane":
 				plane_toggled.emit(on)
+			"anchor":
+				anchor_toggled.emit(on)
 		queue_redraw()
 		return
 	match widget:
@@ -152,6 +160,8 @@ func _press(widget: String, pos: Vector2) -> void:
 			hand_selected.emit(false)
 		"hand_r":
 			hand_selected.emit(true)
+		"place":
+			place_pressed.emit()
 	queue_redraw()
 
 func _release(widget: String) -> void:

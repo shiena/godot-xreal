@@ -21,6 +21,10 @@ signal hand_selected(is_right: bool)
 signal camera_toggled(on: bool)
 ## Plane-detection toggle flipped (true = on).
 signal plane_toggled(on: bool)
+## Spatial-anchor mode toggle flipped (true = on).
+signal anchor_toggled(on: bool)
+## Momentary "配置" button — place a spatial anchor at the hand fingertip.
+signal place_pressed()
 
 func _ready() -> void:
 	var c: Control = $TouchController
@@ -32,6 +36,8 @@ func _ready() -> void:
 	c.hand_selected.connect(hand_selected.emit)
 	c.camera_toggled.connect(camera_toggled.emit)
 	c.plane_toggled.connect(plane_toggled.emit)
+	c.anchor_toggled.connect(anchor_toggled.emit)
+	c.place_pressed.connect(place_pressed.emit)
 
 ## Forward a programmatic toggle-state change to the touch controller (see its set_toggle).
 func set_toggle(name: String, on: bool) -> void:

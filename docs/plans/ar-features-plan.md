@@ -140,8 +140,16 @@ types) → `src/native.rs` (dlsym all 9 + `read_anchor_at`/`read_anchors`, mirro
 `acquire_anchor(Transform3D) -> Dictionary`, `poll_anchors() -> {added, updated, removed}`,
 `save_anchor(id) -> Guid str`, `load_anchor(Guid str) -> Dictionary`, `remove_anchor(id)`,
 `remap_anchor(id)`, `estimate_anchor_quality(id, Transform3D) -> int`, `ANCHOR_QUALITY_*` constants.
-On-device verify pending (needs 6DoF + real tracking): confirm `poll_anchors`/`acquire`/`save`/`load`
-round-trip and the pose flip lands anchors on the intended spot.
+**Demo (`demo/anchor_manager.gd`):** the phone-menu "アンカー" toggle + "配置" button / a pinch
+gesture place an anchor at the hand index fingertip; each tracked anchor gets a world-locked marker
+(child of Main). **Device-verified on the Air 2 Ultra:** placement at the fingertip works,
+`acquire_anchor` returns valid anchors, markers stay world-locked, and OFF→ON restores them (OFF keeps
+the subsystem enabled and just hides the markers, so anchors aren't lost). `save_anchor` is retried
+each ~0.5 s and only succeeds once the SLAM map quality reaches SUFFICIENT — in a small/blank space it
+stays INSUFFICIENT (quality 0), so save→restart→reload persistence needs a feature-rich space to
+verify. **Crash-hardening:** `poll_*_changes` clamps the SDK's change counts to `MAX_TRACKABLES`
+(the change pointers alias internal vectors; a stale/garbage count would drive an OOB read → SIGSEGV).
+Remaining: confirm save/restart/reload once quality reaches SUFFICIENT.
 
 ## 3. Image Tracking (third — two extra prereqs)
 
