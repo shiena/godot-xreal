@@ -270,7 +270,11 @@ impl XrealSession {
             tracking_type: tracking_mode,
             support_mono_mode: 0,
             unity_activity: activity,
-            input_source: 0,
+            // InputSource enum (XREAL SDK): 1 = Controller, 2 = Hands, 3 = ControllerAndHands. Bit 1 =
+            // Hands is the gate `InputManager::UpdateHandPose` checks (`(*(InputManager+0x30))+0x18` bit
+            // 1); with 0 (none) hand tracking never runs. 3 keeps controller input while enabling hands
+            // (hand tracking is Air 2 Ultra only; the bit is simply never satisfied on the One Pro).
+            input_source: 3,
         };
         if !native.init_user_defined_settings(settings) {
             return TryStart::Disabled(

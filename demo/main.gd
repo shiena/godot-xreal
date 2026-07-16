@@ -120,6 +120,15 @@ func _spawn_rig() -> void:
 		var rig := (load(RIG_SCENE) as PackedScene).instantiate()
 		add_child(rig)
 		_tracker = rig  # the rig's root node IS the XrealHeadTracker
+		# Hand-joint visualizer (Air 2 Ultra): small spheres at the tracked hand joints. The joint poses
+		# are in world/tracking space (fixed as the head moves), so parent under Main (a fixed node) — NOT
+		# the head rig. Under the rotating rig the head rotation cancels against the eye cameras and the
+		# hand would be head-locked (stuck to the screen). Under a fixed node the rotating eye cameras see
+		# the fixed hand, so it stays world-locked on the real hand.
+		var hand_vis := Node3D.new()
+		hand_vis.name = "HandVisualizer"
+		hand_vis.set_script(load("res://demo/hand_visualizer.gd"))
+		add_child(hand_vis)
 		# Recenter the view to the current head direction once tracking goes live.
 		if _tracker.has_signal(&"display_started"):
 			_tracker.display_started.connect(_on_display_started)

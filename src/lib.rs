@@ -18,6 +18,7 @@ mod controller_probe;
 mod ffi;
 mod gl;
 mod glasses_events;
+mod hand_tracking;
 mod jni_bridge;
 mod metrics;
 mod native;

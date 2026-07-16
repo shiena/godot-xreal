@@ -308,6 +308,12 @@ pub fn publish_lib_base(lib_base: usize) {
     LIB_BASE.store(lib_base, Ordering::SeqCst);
 }
 
+/// The runtime base of `libXREALXRPlugin.so` (0 until published). Callers that dispatch to internal
+/// (non-exported) plugin functions by `lib_base + compile_time_offset` need this.
+pub fn lib_base() -> usize {
+    LIB_BASE.load(Ordering::SeqCst)
+}
+
 /// Install the SIGSEGV guard. Call once with `libXREALXRPlugin.so`'s runtime base.
 pub fn install(lib_base: usize) {
     LIB_BASE.store(lib_base, Ordering::SeqCst);
