@@ -170,6 +170,12 @@ struct XrTexture {
     /// Number of array layers: 1 for a plain `GL_TEXTURE_2D` (multipass), 2 for a
     /// `GL_TEXTURE_2D_ARRAY` (Multiview / Single-Pass-Instanced — both eyes in one texture).
     layers: i32,
+    /// The `color_format` and `flags` the SDK passed to `CreateTexture`. `QueryTextureDesc` must echo
+    /// them back (esp. for the Multiview 2-layer array — reporting a 1-layer/flags-0 descriptor for a
+    /// 2-layer object mis-registers the NR swapchain so layer 1 never gets our content; the right eye
+    /// then shows a fixed cleared gray. See docs/codex-righteye-analysis.md.
+    color_format: u32,
+    flags: u32,
 }
 
 static XR_TEXTURES: Mutex<Vec<XrTexture>> = Mutex::new(Vec::new());
@@ -703,6 +709,8 @@ extern "C" fn xr_create_texture(
             width,
             height,
             layers,
+            color_format: desc.color_format,
+            flags: desc.flags,
         });
         textures.len()
     };
@@ -745,16 +753,22 @@ extern "C" fn xr_query_texture_desc(
     };
     if XR_QUERY_LOG.fetch_add(1, Ordering::Relaxed) < 8 {
         godot::global::godot_print!(
-            "[xreal] QueryTextureDesc tid={} id={tex_id} -> gl_tex={} {}x{} (SetSwapChainBuffers is registering our texture)",
+            "[xreal] QueryTextureDesc tid={} id={tex_id} -> gl_tex={} {}x{} layers={} flags={} \
+             color_format={} (SetSwapChainBuffers is registering our texture)",
             current_tid(),
             entry.gl_id,
             entry.width,
-            entry.height
+            entry.height,
+            entry.layers,
+            entry.flags,
+            entry.color_format
         );
     }
     unsafe {
+        // Echo back the SDK's own color_format / flags / array length. Reporting a 1-layer / flags-0
+        // descriptor for our 2-layer array mis-registers the NR swapchain (Multiview right eye = gray).
         *out = UnityXrRenderTextureDesc {
-            color_format: 0,
+            color_format: entry.color_format,
             _pad0: 0,
             color: entry.gl_id as u64,
             depth_format: 0,
@@ -762,8 +776,8 @@ extern "C" fn xr_query_texture_desc(
             depth: 0,
             width: entry.width as u32,
             height: entry.height as u32,
-            texture_array_length: 1,
-            flags: 0,
+            texture_array_length: entry.layers as u32,
+            flags: entry.flags,
         };
     }
     0

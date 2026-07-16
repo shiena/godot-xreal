@@ -185,9 +185,21 @@ pub fn patch_handle_action_callback(lib_base: usize) {
 /// leaves `overlay+0x8 == 0`, and lets `SetSwapChainBuffers` → `QueryTextureDesc` register the texture.
 #[cfg(target_os = "android")]
 pub fn patch_create_display_layer(lib_base: usize) {
-    let patch_addr = lib_base + 0x6dc98; // cbz w8, 0x6dd18 → force `b 0x6dd18` (real DisplayOverlay)
+    // Patch 1: cbz w8, 0x6dd18 → b 0x6dd18 — force the real `DisplayOverlay` (vs DummyDisplayOverlay),
+    // so Multiview registers the swapchain texture.
+    let patch_addr = lib_base + 0x6dc98;
     let branch_real: u32 = 0x1400_0020; // b 0x6dd18 (delta 0x80, imm26 0x20)
+    // Patch 2 (Multiview two-viewport): `lsl w21, w8, #1` → `mov w21, #2` at CreateDisplayLayer+0x48.
+    // This is inside the `stereo_rendering_mode == 2` block, so Multipass is untouched. It forces the
+    // DisplayOverlay ctor's `overlay+0x14 = 2` — the value `DisplayOverlay::CreateViewport @0xa6a68`
+    // tests to build TWO viewports (viewport[0] layer 0 = left, viewport[1] layer 1 = right) for the
+    // one array swapchain. Without it our path built only ONE viewport (component 6), so the compositor
+    // never presented array layer 1 and the right eye was black. See docs/codex-righteye-analysis.md.
+    let viewport_addr = lib_base + 0x6dc60;
+    let mov_w21_2: u32 = 0x5280_0055; // mov w21, #2
+
     let page_size: usize = 4096;
+    // Both targets sit in the same page (…6d000).
     let page_addr = (patch_addr & !(page_size - 1)) as *mut libc::c_void;
 
     unsafe {
@@ -201,15 +213,18 @@ pub fn patch_create_display_layer(lib_base: usize) {
             return;
         }
         *(patch_addr as *mut u32) = branch_real;
+        *(viewport_addr as *mut u32) = mov_w21_2;
         core::arch::asm!(
-            "dc cvau,{a}", "dsb ish", "ic ivau,{a}", "dsb ish", "isb",
+            "dc cvau,{a}", "dc cvau,{b}", "dsb ish",
+            "ic ivau,{a}", "ic ivau,{b}", "dsb ish", "isb",
             a = in(reg) patch_addr,
+            b = in(reg) viewport_addr,
         );
         libc::mprotect(page_addr, page_size, libc::PROT_READ | libc::PROT_EXEC);
     }
     godot::global::godot_print!(
-        "[xreal] patch_display_layer: patched CreateDisplayLayer at {patch_addr:#018x} \
-         cbz→b 0x6dd18 (force real DisplayOverlay so Multiview registers the swapchain texture)"
+        "[xreal] patch_display_layer: patched CreateDisplayLayer at {patch_addr:#018x} cbz→b 0x6dd18 \
+         (real DisplayOverlay) + {viewport_addr:#018x} lsl→mov w21,#2 (Multiview two-viewport / layer 1)"
     );
 }
 
