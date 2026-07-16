@@ -5,7 +5,7 @@
 //! `is_available() == false` on desktop/editor or when the session failed to start.
 
 use godot::builtin::{VarArray, VarDictionary};
-use godot::classes::IRefCounted;
+use godot::classes::{INode, IRefCounted};
 use godot::prelude::*;
 
 use crate::session::{self, XrealSession};
@@ -945,4 +945,195 @@ fn mesh_block_to_dict(b: &crate::depth_mesh::MeshBlock) -> VarDictionary {
     d.set(&"normals".to_variant(), &norms.to_variant());
     d.set(&"indices".to_variant(), &idx.to_variant());
     d
+}
+
+// --- XrealAR: a scene-placeable Node that polls the AR change streams each frame and re-emits them as
+//     signals, so consumers connect in the editor instead of manually polling XrealSystem. Enable the
+//     features via XrealSystem (set_plane_detection_mode / set_anchor_enabled / init_image_database /
+//     set_meshing_enabled) — this node only surfaces the changes + the temperature / native-error events.
+//     Drop it in the scene (a unique name helps) and connect the signals below.
+
+/// Scene node that turns the AR change polls + glasses events into signals. See the module docs.
+#[derive(GodotClass)]
+#[class(base = Node)]
+pub struct XrealAR {
+    base: Base<Node>,
+    /// Master switch — poll each frame while `true`.
+    #[export]
+    active: bool,
+    /// Per-stream switches — turn off the streams you don't use to skip their per-frame native poll.
+    #[export]
+    planes: bool,
+    #[export]
+    anchors: bool,
+    #[export]
+    images: bool,
+    #[export]
+    mesh: bool,
+    /// Emit `temperature_changed` / `native_error` on change.
+    #[export]
+    glasses_events: bool,
+    last_temperature: i64,
+    last_error_code: i64,
+}
+
+#[godot_api]
+impl INode for XrealAR {
+    fn init(base: Base<Node>) -> Self {
+        Self {
+            base,
+            active: true,
+            planes: true,
+            anchors: true,
+            images: true,
+            mesh: true,
+            glasses_events: true,
+            last_temperature: i64::MIN,
+            last_error_code: i64::MIN,
+        }
+    }
+
+    fn process(&mut self, _delta: f64) {
+        if !self.active {
+            return;
+        }
+        if self.planes {
+            self.emit_plane_changes();
+        }
+        if self.anchors {
+            self.emit_anchor_changes();
+        }
+        if self.images {
+            self.emit_image_changes();
+        }
+        if self.mesh {
+            self.emit_mesh_changes();
+        }
+        if self.glasses_events {
+            self.emit_glasses_events();
+        }
+    }
+}
+
+#[godot_api]
+impl XrealAR {
+    /// A detected plane was added / updated — `Dictionary { id, transform, center, size, alignment }`.
+    #[signal]
+    fn plane_added(plane: VarDictionary);
+    #[signal]
+    fn plane_updated(plane: VarDictionary);
+    /// A detected plane was removed (its id string).
+    #[signal]
+    fn plane_removed(id: GString);
+
+    /// A tracked anchor was added / updated — `Dictionary { id, transform, tracking_state, session_id }`.
+    #[signal]
+    fn anchor_added(anchor: VarDictionary);
+    #[signal]
+    fn anchor_updated(anchor: VarDictionary);
+    #[signal]
+    fn anchor_removed(id: GString);
+
+    /// A tracked image was added / updated — `Dictionary { id, source_image, transform, size, tracking_state }`.
+    #[signal]
+    fn image_added(image: VarDictionary);
+    #[signal]
+    fn image_updated(image: VarDictionary);
+    #[signal]
+    fn image_removed(id: GString);
+
+    /// A mesh block was added / updated — `Dictionary { id, state, vertices, normals, indices }`.
+    #[signal]
+    fn mesh_block_changed(block: VarDictionary);
+    /// A mesh block was removed (its id string).
+    #[signal]
+    fn mesh_block_removed(id: GString);
+
+    /// The glasses temperature level changed (`0` NORMAL / `1` WARM / `2` HOT).
+    #[signal]
+    fn temperature_changed(level: i64);
+    /// A native async error arrived (`XREALErrorCode` + its message).
+    #[signal]
+    fn native_error(code: i64, message: GString);
+
+    fn emit_plane_changes(&mut self) {
+        let Some(ch) = session::shared().and_then(|s| s.poll_plane_changes()) else {
+            return;
+        };
+        for p in &ch.added {
+            self.signals().plane_added().emit(&plane_to_dict(p));
+        }
+        for p in &ch.updated {
+            self.signals().plane_updated().emit(&plane_to_dict(p));
+        }
+        for id in &ch.removed {
+            self.signals()
+                .plane_removed()
+                .emit(&trackable_id_to_gstring(*id));
+        }
+    }
+
+    fn emit_anchor_changes(&mut self) {
+        let Some(ch) = session::shared().and_then(|s| s.poll_anchor_changes()) else {
+            return;
+        };
+        for a in &ch.added {
+            self.signals().anchor_added().emit(&anchor_to_dict(a));
+        }
+        for a in &ch.updated {
+            self.signals().anchor_updated().emit(&anchor_to_dict(a));
+        }
+        for id in &ch.removed {
+            self.signals()
+                .anchor_removed()
+                .emit(&trackable_id_to_gstring(*id));
+        }
+    }
+
+    fn emit_image_changes(&mut self) {
+        let Some(ch) = session::shared().and_then(|s| s.poll_image_changes()) else {
+            return;
+        };
+        for im in &ch.added {
+            self.signals().image_added().emit(&image_to_dict(im));
+        }
+        for im in &ch.updated {
+            self.signals().image_updated().emit(&image_to_dict(im));
+        }
+        for id in &ch.removed {
+            self.signals()
+                .image_removed()
+                .emit(&trackable_id_to_gstring(*id));
+        }
+    }
+
+    fn emit_mesh_changes(&mut self) {
+        for b in crate::depth_mesh::poll_mesh_blocks() {
+            if b.state == 2 {
+                self.signals()
+                    .mesh_block_removed()
+                    .emit(&GString::from(format!("{:016x}", b.id).as_str()));
+            } else {
+                self.signals()
+                    .mesh_block_changed()
+                    .emit(&mesh_block_to_dict(&b));
+            }
+        }
+    }
+
+    fn emit_glasses_events(&mut self) {
+        let temp = crate::glasses_events::temperature_level() as i64;
+        if temp != self.last_temperature {
+            self.last_temperature = temp;
+            self.signals().temperature_changed().emit(temp);
+        }
+        let code = crate::native_error::last_error_code() as i64;
+        if code != self.last_error_code {
+            self.last_error_code = code;
+            let msg = crate::native_error::last_error_message();
+            self.signals()
+                .native_error()
+                .emit(code, &GString::from(msg.as_str()));
+        }
+    }
 }

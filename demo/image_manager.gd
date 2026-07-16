@@ -12,15 +12,22 @@ extends Node3D
 const MANIFEST := "res://demo/image_tracking/reference.json"
 
 var _system: Object                 # XrealSystem, injected by main.gd via setup()
+var _ar: Object                     # XrealAR node (per-frame poller → signals), injected via setup()
 var _initialized := false           # sets loaded + registered once
 var _enabled := false
 var _sets := []                     # [{name: String, handle: int}] — one registered DB per set
 var _active_set := -1               # index into _sets of the currently-active set
 var _markers := {}                  # image id(String) -> MeshInstance3D
 
-## Injected once by main.gd after the rig spawns.
-func setup(system: Object) -> void:
+## Injected once by main.gd after the rig spawns. `ar` is the shared XrealAR node whose
+## image_added / image_updated / image_removed signals drive the overlay.
+func setup(system: Object, ar: Object = null) -> void:
 	_system = system
+	_ar = ar
+	if _ar:
+		_ar.connect(&"image_added", _on_image_added)
+		_ar.connect(&"image_updated", _on_image_updated)
+		_ar.connect(&"image_removed", _on_image_removed)
 
 ## Toggle image-tracking mode. Returns the resulting state (false if the ABI/sets are unavailable, so
 ## the phone-menu toggle can flip itself back off).
@@ -37,6 +44,8 @@ func set_enabled(on: bool) -> bool:
 	else:
 		_enabled = false
 		visible = false  # keep the databases active; just hide the markers
+	if _ar:
+		_ar.set(&"images", _enabled)  # only let XrealAR poll the image stream while we're on
 	return _enabled
 
 ## Load every set in the manifest, register a database for each, and activate the first.
@@ -102,16 +111,21 @@ func _read_manifest() -> Dictionary:
 	mf.close()
 	return data if typeof(data) == TYPE_DICTIONARY else {}
 
-func _process(_delta: float) -> void:
-	if not _enabled or not _system:
+## XrealAR signal: an image was first detected.
+func _on_image_added(im: Dictionary) -> void:
+	if not _enabled:
 		return
-	var ch: Dictionary = _system.poll_images()
-	for im in ch.get("added", []):
+	_update_marker(im)
+	print("[image] detected %s" % str(im.get("source_image", "")))
+
+## XrealAR signal: a tracked image's pose/state updated.
+func _on_image_updated(im: Dictionary) -> void:
+	if _enabled:
 		_update_marker(im)
-		print("[image] detected %s" % str((im as Dictionary).get("source_image", "")))
-	for im in ch.get("updated", []):
-		_update_marker(im)
-	for id in ch.get("removed", []):
+
+## XrealAR signal: a tracked image was lost.
+func _on_image_removed(id: String) -> void:
+	if _enabled:
 		_remove_marker(id)
 
 func _update_marker(im: Dictionary) -> void:

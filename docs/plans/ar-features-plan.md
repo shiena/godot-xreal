@@ -30,6 +30,27 @@ like `GetHandJointsPose` (`src/hand_tracking.rs`).
 "requires AR Foundation" is a C# `#if XR_ARFOUNDATION` frontend guard. The detection engines are
 XREAL's own native code; Godot bypasses the C# layer entirely.
 
+## `XrealAR` node — signals instead of manual polling (`src/system.rs`)
+
+The AR change streams are **poll-based**: the SDK only produces new changes when you call
+`poll_planes()`/`poll_anchors()`/`poll_images()`/`poll_mesh_blocks()` each frame, and every stream must
+be drained by **exactly one** caller (two pollers would split the change queue between them). `XrealSystem`
+(a `RefCounted` query/control handle) still exposes those raw polls, but the ergonomic path is the
+**`XrealAR` scene node**: drop it in the tree and it does the per-frame poll in `_process`, re-emitting each
+item as a signal — so consumers connect in the editor instead of writing poll loops.
+
+- Signals: `plane_added/updated/removed`, `anchor_added/updated/removed`, `image_added/updated/removed`
+  (each `*_added/updated` carries the item `Dictionary`, `*_removed` its id `String`),
+  `mesh_block_changed(block)` / `mesh_block_removed(id)`, plus the glasses events `temperature_changed(level)`
+  / `native_error(code, message)`.
+- `#[export]` switches: `active` (master) + per-stream `planes` / `anchors` / `images` / `mesh` /
+  `glasses_events` — turn off the streams you don't use to skip their per-frame native poll. It only
+  *surfaces* changes; enable the features themselves via `XrealSystem` (`set_plane_detection_mode` /
+  `set_anchor_enabled` / `init_image_database` / `set_meshing_enabled`).
+- The demo (`demo/main.gd` + `anchor_manager` / `image_manager` / `mesh_manager`) uses it: each phone-menu
+  toggle flips the matching `XrealAR` stream on/off (so a stream is polled only while its feature is on),
+  and the managers connect the signals rather than calling `poll_*`.
+
 ## Shared structs & enums (repr(C), device-confirmed offsets)
 
 ### `ARSubsystemChanges` — the changes-poll out-struct (**48 bytes**)

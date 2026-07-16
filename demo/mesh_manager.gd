@@ -1,20 +1,30 @@
 extends Node3D
 ## Depth-mesh demo / on-device verification (Air 2 Ultra). Driven by the phone-menu "メッシュ" toggle
-## (main.gd). Enables meshing (XrealSystem.set_meshing_enabled) and, each frame, builds/updates an
-## ArrayMesh per block from poll_mesh_blocks — a translucent overlay of the scanned environment.
+## (main.gd). Enables meshing (XrealSystem.set_meshing_enabled) and builds/updates an ArrayMesh per
+## block — a translucent overlay of the scanned environment.
+##
+## The per-frame poll is done by the shared XrealAR node (injected via setup): it re-emits each block
+## as mesh_block_changed / mesh_block_removed and we just visualize. We gate its "mesh" stream on our
+## toggle so it only polls while meshing is on.
 ##
 ## World-locked: child of Main (like the hand joints / anchors), so the mesh stays registered to the
 ## real room as the head moves. OFF hides the meshes but keeps meshing running so ON restores them.
 
 var _system: Object                 # XrealSystem, injected by main.gd via setup()
+var _ar: Object                     # XrealAR node (per-frame poller → signals), injected via setup()
 var _initialized := false           # meshing enabled once
 var _enabled := false
 var _meshes := {}                   # block id(String) -> MeshInstance3D
 var _mat: StandardMaterial3D
 
-## Injected once by main.gd after the rig spawns.
-func setup(system: Object) -> void:
+## Injected once by main.gd after the rig spawns. `ar` is the shared XrealAR node whose
+## mesh_block_changed / mesh_block_removed signals drive the overlay.
+func setup(system: Object, ar: Object = null) -> void:
 	_system = system
+	_ar = ar
+	if _ar:
+		_ar.connect(&"mesh_block_changed", _on_mesh_changed)
+		_ar.connect(&"mesh_block_removed", _on_mesh_removed)
 
 ## Toggle meshing. Returns the resulting state (false if unsupported — non-Air-2-Ultra — so the
 ## phone-menu toggle can flip itself back off).
@@ -30,13 +40,19 @@ func set_enabled(on: bool) -> bool:
 	else:
 		_enabled = false
 		visible = false  # keep meshing running; just hide the overlay
+	if _ar:
+		_ar.set(&"mesh", _enabled)  # only let XrealAR poll the mesh stream while we're on
 	return _enabled
 
-func _process(_delta: float) -> void:
-	if not _enabled or not _system:
-		return
-	for b in _system.poll_mesh_blocks():
+## XrealAR signal: a block was added/updated.
+func _on_mesh_changed(b: Dictionary) -> void:
+	if _enabled:
 		_update_block(b)
+
+## XrealAR signal: a block was removed.
+func _on_mesh_removed(id: String) -> void:
+	if _enabled:
+		_remove_block(id)
 
 func _update_block(b: Dictionary) -> void:
 	var id: String = b.get("id", "")

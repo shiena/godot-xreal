@@ -19,6 +19,7 @@ const HANDS := ["/user/hand_tracker/right", "/user/hand_tracker/left"]
 const SAVE_FILE := "user://anchors.json"
 
 var _system: Object                 # XrealSystem, injected by main.gd via setup()
+var _ar: Object                     # XrealAR node (per-frame poller → signals), injected via setup()
 var _initialized := false           # one-time subsystem enable + mapping dir + reload done
 var _enabled := false               # demo active (placement + polling + markers shown)
 var _markers := {}                  # anchor id(String) -> MeshInstance3D
@@ -28,9 +29,15 @@ var _pending := {}                  # anchor id(String) -> true (placed, not yet
 var _pinching := {}                 # tracker name -> bool (hysteresis latch)
 var _retry_frames := 0              # throttles the save-retry loop
 
-## Injected once by main.gd after the rig spawns.
-func setup(system: Object) -> void:
+## Injected once by main.gd after the rig spawns. `ar` is the shared XrealAR node whose
+## anchor_added / anchor_updated / anchor_removed signals keep the markers in sync.
+func setup(system: Object, ar: Object = null) -> void:
 	_system = system
+	_ar = ar
+	if _ar:
+		_ar.connect(&"anchor_added", _on_anchor_changed)
+		_ar.connect(&"anchor_updated", _on_anchor_changed)
+		_ar.connect(&"anchor_removed", _on_anchor_removed)
 
 ## Toggle anchor mode. Returns the resulting state (false if the anchor ABI is unavailable, so the
 ## phone-menu toggle can flip itself back off). OFF keeps the SDK subsystem enabled (so anchors stay
@@ -49,6 +56,8 @@ func set_enabled(on: bool) -> bool:
 	else:
 		_enabled = false
 		visible = false  # hide markers but keep them + the subsystem alive
+	if _ar:
+		_ar.set(&"anchors", _enabled)  # only let XrealAR poll the anchor stream while we're on
 	return _enabled
 
 ## Phone-menu "配置" button → place at whichever hand is currently tracked (index fingertip).
@@ -66,7 +75,6 @@ func _process(_delta: float) -> void:
 	if not _enabled or not _system:
 		return
 	_check_pinch()
-	_poll_and_visualize()
 	# Spatial anchors can only be persisted once the SLAM map around them is good enough, so keep
 	# retrying save for placed-but-unsaved anchors (~every 0.5 s) until quality reaches SUFFICIENT.
 	_retry_frames += 1
@@ -131,14 +139,14 @@ func _try_save(id: String) -> void:
 		_update_marker_tint(id)  # flip to "saved" green
 		print("[anchor] saved %s -> %s" % [id, guid])
 
-## Poll the SDK's anchor changes and keep the markers in sync (the source of truth for tracked pose).
-func _poll_and_visualize() -> void:
-	var ch: Dictionary = _system.poll_anchors()
-	for a in ch.get("added", []):
+## XrealAR signal: an anchor was added / its tracked pose updated (the source of truth for pose).
+func _on_anchor_changed(a: Dictionary) -> void:
+	if _enabled:
 		_update_marker(a)
-	for a in ch.get("updated", []):
-		_update_marker(a)
-	for id in ch.get("removed", []):
+
+## XrealAR signal: an anchor was removed from the tracking set.
+func _on_anchor_removed(id: String) -> void:
+	if _enabled:
 		_remove_marker(id)
 
 func _update_marker(a: Dictionary) -> void:

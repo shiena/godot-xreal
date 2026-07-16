@@ -50,8 +50,6 @@ var _cam_failed := false
 # Plane detection on/off, driven by the phone-menu "平面検出" toggle. Needs a live 6DoF session
 # (Air 2 Ultra); independent of the camera toggle. See docs/plans/ar-features-plan.md.
 var _plane_enabled := false
-# Running count of tracked planes (added − removed), logged for on-device verification.
-var _plane_total := 0
 # One-shot AR-feature availability diagnostic: logs which native AR ABIs resolved on this device,
 # a short delay after boot (so the session has come up). See docs/plans/ar-features-plan.md.
 var _ar_diag_frames := 0
@@ -67,6 +65,11 @@ var _stream_manager: Node
 var _capture_manager: Node
 # Frame-blend (mixed-reality) manager (demo/blend_manager.gd), driven by the phone-menu "合成撮影" button.
 var _blend_manager: Node
+# Shared AR event source (XrealAR node): polls the plane/anchor/image/mesh change streams each frame
+# and re-emits them as signals. The plane visualization here + the anchor/image/mesh managers connect
+# to it instead of calling XrealSystem.poll_* themselves (so each stream is polled exactly once). Its
+# per-stream switches are gated on the matching phone-menu toggle.
+var _xreal_ar: Object
 # Detected-plane visualization: a thin, semi-transparent box overlaid on each plane's bounds,
 # keyed by plane id. World-locked (children of Main, like the hand joints) so they sit on the real
 # surface as the head moves. On the see-through display the translucent fill reads as a tint.
@@ -167,27 +170,40 @@ func _spawn_rig() -> void:
 		hand_vis.name = "HandVisualizer"
 		hand_vis.set_script(load("res://demo/hand_visualizer.gd"))
 		add_child(hand_vis)
+		# Shared AR event source: one XrealAR node that polls the plane/anchor/image/mesh change streams
+		# each frame and re-emits them as signals. Created in code (not the .tscn) so the demo scene still
+		# loads without the GDExtension. Its per-stream switches start off — each toggle turns its stream on
+		# so exactly one poll happens per enabled stream.
+		if ClassDB.class_exists(&"XrealAR"):
+			_xreal_ar = ClassDB.instantiate(&"XrealAR")
+			_xreal_ar.name = "XrealAR"
+			for stream in ["planes", "anchors", "images", "mesh"]:
+				_xreal_ar.set(stream, false)
+			add_child(_xreal_ar)
+			_xreal_ar.connect(&"plane_added", _on_plane_changed)
+			_xreal_ar.connect(&"plane_updated", _on_plane_changed)
+			_xreal_ar.connect(&"plane_removed", _on_plane_removed)
 		# Spatial-anchor manager (also world-locked under Main). Drives placement (pinch / 配置 button),
-		# poll_anchors visualization, and save/restore — enabled from the phone-menu アンカー toggle.
+		# anchor-change visualization (via XrealAR signals), and save/restore — from the アンカー toggle.
 		_anchor_manager = Node3D.new()
 		_anchor_manager.name = "AnchorManager"
 		_anchor_manager.set_script(load("res://demo/anchor_manager.gd"))
 		add_child(_anchor_manager)
-		_anchor_manager.setup(_system)
+		_anchor_manager.setup(_system, _xreal_ar)
 		# Image-tracking manager (also world-locked under Main). Loads the reference-image DB + overlays
 		# a quad on each tracked image — enabled from the phone-menu 画像 toggle.
 		_image_manager = Node3D.new()
 		_image_manager.name = "ImageManager"
 		_image_manager.set_script(load("res://demo/image_manager.gd"))
 		add_child(_image_manager)
-		_image_manager.setup(_system)
+		_image_manager.setup(_system, _xreal_ar)
 		# Depth-mesh manager (also world-locked under Main). Enables meshing + overlays an ArrayMesh per
 		# scanned block — enabled from the phone-menu メッシュ toggle.
 		_mesh_manager = Node3D.new()
 		_mesh_manager.name = "MeshManager"
 		_mesh_manager.set_script(load("res://demo/mesh_manager.gd"))
 		add_child(_mesh_manager)
-		_mesh_manager.setup(_system)
+		_mesh_manager.setup(_system, _xreal_ar)
 		# FPV streaming manager (renders a head-locked view into a SubViewport + feeds the HW encoder).
 		_stream_manager = Node.new()
 		_stream_manager.name = "StreamManager"
@@ -371,6 +387,8 @@ func _on_tc_plane(on: bool) -> void:
 		if _system.has_method(&"set_plane_detection_mode"):
 			_system.set_plane_detection_mode(XREAL_PLANE_NONE)
 		_clear_plane_boxes()
+	if _xreal_ar:
+		_xreal_ar.set(&"planes", _plane_enabled)  # only let XrealAR poll the plane stream while on
 
 ## Phone-menu "アンカー" toggle → enable/disable spatial-anchor mode (demo/anchor_manager.gd).
 ## Pinch or the "配置" button then drop an anchor at the hand fingertip. Unavailable without the
@@ -442,6 +460,24 @@ func _on_tc_blend() -> void:
 	if _blend_manager:
 		_blend_manager.capture_blended()
 
+## XrealAR signal (plane_added / plane_updated): overlay/refresh the plane's box. Logs the running
+## live-plane count (derived from _plane_boxes) on first sight of a plane, for on-device verification.
+func _on_plane_changed(plane: Dictionary) -> void:
+	if not _plane_enabled:
+		return
+	var id: String = plane.get("id", "")
+	var is_new := not _plane_boxes.has(id)
+	_update_plane_box(plane)
+	if is_new:
+		print("[demo] plane added %s (total %d)" % [id, _plane_boxes.size()])
+
+## XrealAR signal (plane_removed): drop the plane's box.
+func _on_plane_removed(id: String) -> void:
+	if not _plane_enabled:
+		return
+	_remove_plane_box(id)
+	print("[demo] plane removed %s (total %d)" % [id, _plane_boxes.size()])
+
 ## Create/update the translucent box overlaying one plane's bounds. The plane's `size` is its full
 ## width/height in the plane-local X/Z; `center` offsets the bounds from the pose in that same local
 ## frame. Coordinate convention (local X/Z, Y-up normal) is AR-Foundation-standard but unverified on
@@ -474,7 +510,6 @@ func _clear_plane_boxes() -> void:
 	for id in _plane_boxes:
 		(_plane_boxes[id] as MeshInstance3D).queue_free()
 	_plane_boxes.clear()
-	_plane_total = 0
 
 ## Lazily build the world-locked container (child of Main, so the boxes stay on the real surface as
 ## the head moves — same reason the hand joints parent under Main) and the shared translucent material.
@@ -550,23 +585,8 @@ func _process(_delta: float) -> void:
 			# phone-menu camera toggle back to off so its state matches reality.
 			_camera_enabled = false
 			_set_controller_toggle("camera", false)
-	# Drive plane detection while its toggle is on: poll the change queue every frame (the SDK only
-	# produces new changes when polled), overlay a translucent box on each plane's bounds, and log
-	# the running plane count for on-device verification.
-	if _plane_enabled and _system and _system.has_method(&"poll_planes"):
-		var changes: Dictionary = _system.poll_planes()
-		var added: Array = changes.get("added", [])
-		var updated: Array = changes.get("updated", [])
-		var removed: Array = changes.get("removed", [])
-		for plane in added:
-			_update_plane_box(plane)
-		for plane in updated:
-			_update_plane_box(plane)
-		for id in removed:
-			_remove_plane_box(id)
-		if added.size() > 0 or removed.size() > 0:
-			_plane_total += added.size() - removed.size()
-			print("[demo] planes: +%d ~%d -%d (total %d)" % [added.size(), updated.size(), removed.size(), _plane_total])
+	# Plane detection is now driven by the shared XrealAR node's plane_added/updated/removed signals
+	# (see _on_plane_changed / _on_plane_removed) — no per-frame poll here.
 	# Phase C path B: phone IMU (via NRController state) drives the 3D pointer. Godot's own IMU returns
 	# all-zero on this host, so we read accel (gravity → pitch/roll) + gyro (yaw) from the controller.
 	if _phone_pointer_enabled and _tracker and _tracker.has_method(&"is_tracking") and _tracker.is_tracking() and _system:
