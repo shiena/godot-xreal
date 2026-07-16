@@ -481,7 +481,9 @@ func _process(_delta: float) -> void:
 			var cam: bool = _system.is_camera_supported() if _system.has_method(&"is_camera_supported") else false
 			var plane: bool = _system.is_plane_detection_available() if _system.has_method(&"is_plane_detection_available") else false
 			var anchor: bool = _system.is_anchor_available() if _system.has_method(&"is_anchor_available") else false
-			print("[demo] AR features: camera=%s plane=%s anchor=%s" % [cam, plane, anchor])
+			var image: bool = _system.is_image_tracking_available() if _system.has_method(&"is_image_tracking_available") else false
+			var mesh: bool = _system.is_meshing_supported() if _system.has_method(&"is_meshing_supported") else false
+			print("[demo] AR features: camera=%s plane=%s anchor=%s image=%s mesh=%s" % [cam, plane, anchor, image, mesh])
 	# Lazily set up the camera ONLY once head tracking is live — starting the capture before the
 	# glasses/tracking are up races (and in 6DoF would fight the SLAM camera). See _setup_camera_feed.
 	if _camera_enabled and not _cam_failed and _cam_feed == null and _tracker and _tracker.has_method(&"is_tracking") \
