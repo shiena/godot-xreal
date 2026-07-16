@@ -88,9 +88,15 @@ func _check_pinch() -> void:
 		var was: bool = _pinching.get(tname, false)
 		if not was and d < PINCH_ON:
 			_pinching[tname] = true
+			_vibrate(20)  # same short haptic as the 配置 button (touch_controller._vibrate)
 			_place_anchor(index_t)
 		elif was and d > PINCH_OFF:
 			_pinching[tname] = false
+
+## Short phone-vibration haptic (matches the on-screen buttons). No-op off Android.
+func _vibrate(ms: int) -> void:
+	if OS.has_feature("android"):
+		Input.vibrate_handheld(ms)
 
 ## Create an anchor at a world `Transform3D` and show it. Persistence (save_anchor) is retried later
 ## from _retry_saves once the map quality is good enough — saving right away usually fails INSUFFICIENT.
