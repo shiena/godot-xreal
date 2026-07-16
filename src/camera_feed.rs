@@ -125,7 +125,7 @@ impl XrealCameraFeed {
                 n += 1;
                 i += step;
             }
-            let mean = if n > 0 { sum / n } else { 0 };
+            let mean = sum.checked_div(n).unwrap_or(0);
             godot_print!(
                 "[xreal] camera frame #{} y={yw}x{yh} cbcr={cw}x{ch} mean_luma={mean}",
                 self.frames
