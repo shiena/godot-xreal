@@ -77,10 +77,12 @@ func _ready() -> void:
 		var tracking_type := int(ProjectSettings.get_setting("xreal/tracking_type", -1))
 		if tracking_type >= 0 and _system.has_method(&"set_tracking_type"):
 			_system.set_tracking_type(tracking_type)
-		# The RGB camera shares the tracking camera with 6DoF SLAM, so enabling the camera in 6DoF
-		# breaks head tracking (NRSDK "GetPoseWithStates failed" -> identity pose). When the camera is
-		# on, force 3DoF (IMU-only orientation; the DISP pose still carries full pitch/yaw/roll).
-		_camera_enabled = bool(ProjectSettings.get_setting("xreal/enable_camera", true))
+		# Camera and plane detection both default OFF — enable them explicitly from the phone-menu
+		# toggles at runtime (_on_tc_camera / _on_tc_plane). The RGB camera shares the tracking camera
+		# with 6DoF SLAM, so enabling it in 6DoF breaks head tracking (NRSDK "GetPoseWithStates failed"
+		# -> identity pose); when the camera is on we force 3DoF (the DISP pose still carries full
+		# pitch/yaw/roll). Override the default with the `xreal/enable_camera` project setting.
+		_camera_enabled = bool(ProjectSettings.get_setting("xreal/enable_camera", false))
 		if _camera_enabled and _system.has_method(&"set_tracking_type"):
 			_system.set_tracking_type(1)  # 3DoF, so the RGB camera and head tracking can coexist
 	else:
@@ -253,6 +255,7 @@ func _on_tc_menu() -> void:
 ## the tracking camera with 6DoF SLAM, so turning it on forces 3DoF (the camera and head tracking
 ## can then coexist — same rule as the boot path). Independent of the plane toggle.
 func _on_tc_camera(on: bool) -> void:
+	print("[demo] camera toggle -> %s" % ("on" if on else "off"))
 	if on:
 		_cam_failed = false
 		_camera_enabled = true
@@ -273,6 +276,7 @@ func _on_tc_camera(on: bool) -> void:
 ## session (Air 2 Ultra), so turning it on switches tracking to 6DoF. Unavailable on devices
 ## without the plane C ABI (e.g. One Pro): the toggle flips itself back off.
 func _on_tc_plane(on: bool) -> void:
+	print("[demo] plane toggle -> %s" % ("on" if on else "off"))
 	if not _system:
 		_set_controller_toggle("plane", false)
 		return
