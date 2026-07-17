@@ -95,6 +95,9 @@ func update_imu(accel: Vector3, gyro: Vector3, dt: float, head_transform: Transf
 	# Origin at a "hand" offset from the head (not the eye/camera).
 	var origin := head_transform.origin + head_transform.basis * hand_offset
 	global_transform = Transform3D(aim_basis, origin)
+	# The origin now sits at the hand offset (not the default head position), so it's safe to show
+	# the beam. Kept hidden until here (main.gd doesn't reveal it) so it never blocks the view.
+	visible = true
 
 	_raycast.force_raycast_update()
 	_update_hover()

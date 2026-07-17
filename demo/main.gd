@@ -537,7 +537,9 @@ func _set_controller_toggle(name: String, on: bool) -> void:
 ## hidden until the NRController has started so no beam shows before it can be driven).
 func _setup_phone_pointer() -> void:
 	_phone_pointer = _ar.phone_pointer
-	_phone_pointer.visible = true
+	# Leave it hidden here. phone_pointer.gd reveals the beam on its first aimed frame (once recenter
+	# has run and the origin sits at the hand offset), so the beam never shows at the default head
+	# position and blocks the view before it can be aimed.
 
 func _on_recenter_pressed() -> void:
 	if _tracker and _tracker.has_method(&"recenter"):
