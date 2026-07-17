@@ -138,16 +138,8 @@ jobs:
       - name: Install clang + lld
         run: sudo apt-get update && sudo apt-get install -y clang lld
 
-      - name: Verify dummy placeholder class list
-        run: |
-          # The committed dummy/stub_classes.inc must match the Node-derived
-          # #[class(base = ...)] declarations in src/ — regenerate with
-          # scripts/gen_stub_classes.ps1 and commit when this fails. Must run before
-          # build_dummy_libs.sh, which regenerates the file (masking any drift).
-          pwsh ./scripts/gen_stub_classes.ps1 -Check
-
       - name: Build desktop dummy stubs
-        run: ./scripts/build_dummy_libs.sh
+        run: ./scripts/build_dummy_libs.sh  # regenerates dummy/stub_classes.inc first
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v7

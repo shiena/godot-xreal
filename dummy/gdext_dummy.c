@@ -55,9 +55,10 @@ typedef struct {
 } StubClass;
 
 /* The Node-derived classes of the real extension. The array is generated from the
- * `#[class(base = ...)]` declarations in the .rs sources under src/ by scripts/gen_stub_classes.ps1
- * (run by build_dummy_libs.ps1/.sh; CI verifies the committed file with -Check),
- * so the Rust source stays the single source of truth. */
+ * `#[class(base = ...)]` declarations in the .rs sources under src/ by
+ * scripts/gen_stub_classes.ps1 (Windows) / .sh (mac/Linux) — run by the matching
+ * build_dummy_libs script; the release workflow commits the regenerated list per
+ * release — so the Rust source stays the single source of truth. */
 #include "stub_classes.inc"
 enum { STUB_CLASS_COUNT = sizeof(stub_classes) / sizeof(stub_classes[0]) };
 

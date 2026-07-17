@@ -124,9 +124,13 @@ jobs:
 
       - name: Build dummy stubs
         run: |
+          # build_dummy_libs.sh first regenerates dummy/stub_classes.inc from the Rust
+          # source (scripts/gen_stub_classes.sh), then builds — so the stubs always ship
+          # the current Node-derived class list. The regenerated .inc rides along in the
+          # artifact so the release job commits exactly what was built.
           ./scripts/build_dummy_libs.sh
           mkdir -p out
-          cp dummy/*.dll dummy/*.so dummy/*.dylib out/
+          cp dummy/*.dll dummy/*.so dummy/*.dylib dummy/stub_classes.inc out/
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7
@@ -152,21 +156,24 @@ jobs:
         with:
           path: artifacts
 
-      - name: Commit and push version bump + tag
+      - name: Commit and push version bump + dummy sync + tag
         run: |
+          # Only reached when every build job succeeded. Commit the version bump together
+          # with the regenerated dummy class list (the exact file the dummy stubs in this
+          # release were built from), tag it, and push both with the branch.
           cp artifacts/version-commit/Cargo.toml Cargo.toml
           cp artifacts/version-commit/addons/godot_xreal/plugin.cfg addons/godot_xreal/plugin.cfg
+          cp artifacts/dummy-stubs/stub_classes.inc dummy/stub_classes.inc
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add addons/godot_xreal/plugin.cfg Cargo.toml
+          git add addons/godot_xreal/plugin.cfg Cargo.toml dummy/stub_classes.inc
           if git diff --cached --quiet; then
-            echo "No version changes needed (already set)"
+            echo "No version/dummy changes needed (already set)"
           else
             git commit -m "chore(release): ${{ needs.prepare.outputs.version }}"
-            git push origin main
           fi
           git tag ${{ needs.prepare.outputs.version }}
-          git push origin ${{ needs.prepare.outputs.version }}
+          git push --tags origin main
 
       - name: Assemble release package
         run: |
@@ -178,7 +185,8 @@ jobs:
           cp LICENSE-MIT LICENSE-APACHE "${NAME}/"
           cp -r addons/godot_xreal "${NAME}/addons/"   # aar / tools are gitignored -> not in the checkout
           cp artifacts/android-lib/libgodot_xreal.so "${NAME}/target/aarch64-linux-android/release/"
-          cp artifacts/dummy-stubs/* "${NAME}/dummy/"
+          # Binaries only — stub_classes.inc in this artifact exists for the commit step.
+          cp artifacts/dummy-stubs/*.dll artifacts/dummy-stubs/*.so artifacts/dummy-stubs/*.dylib "${NAME}/dummy/"
           cat > "${NAME}/INSTALL.md" <<'EOF'
           # Godot XREAL — prebuilt addon
 

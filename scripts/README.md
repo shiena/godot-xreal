@@ -24,9 +24,15 @@ archive itself (auto-extracted to a temp dir). The build scripts wrap it as `-Ex
 > and copies the same `.so`/`.aar`/tool into place. See `docs/guides/android-setup.md` §3.
 
 `build_dummy_libs.ps1` / `build_dummy_libs.sh` builds the desktop stub libraries into `dummy/`
-(do-nothing GDExtension entry points so a desktop editor doesn't error on this Android-only
-extension). Not committed — run once after cloning. Cross-compiles all six desktop targets from
-any host with just clang + lld; rerun only if `dummy/gdext_dummy.c` or the `entry_symbol` changes.
+(GDExtension stubs that register empty Node-derived placeholder classes so a desktop editor
+neither errors on this Android-only extension nor warns on scenes placing those classes). Not
+committed — run once after cloning. Cross-compiles all six desktop targets from any host with
+just clang + lld; rerun only if the dummy sources or the `entry_symbol` change.
+
+`gen_stub_classes.ps1` / `gen_stub_classes.sh` regenerates `dummy/stub_classes.inc` — the
+placeholder class list — from the `#[class(base = ...)]` declarations in `src/` (run
+automatically by the matching `build_dummy_libs` script; `-Check` / `--check` verifies the
+committed file). Keep the two scripts' output byte-identical when editing either.
 
 ## Prerequisites (assumed installed and on PATH)
 

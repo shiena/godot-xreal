@@ -17,12 +17,7 @@ root="$(cd "$(dirname "$0")/.." && pwd)"
 src="$root/dummy/gdext_dummy.c"
 
 # Regenerate the placeholder class list from the Rust source (single source of truth).
-# Without pwsh the committed dummy/stub_classes.inc is used as-is — CI keeps it in sync.
-if command -v pwsh >/dev/null 2>&1; then
-	pwsh "$root/scripts/gen_stub_classes.ps1"
-else
-	echo "note: pwsh not found — using the committed dummy/stub_classes.inc" >&2
-fi
+bash "$root/scripts/gen_stub_classes.sh"
 
 build() { # triple out extra-flags…
 	local triple="$1" out="$2"
