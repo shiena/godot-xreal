@@ -1,8 +1,9 @@
 #!/usr/bin/env pwsh
 # Cross-compile the desktop dummy GDExtension stubs (dummy/gdext_dummy.c) for every
 # desktop platform the Godot editor runs on. The stubs stop the editor's "No GDExtension
-# library found for current OS and architecture" error on this Android-only extension;
-# they accept initialization and register nothing (see the comment in gdext_dummy.c).
+# library found for current OS and architecture" error on this Android-only extension and
+# register empty placeholders for the Node-derived classes so scenes that place them open
+# warning-free (see the comment in gdext_dummy.c).
 #
 # The source is freestanding (no libc, no SDKs), so a single clang + lld cross-compiles
 # all six targets from any host. The binaries are tiny and NOT committed — run this once
