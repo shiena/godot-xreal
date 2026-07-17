@@ -36,8 +36,8 @@ XREAL Air 2 Ultra）で実機確認。以下はすべてコミュニティによ
 |---|---|---|
 | **ヘッドトラッキング**（姿勢: ピッチ / ヨー / ロール） | ✅ | XR-plugin の表示ポーズ由来。アイカメラを駆動。 |
 | **トラッキングモード** 6DoF / 3DoF / 0DoF | ✅ | 選択可（`xreal/tracking_type` / `XrealSystem.set_tracking_type` / `debug.xreal.tracking_type`）。 |
-| **ステレオ表示** — ヘッドロックの覗き窓 | ✅ | グラス越しにワールド固定 3D。**Multipass**（両眼）。唯一のステレオモード（セレクタなし）。 |
-| **Multiview** ステレオ | ❌ 棚上げ | 右目が黒 — NR コンポジタ（`libnr_api`）が我々の client `GL_TEXTURE_2D_ARRAY` を取り込めず、かつ本リグ（2 SubViewport 描画）では性能利得も無い。コードは残すが無効化、開発者用エスケープ `setprop debug.xreal.force_multiview 1` のみ。詳細 `docs/archive/codex-righteye-analysis.md`。 |
+| **ステレオ表示** — ヘッドロックの覗き窓 | ✅ | グラス越しにワールド固定 3D。**Multipass**（両眼）が既定。 |
+| **Multiview** ステレオ（single-pass-instanced） | ✅ 動作するが**性能向上なし** | 両眼を正しく描画（有効化: `setprop debug.xreal.stereo_mode 2`）。**⚠️ 処理負荷は軽減されません** — むしろ Multipass より僅かに重い。本リグは Godot の SubViewport を左右2つ描画（2パス）した結果を配列レイヤーへコピーしており、single-pass-instanced の利得は**エンジンが両眼を1パスのマルチビューで描く**場合のみ得られます（Godot の Compatibility + SubViewport リグはそれをしない）。よって**既定は Multipass のまま**。（右目黒・色ばけは配列レイヤーコピー時の Adreno GLES ドライバの2つの癖 — `glBlitFramebuffer` の layer>0 no-op と生 `glCopyImageSubData` のフォーマット不一致 — で、いずれも修正済み。旧「NR コンポジタが layer 1 を取り込めない」説は誤りだった。）詳細 [`docs/archive/multiview-investigation.md`](docs/archive/multiview-investigation.md)。 |
 | **Recenter** | ✅ | 正面方向をリセット（SDK `NativePerception::Recenter`）。 |
 | **ハンドトラッキング**（両手26関節）→ Godot `XRHandTracker` | ✅（Air 2 Ultra） | 手の関節を2つの `XRServer` ハンドトラッカ（`/user/hand_tracker/{left,right}`）へライブ供給。デモは world-lock した関節球を描画。**Air 2 Ultra 専用** — One Pro は外向きカメラが無く `IsHandTrackingSupported()==false`。有効化は内部 `SetHandTrackingEnabled`+`input_source=3`。詳細 [`docs/plans/hand-tracking-plan.md`](docs/plans/hand-tracking-plan.md)。 |
 | **RGB カメラ**（Godot `CameraFeed`） | ✅ | フルカラーで 3D シーン内のヘッドロックのクアッドに表示。**3DoF 必須**（6DoF SLAM とカメラを共有するため）。 |

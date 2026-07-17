@@ -39,7 +39,13 @@ type FnClearColor = unsafe extern "C" fn(f32, f32, f32, f32);
 type FnClear = unsafe extern "C" fn(u32);
 type FnTexImage3D =
     unsafe extern "C" fn(u32, i32, i32, i32, i32, i32, i32, u32, u32, *const c_void);
+// glTexStorage3D(target, levels, internalformat, width, height, depth) — immutable-storage allocation.
+type FnTexStorage3D = unsafe extern "C" fn(u32, i32, u32, i32, i32, i32);
 type FnFramebufferTextureLayer = unsafe extern "C" fn(u32, u32, u32, i32, i32);
+// glCopyImageSubData(srcName, srcTarget, srcLevel, srcX,srcY,srcZ, dstName, dstTarget, dstLevel,
+// dstX,dstY,dstZ, srcW,srcH,srcD) — GLES 3.2 direct texel copy (writes any array layer, no FBO/blit).
+type FnCopyImageSubData =
+    unsafe extern "C" fn(u32, u32, i32, i32, i32, i32, u32, u32, i32, i32, i32, i32, i32, i32, i32);
 type FnGetIntegerv = unsafe extern "C" fn(u32, *mut i32);
 type FnIsEnabled = unsafe extern "C" fn(u32) -> u8;
 type FnEnable = unsafe extern "C" fn(u32);
@@ -56,6 +62,8 @@ const GL_TEXTURE_WRAP_S: u32 = 0x2802;
 const GL_TEXTURE_WRAP_T: u32 = 0x2803;
 const GL_LINEAR: i32 = 0x2601;
 const GL_CLAMP_TO_EDGE: i32 = 0x812F;
+const GL_TEXTURE_BASE_LEVEL: u32 = 0x813C;
+const GL_TEXTURE_MAX_LEVEL: u32 = 0x813D;
 const GL_READ_FRAMEBUFFER: u32 = 0x8CA8;
 const GL_DRAW_FRAMEBUFFER: u32 = 0x8CA9;
 const GL_COLOR_ATTACHMENT0: u32 = 0x8CE0;
@@ -80,6 +88,14 @@ struct Gl {
     clear_color: FnClearColor,
     clear: FnClear,
     tex_image_3d: FnTexImage3D,
+    /// Immutable-storage 3D/array allocation. Optional: absent on GL implementations without it, in
+    /// which case [`alloc_texture_array`] falls back to mutable `glTexImage3D` (mirrors Unity's
+    /// `ApiGLES::CreateTexture` caps-gated branch).
+    tex_storage_3d: Option<FnTexStorage3D>,
+    /// GLES 3.2 `glCopyImageSubData`. Optional: absent pre-3.2. Used to write a `GL_TEXTURE_2D_ARRAY`
+    /// layer directly, because `glBlitFramebuffer` into a layer > 0 attachment is a silent no-op on
+    /// the Adreno GLES driver (the cause of the black Multiview right eye).
+    copy_image_sub_data: Option<FnCopyImageSubData>,
     framebuffer_texture_layer: FnFramebufferTextureLayer,
     get_integerv: FnGetIntegerv,
     is_enabled: FnIsEnabled,
@@ -116,6 +132,17 @@ impl Gl {
                 clear_color: sym!("glClearColor", FnClearColor),
                 clear: sym!("glClear", FnClear),
                 tex_image_3d: sym!("glTexImage3D", FnTexImage3D),
+                // Optional (GLES 3.0 core, but load non-fatally so a missing symbol degrades to the
+                // mutable `glTexImage3D` fallback rather than disabling the whole display path).
+                tex_storage_3d: lib
+                    .get::<FnTexStorage3D>(b"glTexStorage3D\0")
+                    .map(|s| *s)
+                    .ok(),
+                // Optional (GLES 3.2). Non-fatal so pre-3.2 devices fall back to the blit path.
+                copy_image_sub_data: lib
+                    .get::<FnCopyImageSubData>(b"glCopyImageSubData\0")
+                    .map(|s| *s)
+                    .ok(),
                 framebuffer_texture_layer: sym!(
                     "glFramebufferTextureLayer",
                     FnFramebufferTextureLayer
@@ -160,8 +187,14 @@ unsafe fn scratch_fbo(g: &Gl, slot: usize) -> u32 {
 
 /// Allocate a 2D RGBA8 texture of the given size and return its GL name (`None` on failure).
 ///
-/// `_srgb` is accepted for the future when the exact color-space flag is verified on device; for
-/// now every texture is `GL_RGBA8` (what the earlier direct-path probe used successfully).
+/// `_srgb` is intentionally ignored: `GL_RGBA8` (UNORM) is the **correct** eye-texture format for this
+/// port, confirmed on device 2026-07-17. Godot's `gl_compatibility` renderer outputs display-ready,
+/// sRGB-encoded bytes, and the XREAL compositor passthrough-samples the eye texture and writes the
+/// sampled value to the display without re-encoding. An A/B test allocating the eye texture as
+/// `GL_SRGB8_ALPHA8` (same bytes, sRGB-typed) came out ~26% too dark — the compositor applies a
+/// sample-time sRGB→linear decode — proving UNORM `GL_RGBA8` is right here. (Unity's port uses an
+/// sRGB-typed target because it renders in *linear* space; our display-ready bytes must not be
+/// decoded.) See `docs/archive/multiview-investigation.md` (2026-07-17 color-space test).
 pub fn alloc_texture(width: i32, height: i32, _srgb: bool) -> Option<u32> {
     let g = gl()?;
     unsafe {
@@ -200,6 +233,20 @@ pub fn alloc_texture(width: i32, height: i32, _srgb: bool) -> Option<u32> {
 /// Single-Pass-Instanced path (`CreateTexture` with `textureArrayLength == 2`). The compositor
 /// binds this as a layered multiview framebuffer; a plain 2D texture there yields
 /// `GL_INVALID_FRAMEBUFFER_OPERATION` (black). Returns the GL name (`None` on failure).
+///
+/// **Immutable storage.** The array is allocated with `glTexStorage3D` (immutable) when available,
+/// falling back to mutable `glTexImage3D` otherwise — mirroring Unity's `ApiGLES::CreateTexture`,
+/// which takes `glTexStorage3DEXT` for a `Tex2DArray` when the driver supports immutable storage
+/// (the Adreno 710 does) and only uses `glTexImage3D` as a fallback.
+///
+/// NOTE: this matching-Unity change was an *experiment* to fix Multiview's black right eye (the
+/// theory: libnr_api imports the array via per-layer 2D `glTextureView`s, which need immutable
+/// storage). It was **tested on device 2026-07-17 and did NOT fix the right eye** — immutable
+/// allocation succeeds (`immutable=true`) and layer 1 fills, but the compositor still presents black
+/// on the right (screencap right stddev=0.0). So immutable is not the blocker; the wall is inside
+/// libnr_api. The change is kept dormant (Multiview is opt-in and shelved) as a faithful Unity match.
+/// See `docs/archive/multiview-investigation.md` (2026-07-17). The mutable path is the fallback for GL
+/// implementations lacking immutable storage.
 pub fn alloc_texture_array(width: i32, height: i32, layers: i32, _srgb: bool) -> Option<u32> {
     let g = gl()?;
     unsafe {
@@ -214,33 +261,120 @@ pub fn alloc_texture_array(width: i32, height: i32, layers: i32, _srgb: bool) ->
         (g.tex_parameteri)(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         (g.tex_parameteri)(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
         (g.tex_parameteri)(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-        (g.tex_image_3d)(
-            GL_TEXTURE_2D_ARRAY,
-            0,
-            GL_RGBA8,
-            width,
-            height,
-            layers,
-            0,
-            GL_RGBA,
-            GL_UNSIGNED_BYTE,
-            std::ptr::null(),
-        );
+
+        // Prefer immutable storage (matches Unity). A single mip level; pin BASE/MAX level so the
+        // texture is mip-complete for whatever sampler state the compositor binds it with.
+        let immutable = match g.tex_storage_3d {
+            Some(tex_storage_3d) => {
+                (g.tex_parameteri)(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_BASE_LEVEL, 0);
+                (g.tex_parameteri)(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAX_LEVEL, 0);
+                tex_storage_3d(
+                    GL_TEXTURE_2D_ARRAY,
+                    1,
+                    GL_RGBA8 as u32,
+                    width,
+                    height,
+                    layers,
+                );
+                if (g.get_error)() == 0 {
+                    true
+                } else {
+                    // Immutable allocation failed (e.g. format/driver quirk): drain the error and
+                    // retry mutable on the same, still-mutable texture object.
+                    while (g.get_error)() != 0 {}
+                    false
+                }
+            }
+            None => false,
+        };
+        if !immutable {
+            (g.tex_image_3d)(
+                GL_TEXTURE_2D_ARRAY,
+                0,
+                GL_RGBA8,
+                width,
+                height,
+                layers,
+                0,
+                GL_RGBA,
+                GL_UNSIGNED_BYTE,
+                std::ptr::null(),
+            );
+        }
         (g.bind_texture)(GL_TEXTURE_2D_ARRAY, 0);
         let err = (g.get_error)();
         if err != 0 {
             godot::global::godot_warn!(
-                "[xreal] alloc_texture_array {width}x{height}x{layers} gl_err={err}"
+                "[xreal] alloc_texture_array {width}x{height}x{layers} immutable={immutable} gl_err={err}"
             );
             (g.delete_textures)(1, &tex);
             return None;
         }
+        godot::global::godot_print!(
+            "[xreal] alloc_texture_array {width}x{height}x{layers} immutable={immutable} tex={tex}"
+        );
         Some(tex)
     }
 }
 
-/// Blit 2D `src` into a single `layer` of a `GL_TEXTURE_2D_ARRAY` (`dst_array`), via
-/// `glFramebufferTextureLayer`. Used to fill the per-eye layers of the Multiview swapchain texture.
+/// A persistent RGBA8 2D scratch texture used to normalise the eye SubViewport's format before
+/// copying it into an array layer (see [`blit_texture_to_layer`]). Created lazily at eye size.
+static TEMP_LAYER_TEX: AtomicU32 = AtomicU32::new(0);
+
+/// Get (create once) the RGBA8 scratch texture at `w`×`h`. Assumes a stable eye size.
+unsafe fn temp_layer_tex(g: &Gl, w: i32, h: i32) -> Option<u32> {
+    let existing = TEMP_LAYER_TEX.load(Ordering::Relaxed);
+    if existing != 0 {
+        return Some(existing);
+    }
+    while (g.get_error)() != 0 {}
+    let mut tex: u32 = 0;
+    (g.gen_textures)(1, &mut tex);
+    if tex == 0 {
+        return None;
+    }
+    (g.bind_texture)(GL_TEXTURE_2D, tex);
+    (g.tex_parameteri)(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    (g.tex_parameteri)(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    (g.tex_parameteri)(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    (g.tex_parameteri)(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    (g.tex_image_2d)(
+        GL_TEXTURE_2D,
+        0,
+        GL_RGBA8,
+        w,
+        h,
+        0,
+        GL_RGBA,
+        GL_UNSIGNED_BYTE,
+        std::ptr::null(),
+    );
+    (g.bind_texture)(GL_TEXTURE_2D, 0);
+    if (g.get_error)() != 0 {
+        (g.delete_textures)(1, &tex);
+        return None;
+    }
+    TEMP_LAYER_TEX.store(tex, Ordering::Relaxed);
+    Some(tex)
+}
+
+/// Copy 2D `src` into a single `layer` of a `GL_TEXTURE_2D_ARRAY` (`dst_array`). Used to fill the
+/// per-eye layers of the Multiview swapchain texture.
+///
+/// Two GL quirks force a two-step path on this hardware:
+///   1. `glBlitFramebuffer` straight into a `glFramebufferTextureLayer` attachment at **layer > 0 is a
+///      silent no-op on the Adreno GLES driver** (returns a complete framebuffer, writes nothing) —
+///      the true cause of the black Multiview right eye (layer 1). `glClear` there *does* work, so the
+///      NR compositor was never the problem.
+///   2. `glCopyImageSubData` **can** write layer > 0, but it is a raw byte copy with no format
+///      conversion — copying the eye SubViewport (whose GL format is not plain `RGBA8`) directly into
+///      the `RGBA8` array scrambles the colours (Multiview looked colour-corrupted vs Multipass).
+///
+/// So: **blit the source into an `RGBA8` scratch texture first** (`glBlitFramebuffer` converts the
+/// format exactly as the Multipass eye blit does, giving matching colours), **then
+/// `glCopyImageSubData` the scratch into the array layer** (`RGBA8`→`RGBA8`, exact, and layer > 0
+/// works). Falls back to the direct FBO blit only if `glCopyImageSubData`/scratch is unavailable or
+/// the sizes differ (pre-3.2 devices).
 static LAYER_LOG: AtomicU32 = AtomicU32::new(0);
 pub fn blit_texture_to_layer(
     src: u32,
@@ -256,6 +390,44 @@ pub fn blit_texture_to_layer(
         return;
     }
     unsafe {
+        // Preferred path: format-converting blit into an RGBA8 scratch, then exact copy into the layer.
+        if let Some(copy_image_sub_data) = g.copy_image_sub_data {
+            if src_w == dst_w && src_h == dst_h {
+                if let Some(temp) = temp_layer_tex(g, dst_w, dst_h) {
+                    // Convert the source into the RGBA8 scratch (identical to the Multipass eye blit).
+                    blit_texture(src, src_w, src_h, temp, dst_w, dst_h);
+                    while (g.get_error)() != 0 {}
+                    copy_image_sub_data(
+                        temp,
+                        GL_TEXTURE_2D,
+                        0,
+                        0,
+                        0,
+                        0,
+                        dst_array,
+                        GL_TEXTURE_2D_ARRAY,
+                        0,
+                        0,
+                        0,
+                        layer,
+                        dst_w,
+                        dst_h,
+                        1,
+                    );
+                    let err = (g.get_error)();
+                    if LAYER_LOG.fetch_add(1, Ordering::Relaxed) < 8 {
+                        godot::global::godot_print!(
+                            "[xreal] copy_to_layer dst={dst_array} layer={layer} via temp={temp} {dst_w}x{dst_h}: gl_err={err}"
+                        );
+                    }
+                    if err == 0 {
+                        return;
+                    }
+                    // CopyImageSubData failed (unexpected) — fall through to the blit path below.
+                }
+            }
+        }
+
         let mut prev_draw: i32 = 0;
         let mut prev_read: i32 = 0;
         (g.get_integerv)(GL_DRAW_FRAMEBUFFER_BINDING, &mut prev_draw);

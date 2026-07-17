@@ -639,9 +639,10 @@ impl XrealSystem {
         crate::video_encoder::is_active()
     }
 
-    // NOTE: there is no stereo-mode selector — the port is Multipass-only. Multiview is shelved and
-    // no longer reachable (the force_multiview escape was removed). It renders correctly but gains
-    // nothing here and shares a cross-thread crash path; see docs/archive/multiview-investigation.md.
+    // NOTE: there is no GDScript stereo-mode selector — Multipass is the default. Multiview
+    // (single-pass-instanced) is opt-in for on-device experiments only, via
+    // `adb shell setprop debug.xreal.stereo_mode 2` (see session.rs::stereo_rendering_mode). It gains
+    // nothing on our two-SubViewport rig; see docs/archive/multiview-investigation.md.
 
     /// Select the head-tracking mode applied when the native session **bootstraps** (a startup
     /// selector): `0` = 6DoF (SLAM position + orientation, no drift — the recommended mode),

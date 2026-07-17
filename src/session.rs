@@ -71,25 +71,28 @@ fn android_prop_i32(key: &[u8]) -> Option<i32> {
     None
 }
 
-/// Stereo rendering mode for `InitUserDefinedSettings`. **The port is Multipass-only** (`0`) — the
-/// complete path (both eyes + camera + tracking). Multiview (`2`, single-pass-instanced) is **shelved
-/// and no longer reachable** (the `debug.xreal.force_multiview` escape was removed).
+/// Stereo rendering mode for `InitUserDefinedSettings`. Defaults to **Multipass** (`0`) — the complete
+/// shipping path. **Multiview** (`2`, single-pass-instanced) is a working option, enabled via
+/// `adb shell setprop debug.xreal.stereo_mode 2` (any other value → Multipass).
 ///
-/// Full investigation: `docs/archive/multiview-investigation.md`. Summary of why it's not worth it:
-/// (1) the right eye actually renders *correctly* — the earlier "gray right eye" was an alpha-channel
-/// measurement artifact, confirmed on-device; (2) our two-SubViewport rig draws both eyes every frame
-/// regardless, so single-pass-instanced buys **zero** GPU savings here; (3) the shared
-/// `SubmitCurrentFrame → UpdateMetrics` path hits a cross-thread SIGBUS (see the doc) that is not
-/// Multiview-specific. So enabling Multiview gains nothing.
+/// Multiview **now renders correctly** (both eyes, 2026-07-17). The long-standing black right eye was
+/// NOT the NR compositor (the old "libnr_api can't sample layer 1" conclusion was wrong — a solid-colour
+/// layer probe proved the compositor presents layer 1 fine). The real causes were two Adreno GLES driver
+/// quirks in how we filled the array layers, both fixed in `src/gl.rs::blit_texture_to_layer`:
+/// `glBlitFramebuffer` into a layer > 0 attachment is a silent no-op (→ black right eye), and a direct
+/// `glCopyImageSubData` from the non-RGBA8 SubViewport scrambles colours (→ colour corruption). The fix
+/// blits into an RGBA8 scratch (format-correcting) then `glCopyImageSubData`s that into the layer.
+///
+/// Default remains Multipass only because Multiview buys **zero** GPU here (our rig draws two Godot
+/// SubViewports every frame in both modes; the single-pass-instanced win needs the *engine* to draw
+/// both eyes in one pass). See `docs/archive/multiview-investigation.md`.
 fn stereo_rendering_mode() -> i32 {
-    // Multipass is the only supported/working stereo mode. Multiview's right eye is blocked inside
-    // libnr_api (it imports the client swapchain GL name as GL_TEXTURE_2D, never GL_TEXTURE_2D_ARRAY,
-    // so layer 1 samples a cleared resource) and it gives no perf benefit for our two-SubViewport rig.
-    // The 2026-07-16 re-attempt confirmed the UpdateMetrics fix lets forced Multiview run *stably*, but
-    // the right eye stays black and the stubbed Unity callbacks are not the cause. See
-    // docs/archive/multiview-investigation.md and docs/archive/codex-stub-callbacks-analysis.md.
-    // To re-exercise Multiview for future libnr_api RE, return 2 here (add a debug prop if desired).
-    0
+    // Flag branch: opt into Multiview only when the debug property is explicitly 2; everything else
+    // (unset, off-Android, any other value) stays on the default Multipass path.
+    match android_prop_i32(b"debug.xreal.stereo_mode\0") {
+        Some(2) => 2,
+        _ => 0,
+    }
 }
 
 /// Head-tracking mode for `InitUserDefinedSettings`, resolved **once at session bootstrap** from, in
@@ -263,9 +266,10 @@ impl XrealSession {
         );
         let settings = UserDefinedSettings {
             color_space: 1,
-            // Stereo mode (fixed to Multipass by stereo_rendering_mode()): 0 = Multipass (per-eye 2D
-            // textures; renders but the layer is world-anchored), 2 = Multiview / Single-Pass-Instanced
-            // (one 2-layer array texture, reference app's StereoRendering: 2) — shelved, see that fn.
+            // Stereo mode (from stereo_rendering_mode(); default Multipass, `debug.xreal.stereo_mode 2`
+            // opts into Multiview): 0 = Multipass (per-eye 2D textures), 2 = Multiview /
+            // Single-Pass-Instanced (one 2-layer immutable array texture, reference app's
+            // StereoRendering: 2). See that fn + docs/archive/multiview-investigation.md.
             stereo_rendering_mode: stereo_mode,
             tracking_type: tracking_mode,
             support_mono_mode: 0,

@@ -447,3 +447,201 @@ lost in `libnr_api.so`'s client-GL-name import (`+0xebeb84` binds `GL_TEXTURE_2D
 side without patching libnr_api internals, and it carries no perf benefit here → Multipass-only stands.**
 `src/session.rs::stereo_rendering_mode()` returns `0`; re-exercising Multiview for future libnr_api RE is
 a one-line change (return `2`).
+
+## 2026-07-17 — the reference Unity export resolves the "open tension": Unity uses IMMUTABLE array storage
+
+The "open tension" flagged in the 2026-07-16 sections above ("both apps run GLES3 and both take the
+`CreateTexture(color=0)` client-name path, so what is actually different about Unity's GL array texture?")
+is now answered. A Unity IL2CPP **Export Project** of the reference app was analysed at
+`C:\Users\shien\Documents\Kadinche\Build\layerd_debug`. Crucially this export ships a **`symbols/`
+`libunity.so` with the full symbol table + DWARF** (69,363 named functions) alongside the stripped runtime
+`libunity.so` — material we never had before (previously only the stripped runtime lib existed). Cross-
+referencing the two (disassemble the runtime `.text`, name `bl` targets from the symbols file) let us read
+Unity's engine-internal XR texture path directly.
+
+Reproduce: symbols lib `unityLibrary/symbols/arm64-v8a/libunity.so` (`.text` is `NOBITS` — names/DWARF
+only); runtime lib `unityLibrary/src/main/jniLibs/arm64-v8a/libunity.so` (real `.text`, stripped). Build an
+addr→name map with `llvm-nm --defined-only --demangle` on the symbols lib; disassemble the runtime lib with
+`llvm-objdump -d --start-address/--stop-address`; annotate branch targets from the map. Scratchpad scripts:
+`disasm.py`, `mapoff.py`.
+
+### 1. Unity's multiview eye texture is a genuine 2D-array — same object type we allocate
+
+`XRTextureManager::SetupRenderTextureFromXRRequest @0xbedcc4` converts the XR plugin's
+`UnityXRRenderTextureDesc` into a `RenderTexture`. When `desc.textureArrayLength >= 2` (field at desc+0x58):
+`SetDimension(5=Tex2DArray)`, `SetVolumeDepth(textureArrayLength)`, `SetVRUsage(2=TwoEyes)`,
+`SetAsEyeTexture(true)`. So at the engine-object level Unity builds **exactly what our port allocates** (a
+2-layer `GL_TEXTURE_2D_ARRAY`). There is no secret texture type, and — confirmed separately — **no hidden
+C# / SDK lever** (matches the earlier IL2CPP C# RE). This retires the worry that Unity was doing something
+categorically different above the GL layer.
+
+### 2. The decisive difference: Unity allocates the array with IMMUTABLE storage (`glTexStorage3D`), we use mutable `glTexImage3D`
+
+`ApiGLES::CreateTexture @0xdd12f8` reaches GL through a function-pointer table on the `ApiGLES` object
+(`ldr x8,[x19,#off]; blr x8`). Mapping the offsets via `ApiGLES::Load @0xdb3be4` (each
+`adrp+add`=proc-name string → `gles::GetProcAddress_core` → `str x0,[x19,#off]`):
+
+- `[x19+0x510]` = `glTexImage3D`      (mutable 3D/array)
+- `[x19+0x530]` = `glTexStorage3DEXT` (immutable 3D/array)
+- `[x19+0x548]` = `glCompressedTexImage3D`, `[x19+0x1a8]` = `glTexImage2D`, `[x19+0x538]` = `glTexStorage2DMultisample`, …
+
+The dispatch at `dd150c–dd1530`: for target class `w28 ∈ {3,5,6}` (mask `1<<w28 & 0x68`; 5 = 2D-array) it
+sets the `bool&` out-param to 1 (`strb #1,[x25]` = "immutable storage created") and calls
+**`glTexStorage3DEXT` (+0x530)** — gated only on the immutable-storage GraphicsCap (`[caps+0x579]`; the
+Adreno 710 supports it). `glTexImage3D` (+0x510) is the **fallback** taken only when immutable storage is
+unavailable. So Unity's eye array is an **immutable** texture.
+
+Our port (`src/gl.rs::alloc_texture_array`) unconditionally calls `glTexImage3D` → a **mutable**,
+single-level array. This is the concrete, previously-unknown engine-side delta the open tension asked for.
+
+### 3. Why immutable storage plausibly explains the black right eye (and the L/R asymmetry)
+
+The actual compositor — `libnr_api.so` (~15 MB system lib; note `+0xebeb84` ≈ 14.7 MB, far larger than the
+bundled `libnr_loader.so` 4.7 MB / `libGenie.so` 6.7 MB) — is **not in this export**, so the client-import
+code itself can't be re-read here. But: the export's `libXREALXRPlugin.so` and `libnr_loader.so` contain
+**no `glTextureView` / `glTexStorage3D` proc-name strings at all**, while `libunity.so` contains
+`glTextureView`, `glTextureViewOES/EXT`, `glTexStorage3D(EXT)`. Combined with the archive's libnr_api
+finding ("binds `GL_TEXTURE_2D`; array capability is owned-textures only"), the coherent theory is:
+
+> the compositor samples each eye as a plain `GL_TEXTURE_2D`, obtaining per-layer 2D **views** of the array
+> (`glTextureView`, which **requires immutable storage**). On the reference app the array is immutable →
+> the layer-1 view succeeds → right eye renders. On our port the array is **mutable** → `glTextureView`
+> on layer 1 fails (`GL_INVALID_OPERATION`) → right eye samples nothing → **black**, while layer 0 / the
+> base still reads → left eye works. This matches the observed L=content / R=black asymmetry exactly (a
+> whole-texture-incomplete failure would blacken *both* eyes).
+
+This is a **strong, newly-grounded hypothesis, not a device-confirmed fix** (the view call would live in
+libnr_api, absent here). But it upgrades the old "unknown Unity GL parameter" to a specific, testable one.
+
+### 4. The one cheap experiment if Multiview is ever revisited (still not worth shipping)
+
+Change `src/gl.rs::alloc_texture_array` to allocate **immutable** storage:
+`glTexStorage3D(GL_TEXTURE_2D_ARRAY, 1, GL_RGBA8, w, h, layers)` (import `glTexStorage3D` from
+`libGLESv3.so`; drop the `glTexImage3D` call; set `TEXTURE_BASE_LEVEL=0`/`MAX_LEVEL=0` for completeness),
+then A/B on device with `force_multiview 1` and the physical-display screencap (RGB-only stats, `-alpha
+remove`). If the right eye lights up, the immutable-view theory is confirmed.
+
+**Verdict unchanged.** Even if this fixes the right eye, Multiview yields **zero** GPU/CPU benefit on our
+two-SubViewport rig (both eye cameras are drawn every frame in both modes; single-pass-instanced only pays
+off when the *engine* draws both eyes in one instanced pass, which Godot's SubViewport rig does not). So
+Multipass remains the shipping path; this section only closes the intellectual loop the export opened.
+
+### 2026-07-17 on-device test — immutable storage does NOT fix the right eye (hypothesis REFUTED)
+
+The §4 experiment was run end-to-end on device (Air 2 Ultra, `debug.xreal.stereo_mode 2`, immutable
+`alloc_texture_array`). Result: **the right eye is still fully black.**
+
+- `alloc_texture_array 1968x1134x2 immutable=true` — the immutable allocation **succeeds** (`glTexStorage3D`
+  path taken, not the mutable fallback).
+- Both eye projections valid (`R: l=-0.3959 r=0.3975 …`, no longer zero), `blit_to_layer … layer=1 src=32
+  read_ok=true draw_ok=true` (layer 1 fills fine), `frame_tick #3300+` stable, no crash.
+- Physical-display screencap (`4626964537055662852`, `-alpha remove` grayscale): **left stddev=0.314,
+  right stddev=0.0 / mean=0.0** — right half is uniformly black. (Multipass on the same build: left
+  0.161 / right 0.169 — both eyes render.)
+
+So immutable storage is a real Unity/port difference but **not** the cause of the black right eye. The
+compositor (`libnr_api.so`) does not present layer 1 regardless of immutable vs mutable storage — the
+`glTextureView` theory in §3 is refuted for this SDK. The wall is genuinely inside libnr_api's
+client-GL-name import (`+0xebeb84` binds `GL_TEXTURE_2D`), unreachable from the engine side and not fixable
+via storage parameters. **Multiview stays shelved; Multipass is the shipping path.** (One startup caveat
+observed: if the app launches while the glasses are *not yet active*, the first session grabs a 0×0 eye
+resolution — `alloc_texture_array 0x0x2 immutable=false`, both eyes black — until it is relaunched with the
+display live. This is unrelated to Multiview; it's a display-readiness race in the bootstrap retry.)
+
+### 2026-07-17 color-space test — `GL_RGBA8` (UNORM) is the correct eye-texture format (confirmed on device)
+
+Follow-up to the export analysis: the Unity export showed Unity's eye textures are sRGB-typed (Unity runs
+in **Linear** color space, so its render targets are `SRGB8_ALPHA8` and the hardware does linear↔sRGB).
+Our port allocates `GL_RGBA8` (UNORM) and ignores the descriptor's sRGB flag (`flags=0x12`,
+`color_format=0`). Question: is our RGBA8 color-correct, or a latent gamma bug?
+
+A/B'd on device (Multipass, a temporary `debug.xreal.srgb_eye` probe): allocate the eye texture as
+`GL_SRGB8_ALPHA8` with the **same bytes** (the probe disabled `GL_FRAMEBUFFER_SRGB` during the blit so no
+re-encode — verified `was_enabled=false cap_unsupported=false`, i.e. a verbatim byte copy), changing only
+the texture's sRGB *type*. Result: the sRGB-typed eye came out **~26% darker** (L 0.0577→0.0429,
+R 0.0643→0.0476; ratio ≈0.74) across both eyes.
+
+Conclusion: the XREAL compositor **passthrough-samples** the eye texture (respecting its sRGB type at
+sample time via hardware sRGB→linear decode, then writing to the display without re-encoding). So:
+
+- **`GL_RGBA8` (UNORM) is correct for this port.** Godot's `gl_compatibility` renderer outputs
+  display-ready, sRGB-encoded bytes; storing them UNORM (no sample-time decode) shows them verbatim on the
+  glasses = correct brightness. This is why our shipped Multipass color looks right (camera passthrough,
+  etc.).
+- **`GL_SRGB8_ALPHA8` would be wrong for us** (compositor decodes → ~26% too dark).
+- Unity gets away with sRGB-typed targets because it renders in *linear* space (its bytes are meant to be
+  decoded); our pipeline already outputs encoded bytes, so decoding them double-handles the gamma.
+
+The `srgb_eye` probe was reverted after the test (answer is definitive: RGBA8). This closes the
+color-space question the Multiview export analysis raised.
+
+## 2026-07-17 — SOLVED: Multiview renders correctly. The root cause was never the compositor.
+
+**Multiview's black right eye is fixed and it now renders both eyes correctly on device.** Every earlier
+section that blames `libnr_api` / "the compositor can't sample layer 1" is **WRONG** — kept above only as
+a record of the wrong trail. The actual bug was on *our* side, in how we filled the array layers.
+
+### The decisive experiment: a per-layer colour probe
+
+A temporary `debug.xreal.layer_probe` painted each physical array layer a distinct solid colour via
+`glClear` (layer 0 = red, 1 = green, 2 = blue, 3 = white). On-device screencap: **left eye = red (layer 0),
+right eye = green (layer 1)**. So the compositor *does* present layer 1 to the right eye — the "libnr_api
+imports as GL_TEXTURE_2D, layer 1 unsampleable" verdict was false. (This also refuted a "right eye = layer
+2" hypothesis: it's layer 1.)
+
+A second probe blitted the known-good LEFT content into *both* layers with `glBlitFramebuffer`: left eye
+showed it, **right eye stayed black**. So `glClear` into layer 1 works but `glBlitFramebuffer` into layer 1
+does not — isolating the write op as the culprit.
+
+### Two Adreno GLES driver quirks, both in `blit_texture_to_layer`
+
+1. **`glBlitFramebuffer` into a `glFramebufferTextureLayer` attachment at layer > 0 is a silent no-op**
+   on this Adreno driver — `glCheckFramebufferStatus` returns COMPLETE, the blit reports no error, yet
+   nothing is written. Layer 0 works (left eye rendered), layer 1 silently didn't (black right eye).
+   `glClear` into the same attachment *does* work (hence the colour probe lit layer 1).
+2. **`glCopyImageSubData` can write layer > 0, but it is a raw byte copy with no format conversion.** The
+   Godot `gl_compatibility` eye SubViewport is not plain `RGBA8`, so copying it directly into the `RGBA8`
+   array scrambled the colours (Multiview looked colour-corrupted in *both* eyes vs Multipass — the tell
+   that it was a copy-path issue, not a per-eye one).
+
+### The fix (`src/gl.rs::blit_texture_to_layer`)
+
+Blit the eye SubViewport into a persistent **`RGBA8` scratch texture** first (`glBlitFramebuffer`, which
+converts the format exactly as the Multipass eye blit does → matching colours), then **`glCopyImageSubData`
+the scratch into the array layer** (`RGBA8`→`RGBA8`, exact, and layer > 0 works). Device-verified: right
+eye renders, both eyes colour-match Multipass (user-confirmed), L-vs-R parallax present.
+
+### Status
+
+Multiview is now a **working** option (`debug.xreal.stereo_mode 2`); default stays **Multipass** only
+because Multiview still buys zero GPU on the two-SubViewport rig (§3 above). The diagnostic `layer_probe`
+was removed after the fix; the `glCopyImageSubData`/scratch fix and the `stereo_mode` flag are kept. The
+immutable-storage `glTexStorage3D` allocation is retained (harmless, matches Unity) though it was not what
+fixed the right eye.
+
+### Why it works but does NOT reduce load — and how Unity actually fills the array (RE)
+
+Our Multiview is now correct but **not** faster than Multipass — in fact it's slightly heavier (the extra
+scratch blit + copy). The point of single-pass-instanced is to draw the geometry **once**; our rig never
+does that. Confirmed by RE of the reference `libunity.so` (the export):
+
+- **Unity renders both eyes directly into the array in one pass** via `GL_OVR_multiview`. `libunity.so`
+  references `glFramebufferTextureMultiviewOVR` / `glFramebufferTextureMultisampleMultiviewOVR` (attach the
+  array as a multiview render target), the shader keyword `STEREO_MULTIVIEW_ON`, `#extension
+  GL_OVR_multiview2 : require`, and `stereoTargetEyeIndex = int(maliHack[int(gl_ViewID_OVR)].x)` (the
+  vertex shader picks the eye/layer from `gl_ViewID_OVR`). The eye array texture **is** the camera's render
+  target (`SetAsEyeTexture` + `VRUsage=TwoEyes` + `Tex2DArray`). **No copy.**
+- The XREAL XR plugin only exposes `NRBufferSpecSetMultiviewLayers` / `NRBufferViewportSetMultiviewLayer`
+  (layer-count metadata); the multiview *rendering* is entirely in the engine (`libunity.so`).
+
+Our port instead draws **two** Godot SubViewports (two full geometry passes — the opposite of single-pass)
+and then copies each into a layer. So both the second pass and the copy are pure overhead vs Unity.
+
+**The only way to get the real single-pass win** is for the engine (Godot) to draw both eyes in one
+multiview instanced pass straight into the array. Godot *does* support this in its Forward+/Mobile
+renderers' native OpenXR path (it uses the same `glFramebufferTextureMultiviewOVR`), but our port uses the
+Compatibility renderer + a hand-rolled two-SubViewport rig + a hand-rolled XREAL-SDK emulation, none of
+which are multiview. Reaching parity would mean rendering the world once through Godot's native
+multiview/XR path into the array and handing that to the XREAL compositor — a substantial redesign, tracked
+as a possible future direction, not done here. Until then: **Multiview is correct but Multipass is the
+default because it is at least as cheap and simpler.**
