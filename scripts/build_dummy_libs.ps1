@@ -25,6 +25,9 @@ if (-not (Get-Command $Clang -ErrorAction SilentlyContinue)) {
 $root = Split-Path -Parent $PSScriptRoot
 $src = Join-Path $root 'dummy/gdext_dummy.c'
 
+# Regenerate the placeholder class list from the Rust source (single source of truth).
+& (Join-Path $PSScriptRoot 'gen_stub_classes.ps1')
+
 # -Wl,-noentry: no CRT means no DllMainCRTStartup; a resident DLL needs no entry point.
 $targets = @(
 	@{ triple = 'x86_64-pc-windows-msvc';    out = 'godot_xreal_dummy.windows.x86_64.dll';   extra = @('-Wl,-noentry') },

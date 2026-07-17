@@ -54,13 +54,11 @@ typedef struct {
 	GDExtensionBool registered;
 } StubClass;
 
-/* The Node-derived classes of the real extension (src/node.rs, src/hand_tracking.rs,
- * src/system.rs::XrealAR). Keep in sync when a new scene-placeable class is added. */
-static StubClass stub_classes[] = {
-	{ "XrealHeadTracker", "Node3D", 0, 0, 0 },
-	{ "XrealHandTracker", "Node", 0, 0, 0 },
-	{ "XrealAR", "Node", 0, 0, 0 },
-};
+/* The Node-derived classes of the real extension. The array is generated from the
+ * `#[class(base = ...)]` declarations in the .rs sources under src/ by scripts/gen_stub_classes.ps1
+ * (run by build_dummy_libs.ps1/.sh; CI verifies the committed file with -Check),
+ * so the Rust source stays the single source of truth. */
+#include "stub_classes.inc"
 enum { STUB_CLASS_COUNT = sizeof(stub_classes) / sizeof(stub_classes[0]) };
 
 /* The instance is stateless — the StubClass record doubles as the (never dereferenced,
