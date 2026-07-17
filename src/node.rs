@@ -136,6 +136,14 @@ impl INode3D for XrealHeadTracker {
                     // recenter is delegated to the SDK (session.recenter → NativePerception::Recenter),
                     // which shifts this pose source and the layer together.
                     self.base_mut().set_quaternion(rotation);
+                    // 6DoF position: the 4×4 pose's translation row (raw[12..15] = x,y,z), with the
+                    // same NRSDK→Godot Y-flip as the rotation. Metres, 1:1 with Godot. Position only
+                    // world-locks because the per-frame updateType-0 UpdateHMDState call keeps the
+                    // SDK's dynamic pose cache (InputManager+0x60) live — the compositor cancels the
+                    // translation otherwise (device-verified 2026-07-18; see
+                    // docs/archive/codex-6dof-crash-analysis.md).
+                    self.base_mut()
+                        .set_position(Vector3::new(raw[12], -raw[13], raw[14]));
                     let euler = rotation.get_euler() * (180.0 / std::f32::consts::PI);
                     // Calibration log: extracted Godot euler + the raw 4×4 rows. Move head in a known
                     // way — nod=pitch/X, turn=yaw/Y, tilt=roll/Z — and check each axis + sign; if one

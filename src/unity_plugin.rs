@@ -270,12 +270,75 @@ struct IUnityXrDisplayHelper {
     property_to_id: extern "C" fn(*mut c_void, *const c_char, i32) -> i32,
 }
 
+/// Vector aggregates the Unity input-state helpers receive BY VALUE (AArch64 HFAs → s0..s3).
+/// They must be real structs so the register convention matches the SDK's call sites.
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct UnityXrVector2 {
+    x: f32,
+    y: f32,
+}
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct UnityXrVector3 {
+    x: f32,
+    y: f32,
+    z: f32,
+}
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct UnityXrVector4 {
+    x: f32,
+    y: f32,
+    z: f32,
+    w: f32,
+}
+
+/// `IUnityXRInputInterface` (Unity XR SDK `IUnityXRInput.h`), full table through +0xd8.
+///
+/// RE (docs/archive/codex-6dof-crash-analysis.md): `InputManager::UpdateHMDState` unconditionally
+/// calls `DeviceState_Set{Binary,DiscreteState,Axis3D,Rotation}Value` through slots
+/// +0x90/+0x98/+0xb0/+0xb8 on BOTH updateType paths, and `FillHMDDefinition` uses
+/// +0x40/+0x48/+0x50/+0x78. With the earlier 3-slot table those `ldr [table,#slot]` loads read
+/// unrelated static data and `blr`'d into the middle of arbitrary Rust code — the delayed GLThread
+/// SIGSEGV. XREAL discards every state-helper return value, so success no-ops are sufficient; only
+/// `DeviceDefinition_AddFeature*` (returned feature index is stored in `IM+0xc8..+0xec` and passed
+/// back to the state setters) and `GetPlatformData` (out-pointer) have meaningful outputs.
+///
+/// `Bone`/`Hand`/`Eyes` are >16-byte aggregates, which AArch64 passes by hidden reference — an
+/// opaque pointer models that ABI exactly; the no-ops never read it.
 #[repr(C)]
 struct IUnityXrInput {
     register_lifecycle_provider:
-        extern "C" fn(*const c_char, *const c_char, *const UnityXrLifecycleProvider) -> i32,
-    register_input_provider: extern "C" fn(*mut c_void, *const c_void) -> i32,
-    set_device_connected: extern "C" fn(*mut c_void, i32) -> i32,
+        extern "C" fn(*const c_char, *const c_char, *const UnityXrLifecycleProvider) -> i32, // +0x00
+    register_input_provider: extern "C" fn(*mut c_void, *const c_void) -> i32, // +0x08
+    set_device_connected: extern "C" fn(*mut c_void, i32) -> i32,              // +0x10
+    device_disconnected: extern "C" fn(*mut c_void, u32) -> i32,               // +0x18
+    device_config_changed: extern "C" fn(*mut c_void, u32) -> i32,             // +0x20
+    tracking_origin_updated: extern "C" fn(*mut c_void) -> i32,                // +0x28
+    set_tracking_boundary: extern "C" fn(*mut c_void, *const UnityXrVector3, u32) -> i32, // +0x30
+    get_platform_data: extern "C" fn(*mut c_void, *mut *mut c_void) -> i32,    // +0x38
+    def_set_name: extern "C" fn(*mut c_void, *const c_char) -> i32,            // +0x40
+    def_set_characteristics: extern "C" fn(*mut c_void, u32) -> i32,           // +0x48
+    def_set_manufacturer: extern "C" fn(*mut c_void, *const c_char) -> i32,    // +0x50
+    def_set_serial_number: extern "C" fn(*mut c_void, *const c_char) -> i32,   // +0x58
+    def_set_can_query_at_time: extern "C" fn(*mut c_void, bool) -> i32,        // +0x60
+    def_add_feature: extern "C" fn(*mut c_void, *const c_char, u32) -> u32,    // +0x68
+    def_add_custom_feature: extern "C" fn(*mut c_void, *const c_char, u32, u32) -> u32, // +0x70
+    def_add_feature_with_usage:
+        extern "C" fn(*mut c_void, *const c_char, u32, *const c_char) -> u32, // +0x78
+    def_add_usage_at_index: extern "C" fn(*mut c_void, u32, *const c_char) -> i32, // +0x80
+    state_set_custom: extern "C" fn(*mut c_void, u32, *const c_void, u32) -> i32, // +0x88
+    state_set_binary: extern "C" fn(*mut c_void, u32, bool) -> i32,            // +0x90
+    state_set_discrete: extern "C" fn(*mut c_void, u32, u32) -> i32,           // +0x98
+    state_set_axis1d: extern "C" fn(*mut c_void, u32, f32) -> i32,             // +0xa0
+    state_set_axis2d: extern "C" fn(*mut c_void, u32, UnityXrVector2) -> i32,  // +0xa8
+    state_set_axis3d: extern "C" fn(*mut c_void, u32, UnityXrVector3) -> i32,  // +0xb0
+    state_set_rotation: extern "C" fn(*mut c_void, u32, UnityXrVector4) -> i32, // +0xb8
+    state_set_bone: extern "C" fn(*mut c_void, u32, *const c_void) -> i32,     // +0xc0
+    state_set_hand: extern "C" fn(*mut c_void, u32, *const c_void) -> i32,     // +0xc8
+    state_set_eyes: extern "C" fn(*mut c_void, u32, *const c_void) -> i32,     // +0xd0
+    state_set_device_time: extern "C" fn(*mut c_void, i64) -> i32,             // +0xd8
 }
 
 #[repr(C)]
@@ -608,22 +671,24 @@ pub fn call_input_update_hmd() -> i32 {
     // `$_9::__invoke(void*, void*, u32 deviceId, UnityXRInputUpdateType, UnityXRInputDeviceState*)`.
     let update: extern "C" fn(*mut c_void, *mut c_void, u32, u32, *mut c_void) -> i32 =
         unsafe { std::mem::transmute(provider.update_device_state) };
+    // Opaque sentinel: our no-op DeviceState_* helpers never dereference the state pointer, so a
+    // plain zeroed buffer is fine (it is NOT a reconstructed UnityXRInputDeviceState).
     let mut buf = [0u8; 1024];
-    // deviceId 0 = HMD; updateType 1 = BeforeRender. RE (codex + our cross-check, see
-    // docs/archive/codex-headlock-analysis.md): InputManager::UpdateHMDState @0x7aa3c calls
-    // DisplayManager::OnBeforeRender @0x66fa8 ONLY when updateType == 1 (guard `cmp w1,#0x1; b.ne`
-    // @0x7aa68). OnBeforeRender refreshes DM+0x100, which SubmitFrame passes to
-    // NRFrameSetRenderingPose(frame, *(DM+0x100)) — the pose the compositor reprojects the layer
-    // against. With updateType 0 (Dynamic) OnBeforeRender is skipped, DM+0x100 stays frozen at the
-    // session-start pose, and our render world-anchors there instead of head-locking. So we must use
-    // updateType 1 here (this is why the earlier updateType-0 attempt had no visual effect).
-    update(
-        ptr::null_mut(),
-        ptr::null_mut(),
-        0,
-        1,
-        buf.as_mut_ptr() as *mut c_void,
-    )
+    let state = buf.as_mut_ptr() as *mut c_void;
+    // deviceId 0 = HMD. Both update types are needed each frame — RE
+    // (docs/archive/codex-6dof-crash-analysis.md + codex-headlock-analysis.md), UpdateHMDState
+    // @0x7aa3c splits on `cmp w1,#1` @0x7aa68:
+    //  - updateType 0 (Dynamic) uniquely stores the live 7-float head pose at InputManager+0x60
+    //    (`stp` sequence @0x7acec..0x7acf8) — the pose basis that keeps POSITION world-locked
+    //    (6DoF). Without it, translation is cancelled by the compositor.
+    //  - updateType 1 (BeforeRender) uniquely runs DisplayManager::OnBeforeRender @0x66fa8,
+    //    refreshing DM+0x100 which SubmitFrame passes to NRFrameSetRenderingPose — the ROTATION
+    //    head-lock.
+    // Calling this every frame is safe now that IUnityXrInput carries the full helper table:
+    // both paths unconditionally call slots +0x90/+0x98/+0xb0/+0xb8, which previously ran off our
+    // 3-slot struct and blr'd garbage (the delayed GLThread SIGSEGV).
+    update(ptr::null_mut(), ptr::null_mut(), 0, 0, state);
+    update(ptr::null_mut(), ptr::null_mut(), 0, 1, state)
 }
 
 extern "C" fn xr_set_device_connected(_context: *mut c_void, device_id: i32) -> i32 {
@@ -852,10 +917,151 @@ static UNITY_XR_DISPLAY_HELPER: IUnityXrDisplayHelper = IUnityXrDisplayHelper {
     property_to_id: xr_property_to_id,
 };
 
+// --- IUnityXRInputInterface helper stubs (slots +0x18..+0xd8; see the IUnityXrInput doc). ---
+
+extern "C" fn xr_input_device_event(_handle: *mut c_void, _device_id: u32) -> i32 {
+    0
+}
+extern "C" fn xr_input_tracking_origin_updated(_handle: *mut c_void) -> i32 {
+    0
+}
+extern "C" fn xr_input_set_tracking_boundary(
+    _handle: *mut c_void,
+    _points: *const UnityXrVector3,
+    _count: u32,
+) -> i32 {
+    0
+}
+extern "C" fn xr_input_get_platform_data(_handle: *mut c_void, out: *mut *mut c_void) -> i32 {
+    // The out-pointer must never be left uninitialized.
+    if !out.is_null() {
+        unsafe { *out = ptr::null_mut() };
+    }
+    0
+}
+extern "C" fn xr_def_set_cstr(_def: *mut c_void, _s: *const c_char) -> i32 {
+    0
+}
+extern "C" fn xr_def_set_u32(_def: *mut c_void, _v: u32) -> i32 {
+    0
+}
+extern "C" fn xr_def_set_bool(_def: *mut c_void, _v: bool) -> i32 {
+    0
+}
+
+/// Feature indices handed out by the `AddFeature*` builders. XREAL stores the returned index per
+/// feature (`IM+0xc8..+0xec` for the HMD) and passes it back to the state setters, so indices only
+/// need to be unique — a process-global counter is fine (Unity numbers per definition instead).
+static XR_FEATURE_INDEX: AtomicU32 = AtomicU32::new(0);
+
+extern "C" fn xr_def_add_feature(
+    _def: *mut c_void,
+    _name: *const c_char,
+    _feature_type: u32,
+) -> u32 {
+    XR_FEATURE_INDEX.fetch_add(1, Ordering::Relaxed)
+}
+extern "C" fn xr_def_add_custom_feature(
+    _def: *mut c_void,
+    _name: *const c_char,
+    _feature_type: u32,
+    _size: u32,
+) -> u32 {
+    XR_FEATURE_INDEX.fetch_add(1, Ordering::Relaxed)
+}
+extern "C" fn xr_def_add_feature_with_usage(
+    _def: *mut c_void,
+    _name: *const c_char,
+    _feature_type: u32,
+    _usage: *const c_char,
+) -> u32 {
+    XR_FEATURE_INDEX.fetch_add(1, Ordering::Relaxed)
+}
+extern "C" fn xr_def_add_usage_at_index(
+    _def: *mut c_void,
+    _feature_index: u32,
+    _usage: *const c_char,
+) -> i32 {
+    0
+}
+extern "C" fn xr_state_set_custom(
+    _state: *mut c_void,
+    _index: u32,
+    _data: *const c_void,
+    _size: u32,
+) -> i32 {
+    0
+}
+extern "C" fn xr_state_set_binary(_state: *mut c_void, _index: u32, _value: bool) -> i32 {
+    0
+}
+extern "C" fn xr_state_set_discrete(_state: *mut c_void, _index: u32, _value: u32) -> i32 {
+    0
+}
+extern "C" fn xr_state_set_axis1d(_state: *mut c_void, _index: u32, _value: f32) -> i32 {
+    0
+}
+extern "C" fn xr_state_set_axis2d(_state: *mut c_void, _index: u32, _value: UnityXrVector2) -> i32 {
+    0
+}
+extern "C" fn xr_state_set_axis3d(_state: *mut c_void, _index: u32, _value: UnityXrVector3) -> i32 {
+    0
+}
+static XR_SET_ROTATION_LOGGED: AtomicBool = AtomicBool::new(false);
+extern "C" fn xr_state_set_rotation(_state: *mut c_void, index: u32, value: UnityXrVector4) -> i32 {
+    // One-shot proof the SDK now reaches the REAL +0xb8 slot (previously an out-of-bounds blr).
+    if !XR_SET_ROTATION_LOGGED.swap(true, Ordering::Relaxed) {
+        godot::global::godot_print!(
+            "[xreal] DeviceState_SetRotationValue(idx={index}, quat=({:.3},{:.3},{:.3},{:.3})) — \
+             full input interface table active",
+            value.x,
+            value.y,
+            value.z,
+            value.w
+        );
+    }
+    0
+}
+extern "C" fn xr_state_set_aggregate(
+    _state: *mut c_void,
+    _index: u32,
+    _value: *const c_void,
+) -> i32 {
+    0
+}
+extern "C" fn xr_state_set_device_time(_state: *mut c_void, _time: i64) -> i32 {
+    0
+}
+
 static UNITY_XR_INPUT: IUnityXrInput = IUnityXrInput {
     register_lifecycle_provider: xr_register_input_lifecycle_provider,
     register_input_provider: xr_register_input_provider,
     set_device_connected: xr_set_device_connected,
+    device_disconnected: xr_input_device_event,
+    device_config_changed: xr_input_device_event,
+    tracking_origin_updated: xr_input_tracking_origin_updated,
+    set_tracking_boundary: xr_input_set_tracking_boundary,
+    get_platform_data: xr_input_get_platform_data,
+    def_set_name: xr_def_set_cstr,
+    def_set_characteristics: xr_def_set_u32,
+    def_set_manufacturer: xr_def_set_cstr,
+    def_set_serial_number: xr_def_set_cstr,
+    def_set_can_query_at_time: xr_def_set_bool,
+    def_add_feature: xr_def_add_feature,
+    def_add_custom_feature: xr_def_add_custom_feature,
+    def_add_feature_with_usage: xr_def_add_feature_with_usage,
+    def_add_usage_at_index: xr_def_add_usage_at_index,
+    state_set_custom: xr_state_set_custom,
+    state_set_binary: xr_state_set_binary,
+    state_set_discrete: xr_state_set_discrete,
+    state_set_axis1d: xr_state_set_axis1d,
+    state_set_axis2d: xr_state_set_axis2d,
+    state_set_axis3d: xr_state_set_axis3d,
+    state_set_rotation: xr_state_set_rotation,
+    state_set_bone: xr_state_set_aggregate,
+    state_set_hand: xr_state_set_aggregate,
+    state_set_eyes: xr_state_set_aggregate,
+    state_set_device_time: xr_state_set_device_time,
 };
 
 static UNITY_XR_MESHING: IUnityXrMeshing = IUnityXrMeshing {
@@ -1202,7 +1408,6 @@ pub fn run_frame_tick() {
             "[xreal] input UpdateDeviceState(HMD)->{hmd_update} (frame {n})"
         );
     }
-
     let provider = *GFX_THREAD_PROVIDER
         .lock()
         .expect("gfx-thread provider mutex");
