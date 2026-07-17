@@ -108,8 +108,10 @@ func _ready() -> void:
 		# -> identity pose); when the camera is on we force 3DoF (the DISP pose still carries full
 		# pitch/yaw/roll). Override the default with the `xreal/enable_camera` project setting.
 		_camera_enabled = bool(ProjectSettings.get_setting("xreal/enable_camera", false))
-		if _camera_enabled and _system.has_method(&"set_tracking_type"):
-			_system.set_tracking_type(1)  # 3DoF, so the RGB camera and head tracking can coexist
+		# The RGB camera used to force 3DoF here (6DoF SLAM was thought to fight it). On-device
+		# logcat (One Pro) disproved that: 6DoF and the RGB camera coexist with zero
+		# GetPoseWithStates failures — SLAM uses the grayscale camera, the RGB camera is separate.
+		# So we stay in the configured tracking mode (6DoF by default) with the camera on.
 	else:
 		push_error("[demo] godot_xreal GDExtension not loaded — XrealSystem/XrealHeadTracker missing. Build the Android .so (cargo ndk) and check the .gdextension paths.")
 	_spawn_rig()
@@ -333,9 +335,9 @@ func _on_tc_menu() -> void:
 	if _phone_pointer:
 		_phone_pointer.recenter()
 
-## Phone-menu "カメラ" toggle → start/stop the XREAL RGB camera feed at runtime. The camera shares
-## the tracking camera with 6DoF SLAM, so turning it on forces 3DoF (the camera and head tracking
-## can then coexist — same rule as the boot path). Independent of the plane toggle.
+## Phone-menu "カメラ" toggle → start/stop the XREAL RGB camera feed at runtime. Stays in the
+## current tracking mode (6DoF by default): on-device logcat confirmed 6DoF SLAM and the RGB
+## camera coexist (they use separate cameras — SLAM grayscale vs. RGB). Independent of the plane toggle.
 func _on_tc_camera(on: bool) -> void:
 	print("[demo] camera toggle -> %s" % ("on" if on else "off"))
 	if on:
@@ -348,8 +350,7 @@ func _on_tc_camera(on: bool) -> void:
 			return
 		_cam_failed = false
 		_camera_enabled = true
-		if _system and _system.has_method(&"switch_tracking_type"):
-			_system.switch_tracking_type(XREAL_TRACKING_3DOF)
+		# No 3DoF switch: 6DoF and the RGB camera coexist (verified on-device — see _ready).
 		# The lazy setup in _process creates the feed on the next tracked frame.
 	else:
 		_camera_enabled = false
