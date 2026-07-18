@@ -282,11 +282,14 @@ func _setup_camera_feed() -> void:
 	# eye SubViewports (shared world). Its corner position/size are set in ar_scene.tscn.
 	if _tracker and _cam_panel.get_parent() != _tracker:
 		_cam_panel.reparent(_tracker, false)
-	# Hand the live feed to the photo-capture + frame-blend managers (they read its Y/CbCr textures).
+	# Hand the live feed to the photo-capture + frame-blend managers (they read its Y/CbCr textures), and
+	# to the stream manager so live streaming casts the camera+AR blend while the camera is on.
 	if _capture_manager:
 		_capture_manager.set_feed(_cam_feed)
 	if _blend_manager:
 		_blend_manager.set_feed(_cam_feed)
+	if _stream_manager:
+		_stream_manager.set_feed(_cam_feed)
 
 ## Set up the runtime side of the phone touch controller ($PhoneScreen — its layout and signal
 ## wiring are static in phone_screen.tscn / main.tscn; it only renders on the phone's root
@@ -368,6 +371,9 @@ func _on_tc_camera(on: bool) -> void:
 			_cam_feed = null
 		if _cam_panel:
 			_cam_panel.visible = false
+		# Camera off -> streaming falls back to the AR-only view (drop the now-invalid feed).
+		if _stream_manager:
+			_stream_manager.set_feed(null)
 
 ## Phone-menu "平面検出" toggle → enable/disable plane detection at runtime. Needs a live 6DoF
 ## session, so turning it on switches tracking to 6DoF. Gated on the plane C ABI being available;
