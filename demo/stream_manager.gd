@@ -18,6 +18,16 @@ extends Node
 ## phone "Stream" toggle can reflect the real state.
 signal active_changed(active: bool)
 
+## Target the receiver's ObserverView page (MRC composite) instead of FirstPersonView. Default OFF —
+## FirstPersonView is the useful mode on XREAL One (its RGB camera does an aligned on-device blend).
+## ObserverView is a niche/incomplete path (mainly for camera-less glasses): when true the Stream toggle
+## pairs without the useAudio handshake, streams the virtual-only AR with alpha (useAlpha=true) so the PC
+## composites it over its webcam, and applies the observer FOV the receiver pushes. It runs end to end,
+## but the composite is NOT spatially aligned — the protocol carries no observer-camera pose and the PC
+## webcam isn't tracked, so real alignment needs an app-level calibration/marker step we don't implement.
+## See docs/plans/observer-view-notes.md.
+const OBSERVER_MODE := false
+
 const RTP_PORT := 5555
 const STREAM_W := 1280
 const STREAM_H := 720
@@ -38,6 +48,7 @@ var _feed: Object                   # XrealCameraFeed (Y/CbCr), injected by main
 var _pairing: Node                  # demo/stream_pairing.gd
 var _active := false
 var _with_mic := false              # mic state chosen at toggle time, used once paired
+var _pending_fov := {}              # ObserverView: latest observer-camera FOV pushed by the receiver
 
 func setup(system: Object, tracker: Node3D) -> void:
 	_system = system
@@ -55,6 +66,7 @@ func setup(system: Object, tracker: Node3D) -> void:
 	_pairing.paired.connect(_on_paired)
 	_pairing.failed.connect(_on_pair_failed)
 	_pairing.lost.connect(_on_pair_lost)
+	_pairing.camera_param.connect(_on_camera_param)
 
 ## Injected by main.gd: the live RGB camera feed, or null when the camera is off. When set (and a frame
 ## has arrived), streaming switches to the camera+AR blend; when null, it streams the AR view alone.
@@ -85,6 +97,12 @@ func set_enabled(on: bool) -> void:
 		push_warning("[demo] FPV streaming needs an Eye-equipped device (One Series) — unavailable")
 		active_changed.emit(false)
 		return
+	if OBSERVER_MODE:
+		# ObserverView (MRC): no mic/useAudio; the PC composites our virtual-only+alpha render over its webcam.
+		_with_mic = false
+		print("[demo] Observer stream: pairing with StreamingReceiver (ObserverView) ...")
+		_pairing.start(false, true)
+		return
 	# Only announce/capture the mic if RECORD_AUDIO is granted — otherwise the encoder's AudioRecord stays
 	# silent. If wanted but not granted, (re)request it and stream video-only this time (grant lands next).
 	_with_mic = STREAM_WITH_MIC
@@ -99,14 +117,31 @@ func set_enabled(on: bool) -> void:
 func _on_paired(server_ip: String) -> void:
 	var url := "rtp://%s:%d" % [server_ip, RTP_PORT]
 	_ensure_viewport()
-	if not _system.stream_start(url, STREAM_W, STREAM_H, STREAM_BITRATE, STREAM_FPS, _with_mic, STREAM_WITH_INTERNAL_AUDIO):
-		push_warning("[demo] FPV stream_start failed for %s" % url)
+	_apply_fov()  # in case the receiver's UpdateCameraParam arrived before the viewport existed
+	# ObserverView streams the virtual-only AR with alpha (useAlpha) for the PC-webcam composite.
+	if not _system.stream_start(url, STREAM_W, STREAM_H, STREAM_BITRATE, STREAM_FPS, _with_mic, STREAM_WITH_INTERNAL_AUDIO, OBSERVER_MODE):
+		push_warning("[demo] stream_start failed for %s" % url)
 		_pairing.stop()
 		active_changed.emit(false)
 		return
 	_active = true
-	print("[demo] FPV stream -> %s (mic=%s)" % [url, _with_mic])
+	print("[demo] stream -> %s (mode=%s, mic=%s)" % [url, "observer" if OBSERVER_MODE else "fpv", _with_mic])
 	active_changed.emit(true)
+
+## ObserverView: apply the receiver's observer-camera FOV (tangent extents) to the AR camera. First
+## bring-up uses a symmetric perspective (vertical FOV from top+bottom); off-centre refinement is later.
+func _on_camera_param(fov: Dictionary) -> void:
+	_pending_fov = fov
+	_apply_fov()
+
+func _apply_fov() -> void:
+	if _ar_cam == null or _pending_fov.is_empty():
+		return
+	var top := float(_pending_fov.get("top", 0.0))
+	var bottom := float(_pending_fov.get("bottom", 0.0))
+	if top > 0.0 and bottom > 0.0:
+		_ar_cam.fov = rad_to_deg(atan(top) + atan(bottom))  # vertical FOV; SubViewport keeps the 16:9 aspect
+		print("[demo] observer FOV applied -> vfov=%.1f deg" % _ar_cam.fov)
 
 func _on_pair_failed(reason: String) -> void:
 	push_warning("[demo] FPV pairing failed: %s" % reason)
@@ -162,7 +197,10 @@ func _ensure_comp() -> void:
 	_comp_vp.add_child(rect)
 
 ## True when the RGB camera feed is live (camera on + a frame arrived) → stream the camera+AR blend.
+## Never in ObserverView: the composite happens on the PC (over its webcam), so we stream virtual-only.
 func _use_blend() -> bool:
+	if OBSERVER_MODE:
+		return false
 	if _feed == null or not is_instance_valid(_feed) or not _feed.has_method(&"get_y_texture"):
 		return false
 	return _feed.get_y_texture() != null and _feed.get_cbcr_texture() != null

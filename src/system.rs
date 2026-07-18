@@ -663,6 +663,7 @@ impl XrealSystem {
         fps: i64,
         with_mic: bool,
         with_internal_audio: bool,
+        with_alpha: bool,
     ) -> bool {
         crate::video_encoder::start(
             &output.to_string(),
@@ -672,6 +673,7 @@ impl XrealSystem {
             fps as i32,
             with_mic,
             with_internal_audio,
+            with_alpha,
         )
     }
 

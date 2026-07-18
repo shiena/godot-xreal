@@ -20,6 +20,9 @@ signal paired(server_ip: String)
 signal failed(reason: String)
 ## The control link dropped after pairing (caller should stop streaming).
 signal lost()
+## ObserverView: the receiver pushed an `UpdateCameraParam` — the observer camera FOV as
+## `{left,right,top,bottom}` tangents (webcam-derived off-centre frustum). See docs/plans/observer-view-notes.md.
+signal camera_param(fov: Dictionary)
 
 const DISCOVERY_ADDR := "255.255.255.255"
 const DISCOVERY_PORT := 6001
@@ -41,15 +44,19 @@ var _recv := PackedByteArray()   # accumulated TCP bytes, sliced into frames
 var _timer := 0.0                # per-state timeout accumulator
 var _hb := 0.0                   # heartbeat accumulator (ACTIVE)
 var _with_audio := true
+var _observer := false           # ObserverView: skip the useAudio(7) handshake, expect UpdateCameraParam(6)
 var _msgid := 0
 
 func _ready() -> void:
 	set_process(false)
 
-## Begin pairing. `with_audio` is announced to the receiver as `useAudio` (match what the encoder sends).
-func start(with_audio: bool) -> void:
+## Begin pairing. `with_audio` is announced to the receiver as `useAudio` (FirstPersonView only). In
+## `observer` mode the receiver is on its ObserverView page: it never handles useAudio (sending it drops
+## the link), so we go active right after the EnterRoom ack and just consume its UpdateCameraParam pushes.
+func start(with_audio: bool, observer := false) -> void:
 	stop()
 	_with_audio = with_audio
+	_observer = observer
 	_udp = PacketPeerUDP.new()
 	_udp.set_broadcast_enabled(true)
 	var err := _udp.bind(0)  # ephemeral local port; the receiver unicasts its reply back to it
@@ -158,13 +165,27 @@ func _on_frame(mtype: int, payload: PackedByteArray) -> void:
 	match mtype:
 		MsgType.ENTER_ROOM:
 			if _state == State.ENTER_ROOM:
-				print("[pairing] EnterRoom ack -> negotiate useAudio=%s" % _with_audio)
-				_msgid = int(Time.get_unix_time_from_system() * 1000.0)
-				var body := _u64le(_msgid)
-				body.append_array(('{"useAudio":%s}' % ("true" if _with_audio else "false")).to_utf8_buffer())
-				_send(MsgType.MSG_SYNC, body)
-				_state = State.NEGOTIATE
-				_timer = 0.0
+				if _observer:
+					# ObserverView: no useAudio handshake — go active and start streaming immediately (the
+					# receiver pushes UpdateCameraParam next, and idles out if RTP doesn't follow).
+					print("[pairing] EnterRoom ack (observer) -> active")
+					_state = State.ACTIVE
+					_hb = 0.0
+					paired.emit(_server_ip)
+				else:
+					print("[pairing] EnterRoom ack -> negotiate useAudio=%s" % _with_audio)
+					_msgid = int(Time.get_unix_time_from_system() * 1000.0)
+					var body := _u64le(_msgid)
+					body.append_array(('{"useAudio":%s}' % ("true" if _with_audio else "false")).to_utf8_buffer())
+					_send(MsgType.MSG_SYNC, body)
+					_state = State.NEGOTIATE
+					_timer = 0.0
+		MsgType.UPDATE_CAMERA:
+			# ObserverView: receiver's observer-camera FOV ({left,right,top,bottom} tangents). No msgid.
+			var data: Variant = JSON.parse_string(payload.get_string_from_utf8())
+			if data is Dictionary and data.has("fov") and data["fov"] is Dictionary:
+				print("[pairing] UpdateCameraParam fov=%s" % [data["fov"]])
+				camera_param.emit(data["fov"])
 		MsgType.MSG_SYNC:
 			if _state == State.NEGOTIATE and payload.size() >= 8:
 				var json_str := payload.slice(8).get_string_from_utf8()

@@ -60,7 +60,9 @@ fn codec_type(output: &str) -> i32 {
 }
 
 /// Build the encoder config JSON (SDK format from `EncodeTypes.cs`). `with_mic` captures the microphone
-/// natively; `with_internal` mixes app audio fed via [`push_audio`].
+/// natively; `with_internal` mixes app audio fed via [`push_audio`]. `with_alpha` sets `useAlpha` — the
+/// encoder then packs the frame's RGB + alpha (top/bottom) for the ObserverView MRC composite; the input
+/// texture must carry a real alpha channel (a transparent-bg viewport). See docs/plans/observer-view-notes.md.
 fn config_json(
     output: &str,
     width: i32,
@@ -69,11 +71,12 @@ fn config_json(
     fps: i32,
     with_mic: bool,
     with_internal: bool,
+    with_alpha: bool,
 ) -> String {
     format!(
         concat!(
             "{{\"width\":{},\"height\":{},\"bitRate\":{},\"fps\":{},\"codecType\":{},",
-            "\"outPutPath\":\"{}\",\"useStepTime\":0,\"useAlpha\":false,\"useLinnerTexture\":true,",
+            "\"outPutPath\":\"{}\",\"useStepTime\":0,\"useAlpha\":{},\"useLinnerTexture\":true,",
             "\"addMicphoneAudio\":{},\"addInternalAudio\":{},\"audioSampleRate\":16000,",
             "\"audioBitRate\":128000}}"
         ),
@@ -83,6 +86,7 @@ fn config_json(
         fps,
         codec_type(output),
         output,
+        with_alpha,
         with_mic,
         with_internal
     )
@@ -96,6 +100,7 @@ pub fn is_active() -> bool {
 /// Start streaming the FPV to `output` (`rtp://ip:port`, `rtmp://…`, or a local file path). Creates,
 /// configures, and starts the HW encoder. Returns `false` on any failure (library/symbol absent or an
 /// `HWEncoder*` non-zero status). Feed frames with [`submit_frame`] from the render thread.
+#[allow(clippy::too_many_arguments)]
 pub fn start(
     output: &str,
     width: i32,
@@ -104,6 +109,7 @@ pub fn start(
     fps: i32,
     with_mic: bool,
     with_internal: bool,
+    with_alpha: bool,
 ) -> bool {
     let mut guard = ENCODER.lock().expect("encoder mutex");
     if guard.is_some() {
@@ -154,7 +160,7 @@ pub fn start(
             godot::global::godot_warn!("[xreal] HWEncoderCreate failed");
             return false;
         }
-        let cfg = config_json(output, width, height, bitrate, fps, with_mic, with_internal);
+        let cfg = config_json(output, width, height, bitrate, fps, with_mic, with_internal, with_alpha);
         let Ok(cfg_c) = CString::new(cfg.as_str()) else {
             destroy(handle);
             return false;
@@ -261,7 +267,7 @@ mod tests {
 
     #[test]
     fn config_json_embeds_params_and_rtp_codec_type() {
-        let j = config_json("rtp://10.0.0.2:6000", 1280, 720, 4_000_000, 30, true, false);
+        let j = config_json("rtp://10.0.0.2:6000", 1280, 720, 4_000_000, 30, true, false, false);
         for needle in [
             "\"width\":1280",
             "\"height\":720",
@@ -278,9 +284,10 @@ mod tests {
 
     #[test]
     fn config_json_local_file_is_codec_type_zero() {
-        let j = config_json("/sdcard/clip.mp4", 640, 480, 1_000_000, 24, false, true);
+        let j = config_json("/sdcard/clip.mp4", 640, 480, 1_000_000, 24, false, true, true);
         assert!(j.contains("\"codecType\":0"));
         assert!(j.contains("\"addMicphoneAudio\":false"));
         assert!(j.contains("\"addInternalAudio\":true"));
+        assert!(j.contains("\"useAlpha\":true"));
     }
 }
