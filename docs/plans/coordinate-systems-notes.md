@@ -75,5 +75,10 @@ FFI is correct:
   the intrinsics exactly.
 
 GDScript: `XrealSystem.COMPONENT_RGB_CAMERA` (= 2) etc.; getters return `Vector2i` / `PackedFloat32Array`
-(empty on failure). **Next (not done): apply the RGB projection + pose to the blend's AR camera** so the
-composited AR matches the camera's FOV/offset instead of the current naive full-frame overlay.
+(empty on failure). **Now applied to the blend (`f46e2b9`):** the camera+AR blend drives its AR camera
+from the RGB geometry — vertical FOV from `fy` (default 75° → the camera's ~61°) plus the
+`GetDevicePoseFromHead` forward offset (~2.8 cm) for parallax — so the holograms match the camera image
+instead of the previous naive full-frame overlay. In `demo/stream_manager.gd` (live blend) and
+`demo/blend_manager.gd` (Blend Photo). Possible refinement: the exact off-centre projection (`cx/cy` is
+only ~0.5% off-centre here, so a symmetric FOV is already a close match) and on-device tuning of the
+offset sign.
