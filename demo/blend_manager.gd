@@ -15,6 +15,8 @@ var _ar_vp: SubViewport
 var _ar_cam: Camera3D
 var _comp_vp: SubViewport
 var _comp_mat: ShaderMaterial
+var _rgb_offset := Vector3.ZERO    # RGB camera offset from the head (Godot space), for parallax
+var _rgb_geom_done := false        # RGB geometry (FOV + offset) applied once — it's static per device
 
 func setup(system: Object, tracker: Node3D) -> void:
 	_system = system
@@ -52,6 +54,24 @@ func _ensure() -> bool:
 	_comp_vp.add_child(rect)
 	return true
 
+## Drive the AR camera from the RGB camera's real geometry (intrinsics -> vertical FOV, pose-from-head
+## -> a small forward offset) so the holograms match the camera image instead of a default guess. Static
+## per device, so applied once. See docs/plans/coordinate-systems-notes.md.
+func _apply_rgb_geometry() -> void:
+	if _rgb_geom_done or _ar_cam == null or _system == null or not _system.has_method(&"get_camera_intrinsics"):
+		return
+	var comp := 2  # XREALComponent.RGB_CAMERA
+	var res: Vector2i = _system.get_device_resolution(comp)
+	var intr: PackedFloat32Array = _system.get_camera_intrinsics(comp)  # [fx, fy, cx, cy]
+	if res.y > 0 and intr.size() == 4 and intr[1] > 0.0:
+		_ar_cam.fov = rad_to_deg(2.0 * atan((res.y * 0.5) / intr[1]))  # vertical FOV from fy (KEEP_HEIGHT)
+		print("[blend] RGB-matched AR FOV=%.1f deg" % _ar_cam.fov)
+	var pose: PackedFloat32Array = _system.get_device_pose_from_head(comp)  # [px,py,pz, qx,qy,qz,qw] Unity
+	if pose.size() == 7:
+		_rgb_offset = Vector3(pose[0], -pose[1], -pose[2])  # Unity->Godot (this port's (x,-y,-z)); ~cm parallax
+		print("[blend] RGB offset from head=%s m" % _rgb_offset)
+	_rgb_geom_done = true
+
 ## Capture the blended (camera + AR) composite to a JPG. Returns the path ("" on failure).
 func capture_blended() -> String:
 	if _system and _system.has_method(&"is_camera_supported") and not _system.is_camera_supported():
@@ -65,8 +85,11 @@ func capture_blended() -> String:
 	if yt == null or ct == null:
 		push_warning("[blend] no camera frame yet")
 		return ""
+	_apply_rgb_geometry()
 	if _tracker and _ar_cam:
-		_ar_cam.global_transform = _tracker.global_transform
+		# Sit the AR camera at the RGB camera's pose (head + its small forward offset), not just the head,
+		# so the holograms line up with the camera image (parallax).
+		_ar_cam.global_transform = _tracker.global_transform.translated_local(_rgb_offset)
 	_comp_mat.set_shader_parameter(&"y_texture", yt)
 	_comp_mat.set_shader_parameter(&"cbcr_texture", ct)
 	_comp_mat.set_shader_parameter(&"ar_texture", _ar_vp.get_texture())
