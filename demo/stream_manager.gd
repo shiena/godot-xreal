@@ -49,6 +49,8 @@ var _pairing: Node                  # demo/stream_pairing.gd
 var _active := false
 var _with_mic := false              # mic state chosen at toggle time, used once paired
 var _pending_fov := {}              # ObserverView: latest observer-camera FOV pushed by the receiver
+var _rgb_offset := Vector3.ZERO     # RGB camera offset from the head (Godot space), for blend parallax
+var _rgb_geom_done := false          # RGB blend geometry (FOV + offset) applied once — static per device
 
 func setup(system: Object, tracker: Node3D) -> void:
 	_system = system
@@ -196,6 +198,23 @@ func _ensure_comp() -> void:
 	rect.material = _comp_mat
 	_comp_vp.add_child(rect)
 
+## Drive the AR camera from the RGB camera's real geometry (intrinsics -> vertical FOV, pose-from-head
+## -> a small forward offset) so the blended holograms match the camera image. Static per device, applied
+## once. See docs/plans/coordinate-systems-notes.md.
+func _apply_rgb_geometry() -> void:
+	if _rgb_geom_done or _ar_cam == null or _system == null or not _system.has_method(&"get_camera_intrinsics"):
+		return
+	var comp := 2  # XREALComponent.RGB_CAMERA
+	var res: Vector2i = _system.get_device_resolution(comp)
+	var intr: PackedFloat32Array = _system.get_camera_intrinsics(comp)  # [fx, fy, cx, cy]
+	if res.y > 0 and intr.size() == 4 and intr[1] > 0.0:
+		_ar_cam.fov = rad_to_deg(2.0 * atan((res.y * 0.5) / intr[1]))  # vertical FOV from fy (KEEP_HEIGHT)
+		print("[demo] blend AR FOV matched to RGB camera = %.1f deg" % _ar_cam.fov)
+	var pose: PackedFloat32Array = _system.get_device_pose_from_head(comp)  # [px,py,pz, qx,qy,qz,qw] Unity
+	if pose.size() == 7:
+		_rgb_offset = Vector3(pose[0], -pose[1], -pose[2])  # Unity->Godot (this port's (x,-y,-z)); ~cm parallax
+	_rgb_geom_done = true
+
 ## True when the RGB camera feed is live (camera on + a frame arrived) → stream the camera+AR blend.
 ## Never in ObserverView: the composite happens on the PC (over its webcam), so we stream virtual-only.
 func _use_blend() -> bool:
@@ -208,12 +227,22 @@ func _use_blend() -> bool:
 func _process(_delta: float) -> void:
 	if not _active or _ar_vp == null:
 		return
-	# Head-locked FPV camera follows the head.
+	var blending := _use_blend()
 	if _tracker and _ar_cam:
-		_ar_cam.global_transform = _tracker.global_transform
+		if blending:
+			# Blend (Camera ON): drive the AR camera from the RGB camera's real geometry (FOV + forward
+			# offset) so the holograms line up with the camera image instead of a default guess.
+			_apply_rgb_geometry()
+			_ar_cam.global_transform = _tracker.global_transform.translated_local(_rgb_offset)
+		else:
+			# Plain AR (no camera): head-locked with the default FOV. ObserverView sets its own FOV
+			# (from the receiver) in _apply_fov, so leave it alone there.
+			if not OBSERVER_MODE:
+				_ar_cam.fov = 75.0
+			_ar_cam.global_transform = _tracker.global_transform
 	# Camera ON -> stream the camera+AR blend (what a bystander sees); Camera OFF -> the AR view alone.
 	var src_vp := _ar_vp
-	if _use_blend():
+	if blending:
 		_ensure_comp()
 		_comp_mat.set_shader_parameter(&"y_texture", _feed.get_y_texture())
 		_comp_mat.set_shader_parameter(&"cbcr_texture", _feed.get_cbcr_texture())
