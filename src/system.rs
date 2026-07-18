@@ -10,6 +10,14 @@ use godot::prelude::*;
 
 use crate::session::{self, XrealSession};
 
+/// SDK information and control surface for the XREAL glasses.
+///
+/// A `RefCounted` façade over the native XREAL plugin: query availability / version / tracking
+/// state, switch the tracking mode, drive the AR subsystems (plane detection, spatial anchors,
+/// image tracking, depth meshing), read compositor render metrics, and run FPV streaming.
+/// Instantiate it once (e.g. from an autoload) and keep it. Its methods are safe to call before a
+/// native session exists — they return defaults / error sentinels until the session is live, so
+/// they no-op on desktop and while the glasses are still connecting.
 #[derive(GodotClass)]
 #[class(base = RefCounted)]
 pub struct XrealSystem {
@@ -25,14 +33,17 @@ impl IRefCounted for XrealSystem {
 
 #[godot_api]
 impl XrealSystem {
-    /// `TrackingType` values accepted by `switch_tracking_type` and returned by
-    /// `get_tracking_type` (from the Unity `XREALPlugin.cs` enum).
+    /// `TrackingType` for `switch_tracking_type` / `get_tracking_type` (from the Unity
+    /// `XREALPlugin.cs` enum): 6DoF — SLAM position + orientation (the recommended mode).
     #[constant]
     const TRACKING_6DOF: i64 = 0;
+    /// `TrackingType`: 3DoF — IMU orientation only, no position.
     #[constant]
     const TRACKING_3DOF: i64 = 1;
+    /// `TrackingType`: 0DoF — no head tracking.
     #[constant]
     const TRACKING_0DOF: i64 = 2;
+    /// `TrackingType`: 0DoF with stabilization.
     #[constant]
     const TRACKING_0DOF_STAB: i64 = 3;
 
@@ -224,16 +235,20 @@ impl XrealSystem {
 
     // --- Device capability query (IsHMDFeatureSupported) ---
 
-    /// `XREALSupportedFeature` values for [`Self::is_hmd_feature_supported`].
+    /// `XREALSupportedFeature` for [`Self::is_hmd_feature_supported`]: the RGB camera.
     #[constant]
     const FEATURE_RGB_CAMERA: i64 = crate::ffi::hmd_feature::RGB_CAMERA as i64;
+    /// `XREALSupportedFeature`: the proximity (wear) sensor.
     #[constant]
     const FEATURE_WEARING_STATUS: i64 = crate::ffi::hmd_feature::WEARING_STATUS as i64;
+    /// `XREALSupportedFeature`: a handheld controller.
     #[constant]
     const FEATURE_CONTROLLER: i64 = crate::ffi::hmd_feature::CONTROLLER as i64;
+    /// `XREALSupportedFeature`: head-tracking rotation (3DoF).
     #[constant]
     const FEATURE_HEAD_TRACKING_ROTATION: i64 =
         crate::ffi::hmd_feature::HEAD_TRACKING_ROTATION as i64;
+    /// `XREALSupportedFeature`: head-tracking position (6DoF).
     #[constant]
     const FEATURE_HEAD_TRACKING_POSITION: i64 =
         crate::ffi::hmd_feature::HEAD_TRACKING_POSITION as i64;
@@ -258,13 +273,17 @@ impl XrealSystem {
 
     // --- Plane detection (see docs/plans/ar-features-plan.md). Needs a live 6DoF session. ---
 
-    /// `PlaneDetectionMode` flags for [`Self::set_plane_detection_mode`] / [`Self::poll_planes`].
+    /// `PlaneDetectionMode` flag for [`Self::set_plane_detection_mode`] / [`Self::poll_planes`]:
+    /// detection off.
     #[constant]
     const PLANE_NONE: i64 = crate::ffi::plane_detection_mode::NONE as i64;
+    /// `PlaneDetectionMode` flag: detect horizontal planes (floors, tables).
     #[constant]
     const PLANE_HORIZONTAL: i64 = crate::ffi::plane_detection_mode::HORIZONTAL as i64;
+    /// `PlaneDetectionMode` flag: detect vertical planes (walls).
     #[constant]
     const PLANE_VERTICAL: i64 = crate::ffi::plane_detection_mode::VERTICAL as i64;
+    /// `PlaneDetectionMode` flag: detect both horizontal and vertical planes.
     #[constant]
     const PLANE_BOTH: i64 = crate::ffi::plane_detection_mode::BOTH as i64;
 
@@ -337,11 +356,13 @@ impl XrealSystem {
     // --- Spatial anchors (see docs/plans/ar-features-plan.md). Needs a live 6DoF session + the
     //     vendored nr_spatial_anchor.aar backend. ---
 
-    /// Anchor-quality levels from [`Self::estimate_anchor_quality`] — require ≥ SUFFICIENT before saving.
+    /// Anchor-quality level from [`Self::estimate_anchor_quality`]: insufficient — do not save here.
     #[constant]
     const ANCHOR_QUALITY_INSUFFICIENT: i64 = crate::ffi::anchor_quality::INSUFFICIENT as i64;
+    /// Anchor-quality level: sufficient — the minimum recommended before saving.
     #[constant]
     const ANCHOR_QUALITY_SUFFICIENT: i64 = crate::ffi::anchor_quality::SUFFICIENT as i64;
+    /// Anchor-quality level: good — a strong spot to save an anchor.
     #[constant]
     const ANCHOR_QUALITY_GOOD: i64 = crate::ffi::anchor_quality::GOOD as i64;
 
@@ -959,13 +980,17 @@ pub struct XrealAR {
     /// Master switch — poll each frame while `true`.
     #[export]
     active: bool,
-    /// Per-stream switches — turn off the streams you don't use to skip their per-frame native poll.
+    /// Poll plane-detection changes each frame and emit the `plane_*` signals (turn off the streams
+    /// you don't use to skip their per-frame native poll).
     #[export]
     planes: bool,
+    /// Poll spatial-anchor changes each frame and emit the `anchor_*` signals.
     #[export]
     anchors: bool,
+    /// Poll image-tracking changes each frame and emit the `image_*` signals.
     #[export]
     images: bool,
+    /// Poll depth-mesh changes each frame and emit the `mesh_block_*` signals.
     #[export]
     mesh: bool,
     /// Emit `temperature_changed` / `native_error` on change.
@@ -1015,28 +1040,33 @@ impl INode for XrealAR {
 
 #[godot_api]
 impl XrealAR {
-    /// A detected plane was added / updated — `Dictionary { id, transform, center, size, alignment }`.
+    /// A detected plane was added — `Dictionary { id, transform, center, size, alignment }`.
     #[signal]
     fn plane_added(plane: VarDictionary);
+    /// A detected plane was updated (same `Dictionary` shape as `plane_added`).
     #[signal]
     fn plane_updated(plane: VarDictionary);
     /// A detected plane was removed (its id string).
     #[signal]
     fn plane_removed(id: GString);
 
-    /// A tracked anchor was added / updated — `Dictionary { id, transform, tracking_state, session_id }`.
+    /// A tracked anchor was added — `Dictionary { id, transform, tracking_state, session_id }`.
     #[signal]
     fn anchor_added(anchor: VarDictionary);
+    /// A tracked anchor was updated (same `Dictionary` shape as `anchor_added`).
     #[signal]
     fn anchor_updated(anchor: VarDictionary);
+    /// A tracked anchor was removed (its id string).
     #[signal]
     fn anchor_removed(id: GString);
 
-    /// A tracked image was added / updated — `Dictionary { id, source_image, transform, size, tracking_state }`.
+    /// A tracked image was added — `Dictionary { id, source_image, transform, size, tracking_state }`.
     #[signal]
     fn image_added(image: VarDictionary);
+    /// A tracked image was updated (same `Dictionary` shape as `image_added`).
     #[signal]
     fn image_updated(image: VarDictionary);
+    /// A tracked image was removed (its id string).
     #[signal]
     fn image_removed(id: GString);
 

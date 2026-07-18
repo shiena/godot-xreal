@@ -18,12 +18,18 @@ src="$root/dummy/gdext_dummy.c"
 
 # Regenerate the placeholder class list from the Rust source (single source of truth).
 bash "$root/scripts/gen_stub_classes.sh"
+# gdext_dummy.c also #includes dummy/stub_docs.inc (the class-ref docs shown in the editor F1 help).
+# That file is a committed prerequisite regenerated separately by scripts/gen_docs.sh (it needs a
+# Rust host toolchain, kept out of this clang-only build); CI checks it stays in sync.
 
 build() { # triple out extra-flags…
 	local triple="$1" out="$2"
 	shift 2
 	# -Wl,-noentry (dash form) — the slash form is mangled by MSYS path conversion.
-	"$CLANG" --target="$triple" -O2 -ffreestanding -nostdlib -shared -fuse-ld=lld "$@" \
+	# -fno-stack-protector: the freestanding build has no __stack_chk_fail / __stack_chk_guard to
+	# link against, and some targets (e.g. macOS) enable the stack protector by default for
+	# functions with local buffers (register_members' PropertyInfo arrays).
+	"$CLANG" --target="$triple" -O2 -ffreestanding -nostdlib -fno-stack-protector -shared -fuse-ld=lld "$@" \
 		-o "$root/dummy/$out" "$src"
 	echo "built $out"
 }

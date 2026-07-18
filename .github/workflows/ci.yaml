@@ -93,6 +93,13 @@ jobs:
       - name: Run tests
         run: cargo test --all-features
 
+      - name: Check API docs in sync
+        # The desktop dummy's F1 docs (dummy/stub_docs.inc + dummy/stub_members.inc) are generated
+        # from the `///` doc comments (scripts/gen_docs.sh -> src/doc_gen.rs). Fail if a doc-comment
+        # change was not regenerated + committed. Invoke via `bash` so it runs regardless of the
+        # script's executable bit (Windows checkouts don't track it).
+        run: bash scripts/gen_docs.sh --check
+
       - name: Lint GDScript
         run: |
           # Static-check the demo + addon .gd files (gdtoolkit; no Godot needed). Config: .gdlintrc.

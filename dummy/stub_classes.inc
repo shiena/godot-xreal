@@ -3,6 +3,8 @@
  * EDIT. build_dummy_libs regenerates it; releases commit the regenerated file. */
 static StubClass stub_classes[] = {
 	{ "XrealAR", "Node", 0, 0, 0 },
+	{ "XrealCameraFeed", "CameraFeed", 0, 0, 0 },
 	{ "XrealHandTracker", "Node", 0, 0, 0 },
 	{ "XrealHeadTracker", "Node3D", 0, 0, 0 },
+	{ "XrealSystem", "RefCounted", 0, 0, 0 },
 };

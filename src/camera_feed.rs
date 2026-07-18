@@ -26,6 +26,12 @@ use godot::prelude::*;
 ///   direct textures are what actually display (matching the XREAL SDK's YUVTransRGB sample).
 use crate::session;
 
+/// The XREAL glasses' RGB camera exposed as a Godot `CameraFeed` (full colour, via the native C ABI).
+///
+/// Add it to the `CameraServer` and call `poll_frame()` each frame to push the latest frame as
+/// separate Y + CbCr planes; sample `get_y_texture()` / `get_cbcr_texture()` in a YCbCr→RGB shader
+/// to display it. Present only on glasses that carry an RGB camera (e.g. the One Pro, not the
+/// Air 2 Ultra — gate on `XrealSystem.is_camera_supported()`).
 #[derive(GodotClass)]
 #[class(base = CameraFeed)]
 pub struct XrealCameraFeed {

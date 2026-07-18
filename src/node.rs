@@ -27,6 +27,13 @@ struct StereoRig {
     cameras: [Gd<Camera3D>; 2],
 }
 
+/// Scene node that drives its own transform from the native XREAL head pose each frame — parent a
+/// `Camera3D` under it for a head-tracked view through the glasses.
+///
+/// 6DoF by default (rotation + position world-lock); the tracking mode is selectable. Also emits
+/// the glasses hot-plug and hardware-input signals (`key_event`, `key_state_changed`,
+/// `wearing_changed`, `brightness_changed`, …). `is_tracking()` reports whether a native pose was
+/// applied on the last frame; `recenter()` resets the forward direction.
 #[derive(GodotClass)]
 #[class(base = Node3D)]
 pub struct XrealHeadTracker {
@@ -469,27 +476,33 @@ impl XrealHeadTracker {
     #[signal]
     fn glasses_event(action_type: i64, para: i64, para2: i64, para3: f64);
 
-    // `XREALKeyType` (which physical key).
+    /// `key` value in `key_event` / `key_state_changed` (`XREALKeyType`): the MULTI (function) key.
     #[constant]
     const KEY_MULTI: i64 = 1;
+    /// `key` value: the brightness/volume INCREASE key.
     #[constant]
     const KEY_INCREASE: i64 = 2;
+    /// `key` value: the brightness/volume DECREASE key.
     #[constant]
     const KEY_DECREASE: i64 = 3;
+    /// `key` value: the MENU key.
     #[constant]
     const KEY_MENU: i64 = 4;
 
-    // `XREALClickType` (how it was pressed).
+    /// `action` value in `key_event` (`XREALClickType`): a single click.
     #[constant]
     const ACTION_CLICK: i64 = 1;
+    /// `action` value in `key_event`: a double click.
     #[constant]
     const ACTION_DOUBLE_CLICK: i64 = 2;
+    /// `action` value in `key_event`: a long press.
     #[constant]
     const ACTION_LONG_PRESS: i64 = 3;
 
-    // `XREALKeyState` (raw transitions, `key_state_changed`).
+    /// `state` value in `key_state_changed` (`XREALKeyState`): the key went down.
     #[constant]
     const KEY_STATE_DOWN: i64 = 1;
+    /// `state` value in `key_state_changed`: the key was released.
     #[constant]
     const KEY_STATE_UP: i64 = 2;
 

@@ -13,7 +13,7 @@ crate-type = ["cdylib"]
 [dependencies]
 # api-4-4 is the minimum engine API level (works on Godot 4.4 and newer).
 # Bump to api-4-5 etc. if you want to depend on newer engine symbols.
-godot = { version = "0.5", features = ["api-4-6"] }
+godot = { version = "0.5", features = ["api-4-6", "register-docs"] }
 # Runtime dlopen/dlsym of the vendored XREAL .so files (libXREALNativeSessionManager.so,
 # libXREALXRPlugin.so), kept out of the link line rather than linked directly. The extension
 # itself is Android-only (see godot_xreal.gdextension) — the desktop editor does not load it.

@@ -91,7 +91,11 @@ var _cursor_mat: StandardMaterial3D
 
 func _ready() -> void:
 	_try_register_android_bridge()
-	_extension_loaded = ClassDB.class_exists(&"XrealSystem") and ClassDB.class_exists(&"XrealHeadTracker")
+	# The GDExtension is Android-only. On desktop the editor loads a dummy stub that DOES register
+	# these classes (so the F1 help can document them), so class presence alone no longer means the
+	# real extension is live — gate on the platform too, or the demo would drive no-op placeholders.
+	_extension_loaded = OS.get_name() == "Android" \
+		and ClassDB.class_exists(&"XrealSystem") and ClassDB.class_exists(&"XrealHeadTracker")
 	if _extension_loaded:
 		_system = ClassDB.instantiate(&"XrealSystem")
 		# (No stereo-mode selector: the port always uses Multipass. Multiview is shelved
@@ -242,7 +246,8 @@ func _spawn_rig() -> void:
 ## with the CameraServer, and show it on the head-locked cam_panel quad (defined in ar_scene.tscn).
 ## The feed is driven per-frame from _process (poll_frame grabs the latest frame → set_rgb_image).
 func _setup_camera_feed() -> void:
-	if not ClassDB.class_exists(&"XrealCameraFeed"):
+	# Android-only + real extension present (the desktop dummy registers XrealCameraFeed for docs).
+	if OS.get_name() != "Android" or not ClassDB.class_exists(&"XrealCameraFeed"):
 		return
 	# Runtime CAMERA permission (also grant via `adb shell pm grant … android.permission.CAMERA`).
 	if OS.has_feature("android"):

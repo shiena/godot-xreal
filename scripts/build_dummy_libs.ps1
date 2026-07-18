@@ -27,6 +27,9 @@ $src = Join-Path $root 'dummy/gdext_dummy.c'
 
 # Regenerate the placeholder class list from the Rust source (single source of truth).
 & (Join-Path $PSScriptRoot 'gen_stub_classes.ps1')
+# gdext_dummy.c also #includes dummy/stub_docs.inc (the class-ref docs shown in the editor F1 help).
+# That file is a committed prerequisite regenerated separately by scripts/gen_docs.ps1 (it needs a
+# Rust host toolchain, kept out of this clang-only build); CI checks it stays in sync.
 
 # -Wl,-noentry: no CRT means no DllMainCRTStartup; a resident DLL needs no entry point.
 $targets = @(
@@ -41,7 +44,9 @@ $targets = @(
 
 foreach ($t in $targets) {
 	$out = Join-Path $root "dummy/$($t.out)"
-	& $Clang "--target=$($t.triple)" -O2 -ffreestanding -nostdlib -shared -fuse-ld=lld @($t.extra) -o $out $src
+	# -fno-stack-protector: freestanding has no __stack_chk_fail/guard to link, and some targets
+	# (e.g. macOS) enable the stack protector by default for functions with local buffers.
+	& $Clang "--target=$($t.triple)" -O2 -ffreestanding -nostdlib -fno-stack-protector -shared -fuse-ld=lld @($t.extra) -o $out $src
 	if ($LASTEXITCODE -ne 0) { throw "clang failed for $($t.triple)" }
 	Write-Host "built $($t.out)"
 }

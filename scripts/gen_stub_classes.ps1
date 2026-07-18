@@ -6,11 +6,12 @@
 # Windows script; gen_stub_classes.sh is its POSIX twin (no pwsh on mac/Linux). Keep the
 # two generators' OUTPUT byte-identical — the release workflow commits whichever ran.
 #
-# Node-derived classes get a placeholder so scenes that place them open warning-free in
-# the desktop editor; non-Node classes (RefCounted etc.) are deliberately skipped so the
-# ClassDB.class_exists gates in the demo scripts stay false on desktop. A base this
-# script doesn't know fails the run loudly — classify it in the lists below AND in the
-# .sh twin when adding one to the Rust side.
+# Every GodotClass gets a placeholder: Node-derived ones so scenes that place them open
+# warning-free, and the rest (RefCounted / CameraFeed) so the editor F1 help can show their
+# members (the desktop dummy registers each class + its members for docs). The demo's
+# real-extension gate is platform-based (OS.get_name() == "Android"), not class presence, so
+# registering these on desktop is safe. A base this script doesn't know fails the run loudly —
+# add it to the known list below AND in the .sh twin when adding one to the Rust side.
 #
 #   pwsh scripts/gen_stub_classes.ps1          # (re)write dummy/stub_classes.inc
 #   pwsh scripts/gen_stub_classes.ps1 -Check   # verify the committed file is in sync
@@ -27,10 +28,8 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 $out = Join-Path $root 'dummy/stub_classes.inc'
 
-# Base classes that inherit Node -> the dummy registers a placeholder.
-$nodeBases = @('Node', 'Node2D', 'Node3D', 'Control', 'CanvasLayer')
-# Known non-Node bases -> deliberately no placeholder.
-$nonNodeBases = @('RefCounted', 'Object', 'Resource', 'CameraFeed')
+# Base classes the dummy knows how to register a placeholder for (all get one).
+$knownBases = @('Node', 'Node2D', 'Node3D', 'Control', 'CanvasLayer', 'RefCounted', 'Object', 'Resource', 'CameraFeed')
 
 $classes = @()
 foreach ($file in Get-ChildItem (Join-Path $root 'src') -Filter '*.rs' -Recurse) {
@@ -40,16 +39,16 @@ foreach ($file in Get-ChildItem (Join-Path $root 'src') -Filter '*.rs' -Recurse)
 		$name = $m.Groups[2].Value
 		$base = 'RefCounted'  # godot-rust's default when #[class] has no `base =`
 		if ($attrArgs -match 'base\s*=\s*(\w+)') { $base = $Matches[1] }
-		if ($nodeBases -contains $base) {
+		if ($knownBases -contains $base) {
 			$classes += [pscustomobject]@{ Name = $name; Base = $base }
-		} elseif ($nonNodeBases -notcontains $base) {
-			throw ("unknown base class '$base' (struct $name in $($file.Name)) — classify it " +
-				'in gen_stub_classes.ps1 ($nodeBases / $nonNodeBases) AND the .sh twin')
+		} else {
+			throw ("unknown base class '$base' (struct $name in $($file.Name)) — add it to " +
+				'$knownBases in gen_stub_classes.ps1 AND the .sh twin')
 		}
 	}
 }
 if ($classes.Count -eq 0) {
-	throw 'no Node-derived GodotClass structs found under src/ — did the parsing regex break?'
+	throw 'no GodotClass structs found under src/ — did the parsing regex break?'
 }
 
 $lines = @(

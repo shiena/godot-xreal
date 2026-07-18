@@ -39,3 +39,6 @@ unsafe impl ExtensionLibrary for GodotXrealExtension {}
 pub use camera_feed::XrealCameraFeed;
 pub use node::XrealHeadTracker;
 pub use system::XrealSystem;
+
+#[cfg(test)]
+mod doc_gen;

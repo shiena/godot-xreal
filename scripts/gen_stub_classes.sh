@@ -6,10 +6,12 @@
 # POSIX twin of gen_stub_classes.ps1 (Windows; no pwsh on mac/Linux). Keep the two
 # generators' OUTPUT byte-identical — the release workflow commits whichever ran.
 #
-# Node-derived classes get a placeholder so scenes that place them open warning-free in
-# the desktop editor; non-Node classes (RefCounted etc.) are deliberately skipped so the
-# ClassDB.class_exists gates in the demo scripts stay false on desktop. A base this
-# script doesn't know fails the run loudly — classify it below AND in the .ps1 twin.
+# Every GodotClass gets a placeholder: Node-derived ones so scenes that place them open
+# warning-free, and the rest (RefCounted / CameraFeed) so the editor F1 help can show their
+# members (the desktop dummy registers each class + its members for docs). The demo's
+# real-extension gate is platform-based (OS.get_name() == "Android"), not class presence, so
+# registering these on desktop is safe. A base this script doesn't know fails the run loudly —
+# add it to the known list below AND in the .ps1 twin.
 #
 #   ./scripts/gen_stub_classes.sh            # (re)write dummy/stub_classes.inc
 #   ./scripts/gen_stub_classes.sh --check    # verify the committed file is in sync
@@ -18,10 +20,8 @@ set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 out="$root/dummy/stub_classes.inc"
 
-# Base classes that inherit Node -> the dummy registers a placeholder.
-node_bases="Node Node2D Node3D Control CanvasLayer"
-# Known non-Node bases -> deliberately no placeholder.
-non_node_bases="RefCounted Object Resource CameraFeed"
+# Base classes the dummy knows how to register a placeholder for (all get one).
+known_bases="Node Node2D Node3D Control CanvasLayer RefCounted Object Resource CameraFeed"
 
 pairs_file="$(mktemp)"
 entries_file="$(mktemp)"
@@ -55,25 +55,20 @@ done
 count=0
 while IFS=' ' read -r name base; do
 	[ -n "$name" ] || continue
-	case " $node_bases " in
+	case " $known_bases " in
 	*" $base "*)
 		printf '\t{ "%s", "%s", 0, 0, 0 },\n' "$name" "$base" >> "$entries_file"
 		count=$((count + 1))
 		;;
 	*)
-		case " $non_node_bases " in
-		*" $base "*) ;;
-		*)
-			echo "error: unknown base class '$base' (struct $name) — classify it in" >&2
-			echo "gen_stub_classes.sh (node_bases / non_node_bases) AND the .ps1 twin" >&2
-			exit 1
-			;;
-		esac
+		echo "error: unknown base class '$base' (struct $name) — add it to" >&2
+		echo "known_bases in gen_stub_classes.sh AND the .ps1 twin" >&2
+		exit 1
 		;;
 	esac
 done < <(LC_ALL=C sort "$pairs_file")
 if [ "$count" -eq 0 ]; then
-	echo "error: no Node-derived GodotClass structs found under src/ — did the parsing break?" >&2
+	echo "error: no GodotClass structs found under src/ — did the parsing break?" >&2
 	exit 1
 fi
 
