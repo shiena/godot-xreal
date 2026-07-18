@@ -92,9 +92,10 @@ const _tabs := [
 ]
 
 # Adjacent item pairs (left name first) laid out as one 2-column row instead of two stacked rows, for
-# tightly-related controls: hand_l/hand_r (pointer-origin hand) and anchor/place (anchor mode + drop-at-
-# fingertip). Both names of a pair must sit next to each other, in this order, in the tab's `items`.
-const _paired_rows := [["hand_l", "hand_r"], ["anchor", "place"]]
+# tightly-related controls: hand_l/hand_r (pointer-origin hand), anchor/place (anchor mode + drop-at-
+# fingertip), and image/image_cycle (image-tracking mode + set cycle). Both names of a pair must sit
+# next to each other, in this order, in the tab's `items`.
+const _paired_rows := [["hand_l", "hand_r"], ["anchor", "place"], ["image", "image_cycle"]]
 
 # Layout, filled by _layout() from the current size.
 var _pad_rect: Rect2
