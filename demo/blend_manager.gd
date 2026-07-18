@@ -76,6 +76,7 @@ func capture_blended() -> String:
 	if img == null:
 		push_warning("[blend] readback failed")
 		return ""
+	img.flip_y()  # SubViewport read-back is bottom-up (GL origin) — flip to upright before saving
 	var path := OS.get_user_data_dir().path_join("blend_%d.jpg" % Time.get_ticks_msec())
 	var err := img.save_jpg(path)
 	if err != OK:
