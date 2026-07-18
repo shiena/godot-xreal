@@ -88,8 +88,13 @@ const _toggles := {
 const _tabs := [
 	{"label": "Control", "items": ["trigger", "grip", "menu", "hand_l", "hand_r", "exit"]},
 	{"label": "Camera", "items": ["capture", "blend", "camera", "stream"]},
-	{"label": "AR", "items": ["place", "plane", "anchor", "image", "image_cycle", "mesh"]},
+	{"label": "AR", "items": ["plane", "anchor", "place", "image", "image_cycle", "mesh"]},
 ]
+
+# Adjacent item pairs (left name first) laid out as one 2-column row instead of two stacked rows, for
+# tightly-related controls: hand_l/hand_r (pointer-origin hand) and anchor/place (anchor mode + drop-at-
+# fingertip). Both names of a pair must sit next to each other, in this order, in the tab's `items`.
+const _paired_rows := [["hand_l", "hand_r"], ["anchor", "place"]]
 
 # Layout, filled by _layout() from the current size.
 var _pad_rect: Rect2
@@ -158,29 +163,39 @@ func _layout() -> void:
 		_layout_items(items, bx, top, bw, bh, gap)
 	queue_redraw()
 
-## Number of stacked rows for `items` — hand_l + hand_r (if both present) share one 2-column row.
+## Whether items[i] and items[i+1] form a `_paired_rows` pair (so they share one 2-column row).
+func _pair_at(items: Array, i: int) -> bool:
+	if i + 1 >= items.size():
+		return false
+	for pair in _paired_rows:
+		if items[i] == pair[0] and items[i + 1] == pair[1]:
+			return true
+	return false
+
+## Number of stacked rows for `items` — each `_paired_rows` pair collapses two items into one row.
 func _row_count(items: Array) -> int:
-	var rows := items.size()
-	if items.has("hand_l") and items.has("hand_r"):
-		rows -= 1
+	var rows := 0
+	var i := 0
+	while i < items.size():
+		i += 2 if _pair_at(items, i) else 1
+		rows += 1
 	return rows
 
 ## Fill `_button_rects` for `items` stacked at column [x, x+w] from `top`, row height `bh`, gap `gap`.
-## The adjacent hand_l/hand_r pair shares one row split into two columns — 左手 on the left, 右手 on the
-## right — so the button positions match their meaning.
+## A `_paired_rows` pair shares one row split into two columns (left name in the left column) so the
+## positions match their meaning (e.g. 左手/右手, or Anchor mode + Place).
 func _layout_items(items: Array, x: float, top: float, w: float, bh: float, gap: float) -> void:
 	var by := top
 	var i := 0
 	while i < items.size():
-		var name: String = items[i]
-		if name == "hand_l" and i + 1 < items.size() and items[i + 1] == "hand_r":
+		if _pair_at(items, i):
 			var g := w * 0.03
 			var hw := (w - g) * 0.5
-			_button_rects["hand_l"] = Rect2(x, by, hw, bh)
-			_button_rects["hand_r"] = Rect2(x + hw + g, by, hw, bh)
+			_button_rects[items[i]] = Rect2(x, by, hw, bh)
+			_button_rects[items[i + 1]] = Rect2(x + hw + g, by, hw, bh)
 			i += 2
 		else:
-			_button_rects[name] = Rect2(x, by, w, bh)
+			_button_rects[items[i]] = Rect2(x, by, w, bh)
 			i += 1
 		by += bh + gap
 
