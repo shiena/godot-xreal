@@ -29,31 +29,31 @@ still loads (for scene editing) but head tracking is inert.
 
 ## Supported features
 
-Verified on XREAL One Pro (and hand tracking on the XREAL Air 2 Ultra) with the **XREAL SDK for Unity
-3.1.0** native libraries. Everything below is community-reverse-engineered interop, not an official API.
+Verified on the XREAL One Pro (rows marked "Air 2 Ultra" on the XREAL Air 2 Ultra) with the
+**XREAL SDK for Unity 3.1.0** native libraries. Everything below is community-reverse-engineered interop, not an official API.
 
 | Feature | Status | Notes |
 |---|---|---|
-| **Head tracking** (orientation: pitch / yaw / roll) | ✅ | From the XR-plugin display pose; drives the eye cameras. |
+| **Head tracking** — 6DoF (rotation + position world-lock) | ✅ | The XR-plugin display pose (full orientation + translation) drives the eye cameras. |
 | **Tracking mode** 6DoF / 3DoF / 0DoF | ✅ | Selectable (`xreal/tracking_type` / `XrealSystem.set_tracking_type` / `debug.xreal.tracking_type`). |
 | **Stereo glasses display** — head-locked peek window | ✅ | World-locked 3D through the glasses. **Multipass** (both eyes) is the default. |
-| **Multiview** stereo (single-pass-instanced) | ✅ works, but **no performance gain** | Renders both eyes correctly (opt-in: `setprop debug.xreal.stereo_mode 2`). **⚠️ It does not reduce rendering load** — in fact slightly heavier than Multipass. Our rig draws two Godot SubViewports (two passes) then copies each into an array layer; the single-pass-instanced win only exists if the *engine* draws both eyes in one multiview pass (which Godot's Compatibility SubViewport rig does not). So **Multipass stays the default.** (The black right eye / colour corruption were two Adreno GLES driver quirks in the layer copy — a `glBlitFramebuffer`-into-layer>0 no-op and a raw-`glCopyImageSubData` format mismatch — now fixed; the old "NR compositor can't sample layer 1" verdict was wrong.) See [`docs/archive/multiview-investigation.md`](docs/archive/multiview-investigation.md). |
+| **Multiview** stereo (single-pass-instanced) | ✅ works, but **no performance gain** | Renders both eyes correctly (opt-in: `setprop debug.xreal.stereo_mode 2`). **⚠️ It does not reduce rendering load** — in fact slightly heavier than Multipass. Our rig draws two Godot SubViewports (two passes) then copies each into an array layer; the single-pass-instanced win only exists if the *engine* draws both eyes in one multiview pass (which Godot's Compatibility SubViewport rig does not). So **Multipass stays the default.** See [`docs/archive/multiview-investigation.md`](docs/archive/multiview-investigation.md). |
 | **Recenter** | ✅ | Resets the forward direction (SDK `NativePerception::Recenter`). |
 | **Hand tracking** (26-joint, both hands) → Godot `XRHandTracker` | ✅ (Air 2 Ultra) | Live hand joints fed to two `XRServer` hand trackers (`/user/hand_tracker/{left,right}`); the demo draws world-locked joint spheres. **Air 2 Ultra only** — the One Pro lacks the outward cameras (`IsHandTrackingSupported()==false`). Enabled via the internal `SetHandTrackingEnabled` + `input_source=3`. See [`docs/plans/hand-tracking-plan.md`](docs/plans/hand-tracking-plan.md). |
-| **RGB camera** as a Godot `CameraFeed` | ✅ | Full-colour, shown in-scene on a head-locked quad. **Requires 3DoF** (it shares the camera with 6DoF SLAM). |
+| **RGB camera** as a Godot `CameraFeed` | ✅ | Full-colour, shown in-scene on a head-locked quad. Works alongside 6DoF (SLAM uses the separate grayscale cameras). |
 | **Render metrics** — present FPS / dropped / early / latency | ✅ | Live compositor stats via the `NRMetrics*` API (queried directly, not the Unity `UpdateMetrics` sink), on `XrealSystem` (`get_present_fps()`, `get_dropped_frame_count()`, …). See [`docs/plans/render-metrics-gdscript-plan.md`](docs/plans/render-metrics-gdscript-plan.md). |
 | **Glasses input** — physical keys (MENU/MULTI: click/double/long) | ✅ | Godot signals (`key_event`, `key_state_changed`). |
 | **Wear sensor / brightness / volume / electrochromic / USB hot-plug** | ✅ | Signals (`wearing_changed`, `brightness_changed`, `glasses_connected`, …). |
 | **Diagnostics** — session / tracking state, HMD clock, plugin version | ✅ | Via `XrealSystem`. |
 | **On-screen touch controller** (phone screen) | ✅ (demo) | App-level Godot UI (`demo/touch_controller.gd`): customizable touchpad + buttons → signals, phone-vibration haptics. The phone shows the controller, the glasses show the 3D scene (separate screens) — no native dependency. Godot analog of the SDK's `XREALVirtualController`. |
 | **Phone 3D pointer** (host IMU) | ✅ (demo) | Tilt the phone to aim a 3D ray in the glasses (`demo/phone_pointer.gd`). Orientation is fused in GDScript from the NRController's raw IMU (`accel` → pitch/roll, `gyro` → yaw) exposed by `XrealSystem.poll_controller()` — the NRController *fused pose* and Godot's own `Input.get_gyroscope()` both read empty on this host. The ray raycasts to highlight what it hits and the trigger selects it; an on-screen left/right-hand toggle switches the beam origin; gyro drift is damped by bias-learning + a deadzone. `recenter` sets forward. |
-| **Multi-resume** — glasses app keeps running (and rendering) when the phone switches apps | ✅ | **Where the Unity SDK uses a floating return window, this port implements auto-enter Picture-in-Picture instead.** Backgrounding drops the app to a small phone tile (paused-but-visible), so Godot's GL thread + Surface stay alive and the glasses keep showing live frames; tapping the tile returns to fullscreen. `XrealBridge.enableAutoEnterPiP`, driven from `demo/main.gd`; manifest scaffolding `nr_features=multiResume` + `NRFakeActivity`. **Device-verified**: the render submit counter keeps advancing past background (it froze before PiP). Why PiP rather than the floating window / a foreground service / a SurfaceView reparent: `docs/plans/background-render-plan.md`. (A floating return button was implemented first — it returned to the app but couldn't keep the glasses rendering — then removed in favour of PiP: `docs/archive/codex-floatingmanager-analysis.md`.) |
-| **Plane detection** → GDScript | ✅ ported (on-device verify pending) | Horizontal/vertical plane detection via `XrealSystem.set_plane_detection_mode()` + `poll_planes()` (added/updated/removed with pose, size, alignment) + `get_plane_boundary()`. Flat C exports in `libXREALXRPlugin.so` (no extra AAR); needs 6DoF. All 4 AR features' C ABI is RE-confirmed — see [`docs/plans/ar-features-plan.md`](docs/plans/ar-features-plan.md). |
-| **Spatial anchors** → GDScript | ✅ ported (on-device verify pending) | Create/persist/restore world anchors via `XrealSystem.acquire_anchor()` / `poll_anchors()` / `save_anchor()` / `load_anchor()` / `estimate_anchor_quality()` etc. Flat C exports (`XRTrackedAnchor` layout device-confirmed) + the vendored `nr_spatial_anchor.aar` backend; needs 6DoF. Also adds `is_camera_supported()` / `is_hmd_feature_supported()` — the SDK's per-device gate (the Air 2 Ultra has no RGB camera). |
+| **Multi-resume** — glasses app keeps running (and rendering) when the phone switches apps | ✅ | **Where the Unity SDK uses a floating return window, this port implements auto-enter Picture-in-Picture instead.** Backgrounding drops the app to a small phone tile (paused-but-visible), so Godot's GL thread + Surface stay alive and the glasses keep showing live frames; tapping the tile returns to fullscreen. `XrealBridge.enableAutoEnterPiP`, driven from `demo/main.gd`; manifest scaffolding `nr_features=multiResume` + `NRFakeActivity`. **Device-verified**: the render submit counter keeps advancing past background. Why PiP rather than the floating window / a foreground service / a SurfaceView reparent: `docs/plans/background-render-plan.md`. |
+| **Plane detection** → GDScript | ✅ (Air 2 Ultra) | Horizontal/vertical plane detection via `XrealSystem.set_plane_detection_mode()` + `poll_planes()` (added/updated/removed with pose, size, alignment) + `get_plane_boundary()`. Flat C exports in `libXREALXRPlugin.so` (no extra AAR); needs 6DoF. All 4 AR features' C ABI is RE-confirmed — see [`docs/plans/ar-features-plan.md`](docs/plans/ar-features-plan.md). |
+| **Spatial anchors** → GDScript | ✅ (Air 2 Ultra) | Create/persist/restore world anchors via `XrealSystem.acquire_anchor()` / `poll_anchors()` / `save_anchor()` / `load_anchor()` / `estimate_anchor_quality()` etc. Flat C exports (`XRTrackedAnchor` layout device-confirmed) + the vendored `nr_spatial_anchor.aar` backend; needs 6DoF. Also adds `is_camera_supported()` / `is_hmd_feature_supported()` — the SDK's per-device gate (the Air 2 Ultra has no RGB camera). |
 
-Not implemented: 6DoF position for the app camera. (Image tracking, marker tracking, depth meshing,
-photo / blended capture and FPV streaming are ported — device verification is still pending for some;
-see [`docs/plans/ar-features-plan.md`](docs/plans/ar-features-plan.md).)
+Also ported: image tracking, marker tracking, depth meshing, photo / blended capture and FPV
+streaming — device verification is still pending for some;
+see [`docs/plans/ar-features-plan.md`](docs/plans/ar-features-plan.md).
 
 ## Install (prebuilt)
 
@@ -156,13 +156,13 @@ is missing.
 1. Install the addon — a [prebuilt release](#install-prebuilt) or [built from source](#build-from-source) — and vendor the libraries.
 2. Instance `addons/godot_xreal/xreal_rig.tscn` (an `XrealHeadTracker` with a `Camera3D`
    child) into your scene, or add an `XrealHeadTracker` and parent a `Camera3D` yourself.
-3. On device, the camera looks around with the wearer's head (3DoF).
+3. On device, the camera follows the wearer's head (6DoF: rotation + position).
 
 The bundled `demo/main.tscn` does exactly this with a ring of boxes and an on-screen
 status panel.
 
 ```
-XrealHeadTracker (Node3D)   # rotation driven by native head pose
+XrealHeadTracker (Node3D)   # rotation + position driven by the native head pose
 └── Camera3D                # current = true
 ```
 
@@ -171,7 +171,7 @@ XrealHeadTracker (Node3D)   # rotation driven by native head pose
 | Class | Member | Description |
 |---|---|---|
 | `XrealHeadTracker` (Node3D) | `is_tracking() -> bool` | A native pose was applied on the last frame. |
-| | `recenter()` | Reset the 3DoF forward direction (`RecenterGlasses`). |
+| | `recenter()` | Reset the forward direction (`RecenterGlasses`). |
 | | `debug_pose_text() -> String` | Raw pose readout for on-screen debugging. |
 | | signal `display_started()` | Glasses display + head tracking first went live. |
 | | signal `glasses_connected()` / `glasses_disconnected()` | USB hot-plug events. |

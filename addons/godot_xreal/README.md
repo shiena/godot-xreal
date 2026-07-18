@@ -1,7 +1,7 @@
 # Godot XREAL (addon)
 
-Use XREAL glasses from Godot 4. Provides **3DoF head tracking** through a native
-GDExtension (Rust / godot-rust). See the repository root for build/RE details.
+Use XREAL glasses from Godot 4. Provides **6DoF head tracking** (rotation + position;
+3DoF/0DoF selectable) through a native GDExtension (Rust / godot-rust). See the repository root for build/RE details.
 
 ## Install
 
@@ -16,7 +16,7 @@ GDExtension (Rust / godot-rust). See the repository root for build/RE details.
 
 | Class | Base | Purpose |
 |---|---|---|
-| `XrealHeadTracker` | `Node3D` | Rotates itself from the native 3DoF head pose each frame. Parent a `Camera3D` under it. `is_tracking() -> bool`, `recenter()`. Emits hot-plug (`glasses_connected` / `glasses_disconnected`) and hardware-input signals (`key_event`, `key_state_changed`, `wearing_changed`, `brightness_changed`, `volume_changed`, `ec_level_changed`, `glasses_event`) with `KEY_*` / `ACTION_*` / `KEY_STATE_*` constants. |
+| `XrealHeadTracker` | `Node3D` | Drives its transform (rotation + position) from the native head pose each frame. Parent a `Camera3D` under it. `is_tracking() -> bool`, `recenter()`. Emits hot-plug (`glasses_connected` / `glasses_disconnected`) and hardware-input signals (`key_event`, `key_state_changed`, `wearing_changed`, `brightness_changed`, `volume_changed`, `ec_level_changed`, `glasses_event`) with `KEY_*` / `ACTION_*` / `KEY_STATE_*` constants. |
 | `XrealSystem` | `RefCounted` | SDK info + control: `is_available()`, `is_session_started()`, `get_plugin_version() -> String`, `get_device_type() -> int`, `get_tracking_state()/get_tracking_reason()/get_tracking_type() -> int`, `switch_tracking_type(type) -> bool` (`TRACKING_*` constants), `set_display_bypass_psensor(bypass) -> int`, `get_hmd_time_nanos() -> int`, `get_head_rotation() -> Quaternion`, `get_diagnostics() -> String`. |
 
 ## Quick start

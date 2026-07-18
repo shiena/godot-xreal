@@ -9,9 +9,12 @@ Status: **IMPLEMENTED 2026-07-13 (device-verified, full colour)** — `src/camer
   samples directly.
 - `set_ycbcr_images` only exists from godot-rust **`api-4-6`** (crate feature bumped).
 - Colour conversion is a port of the SDK's `YUVTransRGB` (full-range BT.601) in the panel shader.
-- **The RGB camera conflicts with 6DoF SLAM** (both consume the camera): with the feed on, the
-  demo forces 3DoF (`set_tracking_type(1)` in `demo/main.gd`); the DISP pose still carries full
-  orientation.
+- **The RGB camera does _not_ conflict with 6DoF SLAM** (disproved on-device 2026-07-18, commit
+  `f56dd3a`): SLAM runs on the Leopard grayscale cameras and the RGB camera is a separate device —
+  One Pro logcat shows 6DoF + RGB coexisting with zero `GetPoseWithStates` failures. The demo
+  originally forced 3DoF with the feed on (`set_tracking_type(1)`, on the shared-camera theory);
+  that force is dropped, so the configured tracking mode (6DoF by default) stays live with the
+  camera on.
 - Known failure mode: a pink/magenta panel = wedged camera service — a crashed client kept the
   camera held (`Recv Frame -99` in logcat, `StartRGBCameraDataCapture` returns the `u64::MAX`
   error sentinel). Recovery requires **replugging the glasses' USB**; an app/device restart is

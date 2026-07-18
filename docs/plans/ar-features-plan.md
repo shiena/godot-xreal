@@ -1,10 +1,11 @@
 # AR features (Plane / Image / Anchor / Mesh): confirmed C ABI + plan
 
-Status: **Plane detection + Spatial Anchor IMPLEMENTED (2026-07-16, compiles clean; on-device
+Status: **All four features IMPLEMENTED. Plane detection + Spatial Anchor device-verified on the
+Air 2 Ultra (2026-07-16); Image Tracking (+ marker tracking) and Depth Mesh ported (on-device
 verification pending). All four features' C ABI is RE-confirmed** (codex, cross-checking the SDK C#
 `[DllImport]` sources against `llvm-nm`/AArch64 disassembly of `libXREALXRPlugin.so`). Implementation
-order: **Plane (done) → Spatial Anchor (done) → Image Tracking (blob pipeline solved — run XREAL's
-`trackableImageTools` CLI; port pending) → Depth Mesh (shelve)**.
+order: **Plane (done) → Spatial Anchor (done) → Image Tracking (done — blob pipeline via XREAL's
+`trackableImageTools` CLI) → Depth Mesh (done — Path B, internal calls)**.
 
 **Device capability gate:** `IsHMDFeatureSupported(XREALSupportedFeature)` (flat export, `-> bool`) is
 the device-accurate feature check the SDK itself uses — e.g. the **Air 2 Ultra has no RGB camera**, so
