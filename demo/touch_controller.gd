@@ -51,24 +51,24 @@ const _buttons := {
 	"trigger": "TRIGGER",
 	"grip": "GRIP",
 	"menu": "MENU",
-	"hand_l": "◀ 左手",
-	"hand_r": "右手 ▶",
-	"place": "配置",
-	"image_cycle": "画像切替",
-	"capture": "撮影",
-	"blend": "合成撮影",
+	"hand_l": "◀ L Hand",
+	"hand_r": "R Hand ▶",
+	"place": "Place",
+	"image_cycle": "Cycle Image",
+	"capture": "Photo",
+	"blend": "Blend Photo",
 }
 
 # Toggle buttons (name -> label). Unlike the momentary buttons above they hold an on/off state
 # (highlighted while on) and fire once on press. Used for the camera / plane / anchor switches;
 # main.gd drives the actual XrealSystem calls and can push state back via set_toggle().
 const _toggles := {
-	"camera": "カメラ",
-	"plane": "平面検出",
-	"anchor": "アンカー",
-	"image": "画像",
-	"mesh": "メッシュ",
-	"stream": "配信",
+	"camera": "Camera",
+	"plane": "Plane",
+	"anchor": "Anchor",
+	"image": "Image",
+	"mesh": "Mesh",
+	"stream": "Stream",
 }
 
 # Tabs, grouped by which glasses support each feature (per XREAL's Feature Compatibility table) so the
@@ -80,8 +80,8 @@ const _toggles := {
 # 配信 (FPV streaming) is an Eyes/RGB-camera feature (One Series only), so it lives in the カメラ tab and
 # is gated the same way (main.gd / stream_manager.gd) to avoid a freeze on the camera-less Air 2 Ultra.
 const _tabs := [
-	{"label": "操作", "items": ["trigger", "grip", "menu", "hand_l", "hand_r"]},
-	{"label": "カメラ", "items": ["camera", "capture", "blend", "stream"]},
+	{"label": "Control", "items": ["trigger", "grip", "menu", "hand_l", "hand_r"]},
+	{"label": "Camera", "items": ["camera", "capture", "blend", "stream"]},
 	{"label": "Air2U", "items": ["place", "plane", "anchor", "image", "image_cycle", "mesh"]},
 ]
 
@@ -100,6 +100,9 @@ var _pad_value := Vector2.ZERO
 # LineEdit child (unlike the custom-drawn buttons) so tapping it opens the Android soft keyboard;
 # _layout() shows it as the first row of the カメラ tab and hides it on other tabs.
 var _stream_edit: LineEdit
+# Box enclosing the Stream toggle + its destination field, so they read as one group (drawn in
+# _draw). Zero-size when the stream field isn't shown or the row gap is too tight for the padding.
+var _stream_group_rect := Rect2()
 
 ## The button names shown on the active tab.
 func _active_items() -> Array:
@@ -119,7 +122,7 @@ func _ready() -> void:
 ## text is read by get_stream_target(); empty means "record a local mp4" (see stream_manager.gd).
 func _make_stream_field() -> void:
 	_stream_edit = LineEdit.new()
-	_stream_edit.placeholder_text = "rtp://<PC-IP>:5555  (空=ローカルmp4録画)"
+	_stream_edit.placeholder_text = "rtp://<PC-IP>:5555  or empty"
 	_stream_edit.visible = false
 	_stream_edit.mouse_filter = Control.MOUSE_FILTER_STOP  # receive taps → focus → soft keyboard
 	_stream_edit.clear_button_enabled = true
@@ -146,14 +149,15 @@ func _layout() -> void:
 		var tab_top := _pad_rect.end.y + s.y * 0.02
 		var tab_h := s.y * 0.055
 		_layout_tab_bar(col_x, tab_top, pad, tab_h)
-		var gap := s.y * 0.016
+		var gap := s.y * 0.02
 		var top := tab_top + tab_h + s.y * 0.02
 		var bottom := s.y * 0.98
 		# Cap the height so a tab with few buttons keeps normal-sized (top-aligned) buttons instead of
-		# one giant one filling the whole area.
-		var bh := minf((bottom - top - gap * (rows - 1)) / rows, s.y * 0.09)
-		var items_top := _apply_stream_field(col_x, top, pad, bh, gap)
-		_layout_items(items, col_x, items_top, pad, bh, gap)
+		# one giant one filling the whole area. Kept compact so the Stream group box (below) has room
+		# for its inner padding without the buttons filling every pixel.
+		var bh := minf((bottom - top - gap * (rows - 1)) / rows, s.y * 0.07)
+		_layout_items(items, col_x, top, pad, bh, gap)
+		_apply_stream_field(col_x, pad, bh, gap)
 	else:
 		# Landscape: touchpad left; tab bar + the active tab's buttons stacked on the right.
 		var pad := minf(s.x * 0.42, s.y * 0.72)
@@ -163,27 +167,34 @@ func _layout() -> void:
 		var tab_h := s.y * 0.1
 		var tab_top := s.y * 0.05
 		_layout_tab_bar(bx, tab_top, bw, tab_h)
-		var gap := s.y * 0.035
+		var gap := s.y * 0.04
 		var top := tab_top + tab_h + s.y * 0.03
 		var bottom := s.y * 0.95
-		var bh := minf(s.y * 0.16, (bottom - top - gap * (rows - 1)) / rows)
-		var items_top := _apply_stream_field(bx, top, bw, bh, gap)
-		_layout_items(items, bx, items_top, bw, bh, gap)
+		var bh := minf(s.y * 0.12, (bottom - top - gap * (rows - 1)) / rows)
+		_layout_items(items, bx, top, bw, bh, gap)
+		_apply_stream_field(bx, bw, bh, gap)
 	queue_redraw()
 
-## Show the stream-destination field as the カメラ tab's first row and return the y where that tab's
-## buttons should start; hide it and leave `top` unchanged on the other tabs.
-func _apply_stream_field(x: float, top: float, w: float, bh: float, gap: float) -> float:
-	if not _active_items().has("stream"):
+## Position the stream-destination field just below the Stream (配信) button and compute the box that
+## groups the two (drawn in _draw). Hides the field and clears the box on tabs without streaming.
+func _apply_stream_field(x: float, w: float, bh: float, gap: float) -> void:
+	_stream_group_rect = Rect2()
+	if not _active_items().has("stream") or not _button_rects.has("stream"):
 		if _stream_edit:
 			_stream_edit.visible = false
-		return top
+		return
+	var sr: Rect2 = _button_rects["stream"]
+	var fr := Rect2(sr.position.x, sr.end.y + gap, sr.size.x, bh)
 	if _stream_edit:
-		_stream_edit.position = Vector2(x, top)
-		_stream_edit.size = Vector2(w, bh)
-		_stream_edit.add_theme_font_size_override("font_size", int(maxf(18.0, bh * 0.34)))
+		_stream_edit.position = fr.position
+		_stream_edit.size = fr.size
+		_stream_edit.add_theme_font_size_override("font_size", int(maxf(14.0, bh * 0.26)))
 		_stream_edit.visible = true
-	return top + bh + gap
+	# Group the Stream button + field with a box, padded inside so the border doesn't hug them. The
+	# padding fits because the buttons are kept compact (bh cap above), leaving slack in the row gaps.
+	var pad_g := minf(gap * 0.9, 26.0)
+	if pad_g >= 4.0:
+		_stream_group_rect = sr.merge(fr).grow(pad_g)
 
 ## Number of stacked rows for `items` — hand_l + hand_r (if both present) share one 2-column row.
 func _row_count(items: Array) -> int:
@@ -358,6 +369,11 @@ func _draw() -> void:
 		_draw_label(font, tab_font_size, tr, _tabs[i]["label"],
 			Color.WHITE if active else Color(1, 1, 1, 0.6),
 			tr.position.y + (tr.size.y + tab_font_size) * 0.5 - tab_font_size * 0.3)
+
+	# Group the Stream toggle + its destination field with a box (drawn behind them, カメラ tab only).
+	if _stream_group_rect.size != Vector2.ZERO:
+		draw_rect(_stream_group_rect, Color(0.3, 0.55, 0.9, 0.10))
+		draw_rect(_stream_group_rect, Color(0.6, 0.8, 1.0, 0.7), false, 2.0)
 
 	# The active tab's buttons: momentary vs toggle drawn differently.
 	for name in _active_items():
