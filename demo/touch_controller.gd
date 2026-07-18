@@ -74,15 +74,15 @@ const _toggles := {
 # Tabs, grouped by which glasses support each feature (per XREAL's Feature Compatibility table) so the
 # right controls are easy to find per device. The touchpad stays visible above; each tab shows only its
 # own buttons. Each item must be a key of `_buttons` or `_toggles`.
-#   操作  — the virtual controller (3DoF): ALL glasses (One Series / Air·Air 2·Air 2 Pro / Air 2 Ultra).
-#   カメラ — the RGB camera: XREAL One Series only (Air/Air 2/Air 2 Pro and Air 2 Ultra have no RGB cam).
-#   Air2U — perception (plane / spatial anchor / image tracking / depth mesh): Air 2 Ultra only.
-# 配信 (FPV streaming) is an Eyes/RGB-camera feature (One Series only), so it lives in the カメラ tab and
-# is gated the same way (main.gd / stream_manager.gd) to avoid a freeze on the camera-less Air 2 Ultra.
+#   Control — the virtual controller (3DoF): ALL glasses (One Series / Air·Air 2·Air 2 Pro / Air 2 Ultra).
+#   Camera  — the RGB camera: XREAL One Series only (Air/Air 2/Air 2 Pro and Air 2 Ultra have no RGB cam).
+#   AR      — perception (plane / spatial anchor / image tracking / depth mesh): Air 2 Ultra only.
+# Streaming (FPV) is an Eyes/RGB-camera feature (One Series only), so it lives in the Camera tab and is
+# gated the same way (main.gd / stream_manager.gd) to avoid a freeze on the camera-less Air 2 Ultra.
 const _tabs := [
 	{"label": "Control", "items": ["trigger", "grip", "menu", "hand_l", "hand_r"]},
-	{"label": "Camera", "items": ["camera", "capture", "blend", "stream"]},
-	{"label": "Air2U", "items": ["place", "plane", "anchor", "image", "image_cycle", "mesh"]},
+	{"label": "Camera", "items": ["capture", "blend", "camera", "stream"]},
+	{"label": "AR", "items": ["place", "plane", "anchor", "image", "image_cycle", "mesh"]},
 ]
 
 # Layout, filled by _layout() from the current size.
