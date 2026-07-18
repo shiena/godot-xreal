@@ -480,6 +480,11 @@ func _on_tc_blend() -> void:
 	if _blend_manager:
 		_blend_manager.capture_blended()
 
+## Phone-menu "Exit" → quit. The touch controller shows a Yes/No dialog first and only emits this on Yes.
+## A phone-menu exit for glasses without physical keys (the Air 2 Ultra has only an EC-dimming button).
+func _on_tc_exit() -> void:
+	get_tree().quit()
+
 ## XrealAR signal (plane_added / plane_updated): overlay/refresh the plane's box. Logs the running
 ## live-plane count (derived from _plane_boxes) on first sight of a plane, for on-device verification.
 func _on_plane_changed(plane: Dictionary) -> void:
@@ -574,7 +579,8 @@ func _on_key_event(key: int, action: int) -> void:
 	# replacing the on-screen button for a glasses-only workflow.
 	if key == XREAL_KEY_MENU and action == XREAL_ACTION_LONG_PRESS:
 		_on_recenter_pressed()
-	# Long-press the MULTI key to quit the app (glasses-only exit).
+	# Long-press the MULTI key to quit the app (glasses-only exit). NB: only the One series has these
+	# physical keys — the Air 2 Ultra has just an EC-dimming button, so it exits via the phone-menu Exit.
 	elif key == XREAL_KEY_MULTI and action == XREAL_ACTION_LONG_PRESS:
 		get_tree().quit()
 

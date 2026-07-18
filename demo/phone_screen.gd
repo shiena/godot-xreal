@@ -37,6 +37,8 @@ signal image_cycle_pressed()
 signal capture_pressed()
 ## Momentary "合成撮影" button — capture a blended camera+AR (mixed-reality) photo.
 signal blend_pressed()
+## The user confirmed "Yes" on the phone-menu Exit dialog — quit the app.
+signal exit_confirmed()
 
 func _ready() -> void:
 	var c: Control = $TouchController
@@ -56,6 +58,7 @@ func _ready() -> void:
 	c.image_cycle_pressed.connect(image_cycle_pressed.emit)
 	c.capture_pressed.connect(capture_pressed.emit)
 	c.blend_pressed.connect(blend_pressed.emit)
+	c.exit_confirmed.connect(exit_confirmed.emit)
 
 ## Forward a programmatic toggle-state change to the touch controller (see its set_toggle).
 func set_toggle(name: String, on: bool) -> void:

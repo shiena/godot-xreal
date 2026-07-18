@@ -41,6 +41,10 @@ signal image_cycle_pressed()
 signal capture_pressed()
 ## Momentary "合成撮影" button — capture a blended camera+AR (mixed-reality) photo.
 signal blend_pressed()
+## The user confirmed "Yes" on the Exit dialog — the app should quit. (The "Exit" button first shows a
+## drawn Yes/No confirmation; this fires only on Yes.) A phone-menu exit for glasses without physical
+## keys (the Air 2 Ultra has only an EC-dimming button).
+signal exit_confirmed()
 
 ## Backdrop fill. Opaque by default so the phone shows only the controller (the glasses-bound
 ## 3D preview behind it is hidden); set a translucent alpha to let the 3D show through instead.
@@ -57,6 +61,7 @@ const _buttons := {
 	"image_cycle": "Cycle Image",
 	"capture": "Photo",
 	"blend": "Blend Photo",
+	"exit": "Exit",
 }
 
 # Toggle buttons (name -> label). Unlike the momentary buttons above they hold an on/off state
@@ -80,7 +85,7 @@ const _toggles := {
 # Streaming (FPV) is an Eyes/RGB-camera feature (One Series only), so it lives in the Camera tab and is
 # gated the same way (main.gd / stream_manager.gd) to avoid a freeze on the camera-less Air 2 Ultra.
 const _tabs := [
-	{"label": "Control", "items": ["trigger", "grip", "menu", "hand_l", "hand_r"]},
+	{"label": "Control", "items": ["trigger", "grip", "menu", "hand_l", "hand_r", "exit"]},
 	{"label": "Camera", "items": ["capture", "blend", "camera", "stream"]},
 	{"label": "AR", "items": ["place", "plane", "anchor", "image", "image_cycle", "mesh"]},
 ]
@@ -96,6 +101,11 @@ var _finger_widget := {}      # touch index -> widget name ("touchpad" / "tab:N"
 var _pressed := {}            # widget name -> bool (momentary press highlight)
 var _toggle_on := {}          # toggle name -> bool (persistent on/off)
 var _pad_value := Vector2.ZERO
+# Exit confirmation: while true, a drawn Yes/No dialog covers the controller and only its two buttons
+# are tappable (see _draw / _input). Their hit-rects are recomputed each _draw.
+var _confirm_exit := false
+var _yes_rect := Rect2()
+var _no_rect := Rect2()
 
 ## The button names shown on the active tab.
 func _active_items() -> Array:
@@ -192,6 +202,21 @@ func _widget_at(pos: Vector2) -> String:
 	return ""
 
 func _input(event: InputEvent) -> void:
+	# While the Exit dialog is up it is modal: only its Yes/No buttons respond; all other touches (and
+	# drags) are swallowed so the controller behind it can't be operated.
+	if _confirm_exit:
+		if event is InputEventScreenTouch and event.pressed:
+			if _yes_rect.has_point(event.position):
+				_confirm_exit = false
+				_vibrate(20)
+				exit_confirmed.emit()
+			elif _no_rect.has_point(event.position):
+				_confirm_exit = false
+				_vibrate(15)
+			queue_redraw()
+		if event is InputEventScreenTouch or event is InputEventScreenDrag:
+			get_viewport().set_input_as_handled()
+		return
 	if event is InputEventScreenTouch:
 		if event.pressed:
 			var w := _widget_at(event.position)
@@ -258,6 +283,8 @@ func _press(widget: String, pos: Vector2) -> void:
 			capture_pressed.emit()
 		"blend":
 			blend_pressed.emit()
+		"exit":
+			_confirm_exit = true  # show the Yes/No dialog; actual quit fires on Yes (see _input/_draw)
 	queue_redraw()
 
 func _release(widget: String) -> void:
@@ -336,6 +363,32 @@ func _draw() -> void:
 			draw_rect(r, Color(1, 1, 1, 0.85), false, 3.0)
 			_draw_label(font, font_size, r, _buttons[name], Color.WHITE,
 				r.position.y + (r.size.y + font_size) * 0.5 - font_size * 0.3)
+
+	# Modal "Exit the app?" confirmation, drawn on top of everything (its Yes/No are the only tappable
+	# widgets while up — see _input). Recompute the button hit-rects here each frame.
+	if _confirm_exit:
+		draw_rect(Rect2(Vector2.ZERO, size), Color(0, 0, 0, 0.65))  # dim the controller behind it
+		var dw := size.x * 0.82
+		var dh := minf(size.y * 0.24, size.x * 0.55)
+		var dx := (size.x - dw) * 0.5
+		var dy := (size.y - dh) * 0.5
+		var dlg := Rect2(dx, dy, dw, dh)
+		draw_rect(dlg, Color(0.1, 0.12, 0.16, 0.98))
+		draw_rect(dlg, Color(0.6, 0.8, 1.0, 0.9), false, 3.0)
+		_draw_label(font, font_size, dlg, "Exit the app?", Color.WHITE, dy + dh * 0.34)
+		var bw := dw * 0.4
+		var bh := dh * 0.3
+		var by := dy + dh - bh - dh * 0.1
+		_no_rect = Rect2(dx + dw * 0.06, by, bw, bh)
+		_yes_rect = Rect2(dx + dw - bw - dw * 0.06, by, bw, bh)
+		draw_rect(_no_rect, Color(0.4, 0.4, 0.45, 0.35))
+		draw_rect(_no_rect, Color(1, 1, 1, 0.7), false, 2.0)
+		draw_rect(_yes_rect, Color(0.7, 0.25, 0.25, 0.45))
+		draw_rect(_yes_rect, Color(1, 0.6, 0.6, 0.95), false, 2.0)
+		_draw_label(font, font_size, _no_rect, "No", Color.WHITE,
+			_no_rect.position.y + (_no_rect.size.y + font_size) * 0.5 - font_size * 0.3)
+		_draw_label(font, font_size, _yes_rect, "Yes", Color.WHITE,
+			_yes_rect.position.y + (_yes_rect.size.y + font_size) * 0.5 - font_size * 0.3)
 
 func _draw_label(font: Font, font_size: int, r: Rect2, text: String, color: Color, y: float) -> void:
 	draw_string(font, Vector2(r.position.x, y), text, HORIZONTAL_ALIGNMENT_CENTER,
