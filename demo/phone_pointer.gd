@@ -14,8 +14,9 @@ extends Node3D
 ## Ray length (m).
 @export var ray_length := 6.0
 ## Where the beam originates relative to the head. On the glasses buffer +Y reads as down, so a
-## positive Y puts the origin at bottom-right (right hand); flipped by `set_hand`.
-@export var hand_offset := Vector3(0.28, 0.32, -0.3)
+## positive Y puts the origin at the bottom; the X sign picks the hand (negative = left, the
+## default), flipped by `set_hand`.
+@export var hand_offset := Vector3(-0.28, 0.32, -0.3)
 ## Gyro drift suppression: rate (rad/s, after bias) below this counts as noise; bias learn rate.
 @export var gyro_deadzone := 0.012
 @export var bias_learn := 0.02
@@ -138,7 +139,7 @@ func select() -> void:
 			m.albedo_color = Color.from_hsv(randf(), 0.75, 0.95)
 			_hover_emission = Color.BLACK  # refresh so hover highlight recomputes
 
-## Switch the beam origin between the right hand (default) and the left hand.
+## Switch the beam origin between the left hand (default) and the right hand.
 func set_hand(is_right: bool) -> void:
 	hand_offset.x = absf(hand_offset.x) * (1.0 if is_right else -1.0)
 
