@@ -18,6 +18,11 @@ const MEDIA_CODEC_LIB: &str = "libmedia_codec.so";
 
 type FnCreate = unsafe extern "C" fn(*mut u64) -> i32;
 type FnSetConfig = unsafe extern "C" fn(u64, *const c_char) -> i32;
+/// `HWEncoderSetMediaProjection(handle, media_projection)`. The SDK's `NativeEncoder.SetConfigration`
+/// always calls this right after the config (a null projection for the RGB-camera / texture path —
+/// it is only non-null for screen capture). It initialises encoder state that `HWEncoderStart`
+/// reads; omitting it left that field null and crashed `HWEncoderStart` on device (SIGSEGV).
+type FnSetMediaProjection = unsafe extern "C" fn(u64, *mut core::ffi::c_void) -> i32;
 type FnStart = unsafe extern "C" fn(u64) -> i32;
 type FnUpdateSurface = unsafe extern "C" fn(u64, usize, u64) -> i32;
 /// `HWEncoderNotifyAudioData(handle, samples, nSamples, nBytesPerSample, nChannels, sampleRate, fmt)`
@@ -117,6 +122,11 @@ pub fn start(
             Ok(s) => *s,
             Err(_) => return false,
         };
+        let set_media_projection: FnSetMediaProjection =
+            match lib.get::<FnSetMediaProjection>(b"HWEncoderSetMediaProjection\0") {
+                Ok(s) => *s,
+                Err(_) => return false,
+            };
         let start_fn: FnStart = match lib.get::<FnStart>(b"HWEncoderStart\0") {
             Ok(s) => *s,
             Err(_) => return false,
@@ -153,6 +163,12 @@ pub fn start(
             godot::global::godot_warn!("[xreal] HWEncoderSetConfigration failed: {cfg}");
             destroy(handle);
             return false;
+        }
+        // Match the SDK: call SetMediaProjection right after the config (null = RGB-camera/texture
+        // path, not screen capture). Without it HWEncoderStart dereferenced a null field → SIGSEGV.
+        let mp = set_media_projection(handle, std::ptr::null_mut());
+        if mp != 0 {
+            godot::global::godot_warn!("[xreal] HWEncoderSetMediaProjection returned {mp} (continuing)");
         }
         if start_fn(handle) != 0 {
             godot::global::godot_warn!("[xreal] HWEncoderStart failed");
@@ -208,7 +224,8 @@ pub fn push_audio(
 }
 
 /// Feed one frame: `gl_texture_id` is the GL texture name to encode (from
-/// `RenderingServer.texture_get_native_handle` on a viewport texture), `timestamp` in nanoseconds.
+/// `RenderingServer.texture_get_native_handle` on the actual viewport color-texture RID returned by
+/// `viewport_get_texture`, not the `ViewportTexture` proxy RID), `timestamp` in nanoseconds.
 /// **Render thread only.** Returns the encoder status (`0` = ok, `-1` if not streaming).
 pub fn submit_frame(gl_texture_id: usize, timestamp: u64) -> i32 {
     let guard = ENCODER.lock().expect("encoder mutex");

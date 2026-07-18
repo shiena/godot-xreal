@@ -24,7 +24,6 @@ var _system: Object                 # XrealSystem
 var _tracker: Node3D                # head tracker (FPV camera follows it)
 var _viewport: SubViewport
 var _camera: Camera3D
-var _gl_tex_id := 0
 var _active := false
 
 func setup(system: Object, tracker: Node3D) -> void:
@@ -75,14 +74,17 @@ func _process(_delta: float) -> void:
 	# FPV camera follows the head.
 	if _tracker and _camera:
 		_camera.global_transform = _tracker.global_transform
-	# Resolve the SubViewport's GL texture id once (after the first render produces it).
-	if _gl_tex_id == 0:
-		_gl_tex_id = RenderingServer.texture_get_native_handle(_viewport.get_texture().get_rid())
-	if _gl_tex_id != 0:
-		var tex := _gl_tex_id
-		var ts := Time.get_ticks_usec() * 1000  # nanoseconds
-		# Push on the render thread — the encoder reads the GL texture on that thread's EGL context.
-		RenderingServer.call_on_render_thread(func() -> void: _system.stream_push_frame(tex, ts))
+	var viewport_rid := _viewport.get_viewport_rid()
+	var ts := Time.get_ticks_usec() * 1000  # nanoseconds
+	# ViewportTexture.get_rid() is a proxy RID. In the Compatibility renderer its copied tex_id can
+	# remain 0, so resolve the viewport's real render-target color texture instead. Resolve the GL name
+	# every frame to follow render-target reallocations, and push while the render EGL context is current.
+	RenderingServer.call_on_render_thread(func() -> void:
+		var color_texture_rid := RenderingServer.viewport_get_texture(viewport_rid)
+		var gl_tex_id := RenderingServer.texture_get_native_handle(color_texture_rid)
+		if gl_tex_id != 0:
+			_system.stream_push_frame(gl_tex_id, ts)
+	)
 
 func _exit_tree() -> void:
 	if _active and _system:

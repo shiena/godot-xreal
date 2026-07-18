@@ -95,6 +95,11 @@ public final class XrealBridge {
 		loadNative("nr_api");
 		loadNative("XREALNativeSessionManager");
 		loadNative("XREALXRPlugin");
+		// media_codec (FPV HW encoder) must go through System.loadLibrary too: its JNI_OnLoad, run
+		// with the real JavaVM, creates a global manager singleton the encoder dereferences. Merely
+		// dlopen'ing it from Rust skips JNI_OnLoad, leaving that singleton null → HWEncoderStart /
+		// HWEncoderSetMediaProjection crash (SIGSEGV, null+0x38).
+		loadNative("media_codec");
 		loadNative("godot_xreal");
 		nativeLibrariesLoaded = true;
 	}
