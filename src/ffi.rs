@@ -310,6 +310,8 @@ pub mod component {
     pub const RGB_CAMERA: i32 = 2;
     pub const GRAYSCALE_CAMERA_LEFT: i32 = 3;
     pub const GRAYSCALE_CAMERA_RIGHT: i32 = 4;
+    /// Completes the `XREALComponent` enum for reference; no geometry getter targets it, so it is unused.
+    #[allow(dead_code)]
     pub const MAGNETIC: i32 = 5;
 }
 // --- Device / camera geometry (libXREALXRPlugin.so C exports; Unity space). Confirmed export symbols

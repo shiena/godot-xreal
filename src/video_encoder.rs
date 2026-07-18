@@ -63,6 +63,7 @@ fn codec_type(output: &str) -> i32 {
 /// natively; `with_internal` mixes app audio fed via [`push_audio`]. `with_alpha` sets `useAlpha` — the
 /// encoder then packs the frame's RGB + alpha (top/bottom) for the ObserverView MRC composite; the input
 /// texture must carry a real alpha channel (a transparent-bg viewport). See docs/plans/observer-view-notes.md.
+#[allow(clippy::too_many_arguments)]
 fn config_json(
     output: &str,
     width: i32,

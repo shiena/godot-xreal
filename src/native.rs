@@ -1670,7 +1670,7 @@ impl XrealNative {
     pub fn device_resolution(&self, component: i32) -> Option<(i32, i32)> {
         let f = self.get_device_resolution?;
         let mut size = NrSize2i::default();
-        unsafe { f(component, &mut size) }.then(|| (size.width, size.height))
+        unsafe { f(component, &mut size) }.then_some((size.width, size.height))
     }
 
     /// A camera's intrinsics `[fx, fy, cx, cy]` in pixels.
