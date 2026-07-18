@@ -119,6 +119,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Regenerate API docs
+        # The dummy stubs #include dummy/stub_docs.inc + stub_members.inc (the editor F1 help),
+        # generated from the `///` doc comments (needs a host Rust toolchain). Regenerate them here so
+        # the shipped stubs embed the current docs and the release commits exactly what was built.
+        run: bash scripts/gen_docs.sh
+
       - name: Install clang + lld
         run: sudo apt-get update && sudo apt-get install -y clang lld
 
@@ -126,11 +138,13 @@ jobs:
         run: |
           # build_dummy_libs.sh first regenerates dummy/stub_classes.inc from the Rust
           # source (scripts/gen_stub_classes.sh), then builds — so the stubs always ship
-          # the current Node-derived class list. The regenerated .inc rides along in the
-          # artifact so the release job commits exactly what was built.
+          # the current Node-derived class list. The regenerated .inc files (class list +
+          # the F1 doc artifacts above) ride along in the artifact so the release job
+          # commits exactly what was built.
           ./scripts/build_dummy_libs.sh
           mkdir -p out
-          cp dummy/*.dll dummy/*.so dummy/*.dylib dummy/stub_classes.inc out/
+          cp dummy/*.dll dummy/*.so dummy/*.dylib \
+             dummy/stub_classes.inc dummy/stub_docs.inc dummy/stub_members.inc out/
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7
@@ -156,19 +170,24 @@ jobs:
         with:
           path: artifacts
 
-      - name: Commit and push version bump + dummy sync + tag
+      - name: Commit and push version bump + generated artifacts + tag
         run: |
           # Only reached when every build job succeeded. Commit the version bump together
-          # with the regenerated dummy class list (the exact file the dummy stubs in this
-          # release were built from), tag it, and push both with the branch.
+          # with the regenerated auto-generated artifacts (the exact files the release was
+          # built from): the dummy class list and the editor F1 doc artifacts. This is where
+          # doc/dummy generation lands in the repo — CI only regenerates them, it never commits.
+          # Tag it, and push both with the branch.
           cp artifacts/version-commit/Cargo.toml Cargo.toml
           cp artifacts/version-commit/addons/godot_xreal/plugin.cfg addons/godot_xreal/plugin.cfg
           cp artifacts/dummy-stubs/stub_classes.inc dummy/stub_classes.inc
+          cp artifacts/dummy-stubs/stub_docs.inc dummy/stub_docs.inc
+          cp artifacts/dummy-stubs/stub_members.inc dummy/stub_members.inc
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add addons/godot_xreal/plugin.cfg Cargo.toml dummy/stub_classes.inc
+          git add addons/godot_xreal/plugin.cfg Cargo.toml \
+            dummy/stub_classes.inc dummy/stub_docs.inc dummy/stub_members.inc
           if git diff --cached --quiet; then
-            echo "No version/dummy changes needed (already set)"
+            echo "No version/generated-artifact changes needed (already in sync)"
           else
             git commit -m "chore(release): ${{ needs.prepare.outputs.version }}"
           fi

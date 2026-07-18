@@ -93,12 +93,14 @@ jobs:
       - name: Run tests
         run: cargo test --all-features
 
-      - name: Check API docs in sync
+      - name: Regenerate API docs (non-blocking)
         # The desktop dummy's F1 docs (dummy/stub_docs.inc + dummy/stub_members.inc) are generated
-        # from the `///` doc comments (scripts/gen_docs.sh -> src/doc_gen.rs). Fail if a doc-comment
-        # change was not regenerated + committed. Invoke via `bash` so it runs regardless of the
-        # script's executable bit (Windows checkouts don't track it).
-        run: bash scripts/gen_docs.sh --check
+        # from the `///` doc comments (scripts/gen_docs.sh -> src/doc_gen.rs). Policy: the generated
+        # artifacts are NOT committed by hand — the Release workflow regenerates and commits them — so
+        # here we only re-run the generator to catch a broken doc_gen; a resulting working-tree diff is
+        # expected and does NOT fail CI. Invoke via `bash` so it runs regardless of the script's
+        # executable bit (Windows checkouts don't track it).
+        run: bash scripts/gen_docs.sh
 
       - name: Lint GDScript
         run: |
@@ -141,6 +143,13 @@ jobs:
           # host-target clippy in the `check` job can't see.
           export ANDROID_NDK_HOME="${ANDROID_NDK_LATEST_HOME:-$ANDROID_NDK_ROOT}"
           cargo ndk -t arm64-v8a clippy -- -D warnings
+
+      - name: Regenerate API docs
+        # The dummy stubs #include dummy/stub_docs.inc + stub_members.inc (the editor F1 help),
+        # generated from the `///` doc comments (needs a host Rust toolchain, present here). Regenerate
+        # so the built stubs embed the current docs — a preview of what Release regenerates + commits.
+        # A resulting diff is fine (CI doesn't commit it); it does not fail the build.
+        run: bash scripts/gen_docs.sh
 
       - name: Install clang + lld
         run: sudo apt-get update && sudo apt-get install -y clang lld
