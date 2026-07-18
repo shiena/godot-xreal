@@ -27,7 +27,9 @@ use crate::ffi::{
     FnSetTrackableAnchorEnabled, Guid, ManagedReferenceImage, NativeView, TrackableId, UnityPose,
 };
 use crate::ffi::{
-    FnControlSetI32, FnCreateFrame, FnCreateSession, FnGetDeviceType, FnGetFrameMetaData,
+    FnControlSetI32, FnCreateFrame, FnCreateSession, FnGetCameraIntrinsic,
+    FnGetCameraProjectionMatrix, FnGetDevicePoseFromHead, FnGetDeviceResolution, FnGetDeviceType,
+    FnGetFrameMetaData,
     FnGetHeadPoseAtTime, FnGetHeadPoseDisplay, FnGetPluginVersion, FnGlassesEventCallback,
     FnHmdTimeNanos, FnInitUserDefinedSettings, FnIsSessionStarted, FnLoadApi, FnNrBufferSpecCreate,
     FnNrBufferSpecSetI32, FnNrBufferSpecSetSize, FnNrBufferSpecSetU32, FnNrBufferSpecSetU64,
@@ -308,6 +310,12 @@ pub struct XrealNative {
     // Read-only device info (libXREALXRPlugin.so) — exposed via XrealSystem.
     get_plugin_version: Option<FnGetPluginVersion>,
     get_device_type: Option<FnGetDeviceType>,
+
+    // Device / camera geometry (libXREALXRPlugin.so, Unity space; docs/plans/coordinate-systems-notes.md).
+    get_device_pose_from_head: Option<FnGetDevicePoseFromHead>,
+    get_device_resolution: Option<FnGetDeviceResolution>,
+    get_camera_intrinsic: Option<FnGetCameraIntrinsic>,
+    get_camera_projection_matrix: Option<FnGetCameraProjectionMatrix>,
 
     // Direct NR compositor/rendering API (libnr_loader.so) — RE / unverified.
     nr_rendering: Option<NrRenderingApi>,
@@ -1396,6 +1404,20 @@ impl XrealNative {
                 .as_ref()
                 .and_then(|l| l.get(b"GetDeviceType\0").ok().map(|s| *s));
 
+            // Device / camera geometry (Unity space; docs/plans/coordinate-systems-notes.md).
+            let get_device_pose_from_head: Option<FnGetDevicePoseFromHead> = plugin_lib
+                .as_ref()
+                .and_then(|l| l.get(b"GetDevicePoseFromHead\0").ok().map(|s| *s));
+            let get_device_resolution: Option<FnGetDeviceResolution> = plugin_lib
+                .as_ref()
+                .and_then(|l| l.get(b"GetDeviceResolution\0").ok().map(|s| *s));
+            let get_camera_intrinsic: Option<FnGetCameraIntrinsic> = plugin_lib
+                .as_ref()
+                .and_then(|l| l.get(b"GetCameraIntrinsic\0").ok().map(|s| *s));
+            let get_camera_projection_matrix: Option<FnGetCameraProjectionMatrix> = plugin_lib
+                .as_ref()
+                .and_then(|l| l.get(b"GetCameraProjectionMatrix\0").ok().map(|s| *s));
+
             let nr_rendering = NrRenderingApi::load().ok();
             let gl = GlTextureApi::load().ok();
 
@@ -1494,6 +1516,10 @@ impl XrealNative {
                 deinitialize_rendering,
                 get_plugin_version,
                 get_device_type,
+                get_device_pose_from_head,
+                get_device_resolution,
+                get_camera_intrinsic,
+                get_camera_projection_matrix,
                 nr_rendering,
                 gl,
                 nr_rendering_handle: None,
@@ -1627,6 +1653,39 @@ impl XrealNative {
     /// RGB camera, so `hmd_feature::RGB_CAMERA` returns `Some(false)` there).
     pub fn hmd_feature_supported(&self, feature: i32) -> Option<bool> {
         self.is_hmd_feature_supported.map(|f| unsafe { f(feature) })
+    }
+
+    // --- Device / camera geometry (Unity space; docs/plans/coordinate-systems-notes.md). `component`
+    // is a `crate::ffi::component` id (RGB_CAMERA = 2). All return `None` if the export is absent or the
+    // SDK returns false (e.g. the device lacks that component, or the session isn't ready). ---
+
+    /// A device's extrinsic relative to Head as a Unity `Pose`: `[pos x,y,z, quat x,y,z,w]` (Unity LH).
+    pub fn device_pose_from_head(&self, component: i32) -> Option<[f32; 7]> {
+        let f = self.get_device_pose_from_head?;
+        let mut pose = [0.0f32; 7];
+        unsafe { f(component, &mut pose) }.then_some(pose)
+    }
+
+    /// A device's pixel resolution `(width, height)`.
+    pub fn device_resolution(&self, component: i32) -> Option<(i32, i32)> {
+        let f = self.get_device_resolution?;
+        let mut size = NrSize2i::default();
+        unsafe { f(component, &mut size) }.then(|| (size.width, size.height))
+    }
+
+    /// A camera's intrinsics `[fx, fy, cx, cy]` in pixels.
+    pub fn camera_intrinsic(&self, component: i32) -> Option<[f32; 4]> {
+        let f = self.get_camera_intrinsic?;
+        let (mut focal, mut principal) = ([0.0f32; 2], [0.0f32; 2]);
+        unsafe { f(component, &mut focal, &mut principal) }
+            .then_some([focal[0], focal[1], principal[0], principal[1]])
+    }
+
+    /// A camera's 4x4 projection matrix (16 floats, Unity `Matrix4x4` column-major) for `[near, far]`.
+    pub fn camera_projection_matrix(&self, component: i32, near: f32, far: f32) -> Option<[f32; 16]> {
+        let f = self.get_camera_projection_matrix?;
+        let mut mat = [0.0f32; 16];
+        unsafe { f(component, near, far, &mut mat) }.then_some(mat)
     }
 
     /// Whether the plane-detection C ABI resolved (libXREALXRPlugin.so present + symbols).

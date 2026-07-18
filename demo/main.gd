@@ -290,6 +290,13 @@ func _setup_camera_feed() -> void:
 		_blend_manager.set_feed(_cam_feed)
 	if _stream_manager:
 		_stream_manager.set_feed(_cam_feed)
+	# Diagnostic: read the RGB camera geometry (Unity space) newly exposed from libXREALXRPlugin — see
+	# docs/plans/coordinate-systems-notes.md. Confirms the RE'd device/camera-param APIs return real data.
+	if _system and _system.has_method(&"get_camera_intrinsics"):
+		var comp := 2  # XREALComponent.RGB_CAMERA
+		print("[cam-geom] RGB res=%s intrinsics[fx,fy,cx,cy]=%s" % [_system.get_device_resolution(comp), _system.get_camera_intrinsics(comp)])
+		print("[cam-geom] RGB pose_from_head[px,py,pz,qx,qy,qz,qw]=%s" % [_system.get_device_pose_from_head(comp)])
+		print("[cam-geom] RGB projection=%s" % [_system.get_camera_projection_matrix(comp, 0.1, 100.0)])
 
 ## Set up the runtime side of the phone touch controller ($PhoneScreen — its layout and signal
 ## wiring are static in phone_screen.tscn / main.tscn; it only renders on the phone's root

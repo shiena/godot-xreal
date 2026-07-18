@@ -588,6 +588,39 @@ impl XrealSession {
             .hmd_feature_supported(feature)
     }
 
+    /// A `ffi::component` device's extrinsic relative to Head as a Unity `Pose`
+    /// `[pos x,y,z, quat x,y,z,w]` (Unity space; docs/plans/coordinate-systems-notes.md).
+    pub fn device_pose_from_head(&self, component: i32) -> Option<[f32; 7]> {
+        self.native
+            .lock()
+            .expect("xreal native mutex")
+            .device_pose_from_head(component)
+    }
+
+    /// A `ffi::component` device's pixel resolution `(width, height)`.
+    pub fn device_resolution(&self, component: i32) -> Option<(i32, i32)> {
+        self.native
+            .lock()
+            .expect("xreal native mutex")
+            .device_resolution(component)
+    }
+
+    /// A `ffi::component` camera's intrinsics `[fx, fy, cx, cy]` in pixels.
+    pub fn camera_intrinsic(&self, component: i32) -> Option<[f32; 4]> {
+        self.native
+            .lock()
+            .expect("xreal native mutex")
+            .camera_intrinsic(component)
+    }
+
+    /// A `ffi::component` camera's 4x4 projection matrix (16 floats) for `[near, far]`.
+    pub fn camera_projection_matrix(&self, component: i32, near: f32, far: f32) -> Option<[f32; 16]> {
+        self.native
+            .lock()
+            .expect("xreal native mutex")
+            .camera_projection_matrix(component, near, far)
+    }
+
     /// Whether the plane-detection C ABI resolved (see `docs/plans/ar-features-plan.md`).
     pub fn plane_detection_available(&self) -> bool {
         self.native

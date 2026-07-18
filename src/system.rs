@@ -271,6 +271,65 @@ impl XrealSystem {
             .unwrap_or(false)
     }
 
+    // --- Device / camera geometry (Unity space; docs/plans/coordinate-systems-notes.md). Poses are in
+    // Unity's left-handed system — convert on the Godot side. Useful for aligning the AR to the RGB
+    // camera view (FOV / offset) in the blend. ---
+
+    /// `XREALComponent` id for the geometry getters: the RGB camera.
+    #[constant]
+    const COMPONENT_RGB_CAMERA: i64 = crate::ffi::component::RGB_CAMERA as i64;
+    /// `XREALComponent` id: the left display.
+    #[constant]
+    const COMPONENT_DISPLAY_LEFT: i64 = crate::ffi::component::DISPLAY_LEFT as i64;
+    /// `XREALComponent` id: the right display.
+    #[constant]
+    const COMPONENT_DISPLAY_RIGHT: i64 = crate::ffi::component::DISPLAY_RIGHT as i64;
+    /// `XREALComponent` id: the left SLAM grayscale camera.
+    #[constant]
+    const COMPONENT_GRAYSCALE_LEFT: i64 = crate::ffi::component::GRAYSCALE_CAMERA_LEFT as i64;
+    /// `XREALComponent` id: the right SLAM grayscale camera.
+    #[constant]
+    const COMPONENT_GRAYSCALE_RIGHT: i64 = crate::ffi::component::GRAYSCALE_CAMERA_RIGHT as i64;
+
+    /// A `COMPONENT_*` device's pixel resolution (`Vector2i.ZERO` when unavailable).
+    #[func]
+    fn get_device_resolution(&self, component: i64) -> Vector2i {
+        session::shared()
+            .and_then(|s| s.device_resolution(component as i32))
+            .map(|(w, h)| Vector2i::new(w, h))
+            .unwrap_or(Vector2i::ZERO)
+    }
+
+    /// A `COMPONENT_*` camera's intrinsics as `[fx, fy, cx, cy]` in pixels (empty when unavailable).
+    #[func]
+    fn get_camera_intrinsics(&self, component: i64) -> PackedFloat32Array {
+        session::shared()
+            .and_then(|s| s.camera_intrinsic(component as i32))
+            .map(|k| PackedFloat32Array::from(&k))
+            .unwrap_or_default()
+    }
+
+    /// A `COMPONENT_*` device's extrinsic relative to Head as a raw Unity `Pose`:
+    /// `[pos x,y,z, quat x,y,z,w]` (Unity left-handed — convert to Godot; see coordinate-systems-notes).
+    /// Empty when unavailable.
+    #[func]
+    fn get_device_pose_from_head(&self, component: i64) -> PackedFloat32Array {
+        session::shared()
+            .and_then(|s| s.device_pose_from_head(component as i32))
+            .map(|p| PackedFloat32Array::from(&p))
+            .unwrap_or_default()
+    }
+
+    /// A `COMPONENT_*` camera's 4x4 projection matrix (16 floats, Unity column-major) for `[near, far]`.
+    /// Empty when unavailable.
+    #[func]
+    fn get_camera_projection_matrix(&self, component: i64, near: f64, far: f64) -> PackedFloat32Array {
+        session::shared()
+            .and_then(|s| s.camera_projection_matrix(component as i32, near as f32, far as f32))
+            .map(|m| PackedFloat32Array::from(&m))
+            .unwrap_or_default()
+    }
+
     // --- Plane detection (see docs/plans/ar-features-plan.md). Needs a live 6DoF session. ---
 
     /// `PlaneDetectionMode` flag for [`Self::set_plane_detection_mode`] / [`Self::poll_planes`]:

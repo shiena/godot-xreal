@@ -302,6 +302,30 @@ pub mod hmd_feature {
 /// feature (`hmd_feature`). The correct, device-accurate gate before opening the RGB camera etc.
 pub type FnIsHmdFeatureSupported = unsafe extern "C" fn(i32) -> bool;
 
+/// `XREALComponent` device ids for the geometry APIs below (distinct from [`hmd_feature`] — here the
+/// RGB camera is `2`, not `1`). See docs/plans/coordinate-systems-notes.md.
+pub mod component {
+    pub const DISPLAY_LEFT: i32 = 0;
+    pub const DISPLAY_RIGHT: i32 = 1;
+    pub const RGB_CAMERA: i32 = 2;
+    pub const GRAYSCALE_CAMERA_LEFT: i32 = 3;
+    pub const GRAYSCALE_CAMERA_RIGHT: i32 = 4;
+    pub const MAGNETIC: i32 = 5;
+}
+// --- Device / camera geometry (libXREALXRPlugin.so C exports; Unity space). Confirmed export symbols
+// with `llvm-objdump -T`. See docs/plans/coordinate-systems-notes.md. ---
+/// `GetDevicePoseFromHead(component, &pose) -> bool`. `pose` is a Unity `Pose`: position `[x,y,z]` then
+/// rotation quaternion `[x,y,z,w]` (7 floats) — the device's extrinsic relative to Head, in Unity space.
+pub type FnGetDevicePoseFromHead = unsafe extern "C" fn(i32, *mut [f32; 7]) -> bool;
+/// `GetDeviceResolution(component, &size) -> bool` — pixel resolution (`NrSize2i` = Unity `Vector2Int`).
+pub type FnGetDeviceResolution = unsafe extern "C" fn(i32, *mut NrSize2i) -> bool;
+/// `GetCameraIntrinsic(component, &focalLength, &principalPoint) -> bool` — `focalLength=(fx,fy)` and
+/// `principalPoint=(cx,cy)` in pixels (Unity `Vector2` = 2 floats each).
+pub type FnGetCameraIntrinsic = unsafe extern "C" fn(i32, *mut [f32; 2], *mut [f32; 2]) -> bool;
+/// `GetCameraProjectionMatrix(component, z_near, z_far, &mat) -> bool` — a 4x4 projection matrix
+/// (16 floats, Unity `Matrix4x4` column-major).
+pub type FnGetCameraProjectionMatrix = unsafe extern "C" fn(i32, f32, f32, *mut [f32; 16]) -> bool;
+
 // --- Spatial anchors (libXREALXRPlugin.so flat C exports; see docs/plans/ar-features-plan.md) --------
 // Source: `XREALAnchorSubsystem.cs` `[DllImport]` + demangled `InputManager::*` internals. Needs a
 // 6DoF session AND the vendored `nr_spatial_anchor.aar` backend `.so`. Poses are Unity space — convert
