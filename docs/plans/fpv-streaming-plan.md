@@ -6,11 +6,10 @@ recorded 396 frames @ ~30 fps, 1280×720 H.264, decoding clean and showing the r
 Ports the XREAL `FirstPersonViewStreamingCast` sample's streaming path — the native hardware encoder —
 to Godot. **Microphone audio also works** (2026-07-19, `fffb241`): the mic is captured as a non-silent
 AAC track and the mp4 plays with sound in Windows Media Player — see the "Audio" section below.
-**Live RTP also works** (2026-07-19): the カメラ tab has a stream-destination field (empty = local mp4,
+**Live RTP also works** (2026-07-19): the Camera tab has a stream-destination field (empty = local mp4,
 `rtp://<PC>:5555` = live RTP); a device test streamed `codecType 2` to a PC where ffmpeg received clean
-1280×720 H.264 with the correct head-POV content. Caveat: the RTP path carries **video only** — the
-mic AAC is muxed into the local mp4 but our `stream.sdp` declares a single video stream, so RTP audio is
-a follow-up (needs the encoder's audio RTP payload/port + an SDP audio line).
+1280×720 H.264 with the correct head-POV content. Caveat: the RTP path's audio is **proprietary**, so
+standard receivers get **video only** — see "Audio over RTP" below.
 
 ## Device verification (2026-07-18) — crash fixed; frame feeding is the open item (codex handoff)
 
@@ -134,4 +133,55 @@ exhausted` on ~2/307 AAC frames (the truncated final frame at stop) and non-mono
 (we push above the configured 30 fps at the glasses' refresh rate, so some frames share a DTS —
 players use PTS to display). **Open polish**: the encoder logs `Request requires
 MODIFY_AUDIO_SETTINGS` (a *normal* permission it uses to set audio params); recording works without it,
-but declaring `MODIFY_AUDIO_SETTINGS` in the export plugin would silence it. Then RTP (`codecType 2`).
+but declaring `MODIFY_AUDIO_SETTINGS` in the export plugin would silence it.
+
+### Audio over RTP — proprietary, not standard-decodable (RE'd 2026-07-19)
+The encoder DOES send mic audio over RTP, but in a **non-standard framing** a plain SDP can't decode.
+A UDP capture of a live `rtp://<PC>:5555` stream (`codecType 2`, `addMicphoneAudio:true`) showed four
+flows — the encoder puts audio on **video-port + 2**, RTP convention:
+
+| port | RTP payload type | what |
+|------|------------------|------|
+| 5555 | 96 | H.264 video (fragmented, len 17–1472, matches our `stream.sdp`) |
+| 5556 | 72 | RTCP for video |
+| 5557 | 97 | **audio** — fixed **772-byte** payloads, ~1024-sample RTP-timestamp step |
+| 5558 | 72 | RTCP for audio |
+
+So adding `m=audio 5557 RTP/AVP 97` to the SDP finds the packets — but they don't decode. Every audio
+payload is a **constant 772 bytes** = a 4-byte magic **`ff ff ff 03`** + 768 bytes of opaque data (not
+RFC 3640 AAC-hbr / not ADTS / not LATM — those sync words don't match, and constant-size frames aren't
+natural AAC). This is XREAL/Nebula's own packetization; their receiver decodes it, ffmpeg/ffplay/VLC
+can't. **Getting RTP audio into our `scripts/stream_server` would require reverse-engineering the
+`ff ff ff 03` framing + inner codec and writing a custom depacketizer — significant, uncertain effort.**
+**XREAL ships an official Windows receiver** that decodes the full A/V (video + the proprietary audio):
+`StreammingReceiver_v1.2.0` — a Unity Windows app ("StreamingReceiver" by Nreal) bundling **FFmpeg**
+(`avcodec/avformat/swresample`) + **AVPro Video** + `Audio360.dll` + `media_enc.dll`, with a
+`StreammingEncoder` (`Play,useAudio:`) pipeline and LAN discovery (`FIND-SERVER`). So the way to get
+audio is **use that receiver**, not a custom `ffffff03` depacketizer. Caveat: like the SDK sample it
+pairs via LAN discovery, whereas our app streams to a fixed `rtp://` URL — interop with it is untested
+(may need the discovery handshake or the receiver's listen port). For our own `scripts/stream_server`
+(ffmpeg), RTP stays **video-only**; the **local mp4 already carries the mic AAC**. (Capture tooling
+used: a Python multi-port UDP sniffer — not committed.)
+
+NB: "Nebula" (`com.xreal.evapro.nebula`) is XREAL's **Android** launcher on the host device, NOT this
+PC receiver — an earlier note conflated them.
+
+### Pairing with the official receiver — the FIND-SERVER protocol (from the SDK sample)
+The SDK sample (`Samples~/Camera Features/FirstPersonStreammingCast`) reveals exactly how the sender
+pairs with the `StreamingReceiver`, so our app could interop with it:
+1. **Discovery** (`Network/LocalServerSearcher.cs`): the sender UDP-broadcasts the ASCII string
+   **`FIND-SERVER`** to **`255.255.255.255:6001`**; the receiver (listening on 6001) replies with an
+   ASCII **`"<IP>:<tcpPort>"`** string.
+2. **Control channel** (`Network/NetWork*.cs`, TCP to `<IP>:<tcpPort>`): framed LitJson messages
+   (`MessageType`: Connected/Disconnect/HeartBeat/EnterRoom/ExitRoom/UpdateCameraParam). Right before
+   streaming the sender sends **`{"useAudio": <bool>}`** and waits for **`{"success": true}`**, then
+   starts the capture. (The exact TCP framing is `Network/Tools/MessagePacker.cs` — would need RE.)
+3. **RTP** (`Scripts/FirstPersonStreammingCast.cs:55`): the URL is **hard-coded `rtp://<IP>:5555`** — the
+   discovered port is only the TCP control port, NOT the RTP port. So video lands on 5555 and audio on
+   5557 (as captured), which is **exactly where our app already streams**.
+
+**So the RTP side already matches the receiver; the missing piece is the discovery + TCP control
+handshake (`FIND-SERVER` → TCP → `{"useAudio":true}`/`{"success":true}`).** Moderate, well-defined work
+(UDP broadcast + a TCP framed-LitJson client). Worth an empirical test first: run `StreamingReceiver.exe`
+and stream our RTP to `:5555` to see whether it decodes without the handshake, or truly needs the
+`EnterRoom`/`useAudio` control message before it opens the decode.
