@@ -142,22 +142,42 @@ func _update_marker(im: Dictionary) -> void:
 	var qm := mi.mesh as QuadMesh
 	if qm and sz.length() > 0.001:
 		qm.size = sz
-	# green quad while tracking, gray when limited/not tracking.
+	# Front face green, back face red (so the quad's orientation is legible while verifying the tracked-
+	# image pose axes); alpha shows tracking state — solid while tracking, fainter when limited.
 	var state: int = im.get("tracking_state", 0)
-	var mat := mi.material_override as StandardMaterial3D
-	mat.albedo_color = Color(0.3, 1.0, 0.5, 0.4) if state == 2 else Color(0.6, 0.6, 0.6, 0.3)
+	var a := 0.5 if state == 2 else 0.25
+	var mat := mi.material_override as ShaderMaterial
+	mat.set_shader_parameter(&"front_color", Color(0.3, 1.0, 0.5, a))
+	mat.set_shader_parameter(&"back_color", Color(1.0, 0.35, 0.3, a))
 
-## A translucent quad sized to the tracked image (updated per frame), unshaded + double-sided.
+## Marker shader: unshaded, double-sided, with the front (+Z-normal) and back faces drawn in distinct
+## colours via FRONT_FACING — so which way the quad faces is obvious when checking the tracked-image
+## orientation. ALPHA drives the transparent pass.
+const _MARKER_SHADER := """
+shader_type spatial;
+render_mode unshaded, cull_disabled;
+uniform vec4 front_color : source_color = vec4(0.3, 1.0, 0.5, 0.5);
+uniform vec4 back_color : source_color = vec4(1.0, 0.35, 0.3, 0.5);
+void fragment() {
+	vec4 c = FRONT_FACING ? front_color : back_color;
+	ALBEDO = c.rgb;
+	ALPHA = c.a;
+}
+"""
+
+## A translucent quad sized to the tracked image (updated per frame), unshaded + double-sided, with
+## front/back drawn in different colours (green front, red back) so orientation is readable.
 func _make_marker() -> MeshInstance3D:
 	var mi := MeshInstance3D.new()
 	var q := QuadMesh.new()
 	q.size = Vector2(0.1, 0.1)
 	mi.mesh = q
-	var mat := StandardMaterial3D.new()
-	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
-	mat.albedo_color = Color(0.3, 1.0, 0.5, 0.4)
+	var sh := Shader.new()
+	sh.code = _MARKER_SHADER
+	var mat := ShaderMaterial.new()
+	mat.shader = sh
+	mat.set_shader_parameter(&"front_color", Color(0.3, 1.0, 0.5, 0.5))
+	mat.set_shader_parameter(&"back_color", Color(1.0, 0.35, 0.3, 0.5))
 	mi.material_override = mat
 	return mi
 
