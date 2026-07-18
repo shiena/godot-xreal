@@ -1,0 +1,3 @@
+# Recordings produced by receive.ps1 / receive.sh --record
+fpv_*.mp4
+*.ts
