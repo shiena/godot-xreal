@@ -4,8 +4,8 @@ Status: **WORKING + device-verified (2026-07-19). FPV streaming records a valid,
 the encoder-start crash and the empty-mp4 (no frames reaching the encoder) are fixed; a 13.3 s test
 recorded 396 frames @ ~30 fps, 1280×720 H.264, decoding clean and showing the real head-POV scene.
 Ports the XREAL `FirstPersonViewStreamingCast` sample's streaming path — the native hardware encoder —
-to Godot. (Audio track is empty for now: `RECORD_AUDIO` isn't requested, so the mic path is silent —
-see the "Secondary" note below.)
+to Godot. **Microphone audio also works** (2026-07-19, `fffb241`): the mic is captured as a non-silent
+AAC track and the mp4 plays with sound in Windows Media Player — see the "Audio" section below.
 
 ## Device verification (2026-07-18) — crash fixed; frame feeding is the open item (codex handoff)
 
@@ -47,10 +47,10 @@ color-texture RID, then resolves its native handle and calls `stream_push_frame`
 `call_on_render_thread`. The GL name is resolved every frame so render-target reallocations are safe.
 No GPU copy is required.
 
-Secondary (not the video blocker): `STREAM_WITH_MIC` is `true` but `RECORD_AUDIO` is never requested at
-runtime — `demo/main.gd` only requests `CAMERA` — so the mic permission is denied (`granted=false`).
-When tackling audio, either disable mic (isolates video) or request `RECORD_AUDIO` before `stream_start`.
-The mic was ruled out of the crash (it still crashed with `addMicphoneAudio:false`).
+Secondary — **RESOLVED 2026-07-19 (`fffb241`), see the Audio section.** `STREAM_WITH_MIC` is `true` but
+`RECORD_AUDIO` was never requested at runtime (only `CAMERA` was), so the mic was denied and no audio
+track was muxed. Fix: request `RECORD_AUDIO` at runtime and only enable `addMicphoneAudio` once granted.
+(The mic was ruled out of the encoder-start crash — it still crashed with `addMicphoneAudio:false`.)
 
 
 ## What the SDK sample actually is
@@ -109,10 +109,24 @@ EGL context**, so the call must be on the render thread.
    network. Then set `STREAM_TARGET = "rtp://<PC>:5555"` for live RTP to `log/stream_server`.
 2. Confirm the config fields the encoder needs (bitrate/fps), the timestamp unit, and that a
    `useLinnerTexture`/`useAlpha` mismatch doesn't garble the frame.
-## Audio
+## Audio — **WORKING, device-verified 2026-07-19 (`fffb241`)**
 `stream_start(..., with_mic, with_internal_audio)`: **`with_mic`** sets `addMicphoneAudio` — the encoder
-captures the mic natively (needs `RECORD_AUDIO`, added by the export plugin). **`with_internal_audio`**
-sets `addInternalAudio` and is fed by `stream_push_audio(bytes, nSamples, bytesPerSample, channels,
-sampleRate, fmt)` → `HWEncoderNotifyAudioData` (mono s16, `fmt` 0 — from an `AudioEffectCapture` on the
-master bus, the Godot analog of the SDK's `AudioRecordTool` `OnAudioFilterRead`). The demo enables the
-mic (`STREAM_WITH_MIC`) and leaves internal audio off (it plays no sound).
+captures the mic natively. This needs the **`RECORD_AUDIO` runtime permission**: the export plugin
+declares it in the manifest, but as a *dangerous* permission it must also be **granted at runtime**, which
+the demo now does — `stream_manager.setup()` requests it proactively (one-time dialog before streaming),
+and `set_enabled` only passes `addMicphoneAudio=true` once `OS.get_granted_permissions()` shows it granted
+(else it re-requests and streams video-only that once). Verified: **AAC 16 kHz mono, non-silent
+(-40 dB RMS / -21 dB peak), plays with sound in Windows Media Player.**
+
+**`with_internal_audio`** sets `addInternalAudio` and is fed by `stream_push_audio(bytes, nSamples,
+bytesPerSample, channels, sampleRate, fmt)` → `HWEncoderNotifyAudioData` (mono s16, `fmt` 0 — from an
+`AudioEffectCapture` on the master bus, the Godot analog of the SDK's `AudioRecordTool`
+`OnAudioFilterRead`). The demo enables the mic (`STREAM_WITH_MIC`) and leaves internal audio off (it
+plays no sound).
+
+**Known-benign warnings** (not playback problems — WMP plays fine): ffmpeg reports an `Input buffer
+exhausted` on ~2/307 AAC frames (the truncated final frame at stop) and non-monotonic video DTS
+(we push above the configured 30 fps at the glasses' refresh rate, so some frames share a DTS —
+players use PTS to display). **Open polish**: the encoder logs `Request requires
+MODIFY_AUDIO_SETTINGS` (a *normal* permission it uses to set audio params); recording works without it,
+but declaring `MODIFY_AUDIO_SETTINGS` in the export plugin would silence it. Then RTP (`codecType 2`).

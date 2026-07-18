@@ -29,6 +29,17 @@ var _active := false
 func setup(system: Object, tracker: Node3D) -> void:
 	_system = system
 	_tracker = tracker
+	# RECORD_AUDIO is a runtime (dangerous) permission: the export plugin declares it in the manifest,
+	# but the native encoder's mic capture (addMicphoneAudio) stays silent until it's granted at runtime.
+	# Request it proactively at startup so the one-time dialog is dealt with before the user hits 配信.
+	if STREAM_WITH_MIC and OS.has_feature("android") and not _mic_granted():
+		OS.request_permission("android.permission.RECORD_AUDIO")
+
+## True once RECORD_AUDIO is granted (always true off Android, where the encoder mic isn't used).
+func _mic_granted() -> bool:
+	if not OS.has_feature("android"):
+		return true
+	return "android.permission.RECORD_AUDIO" in OS.get_granted_permissions()
 
 ## Toggle streaming. Returns the resulting state (false if the encoder ABI is unavailable or start
 ## failed, so the phone-menu toggle can flip itself back off).
@@ -42,13 +53,21 @@ func set_enabled(on: bool) -> bool:
 		if _system.has_method(&"is_camera_supported") and not _system.is_camera_supported():
 			push_warning("[demo] FPV streaming needs an Eye-equipped device (One Series) — unavailable")
 			return false
+		# Only tell the encoder to capture the mic if RECORD_AUDIO is actually granted — otherwise its
+		# AudioRecord stays silent and no audio track is muxed. If the mic is wanted but not yet granted,
+		# (re)request it and stream video-only this time; the async grant lands for the next 配信 toggle.
+		var with_mic := STREAM_WITH_MIC
+		if with_mic and OS.has_feature("android") and not _mic_granted():
+			OS.request_permission("android.permission.RECORD_AUDIO")
+			with_mic = false
+			push_warning("[demo] mic not granted yet — streaming video-only; grant RECORD_AUDIO, then toggle 配信 again for audio")
 		_ensure_viewport()
 		var url := STREAM_TARGET
 		if url.is_empty():
 			url = OS.get_user_data_dir().path_join("fpv_stream.mp4")
-		if not _system.stream_start(url, STREAM_W, STREAM_H, STREAM_BITRATE, STREAM_FPS, STREAM_WITH_MIC, STREAM_WITH_INTERNAL_AUDIO):
+		if not _system.stream_start(url, STREAM_W, STREAM_H, STREAM_BITRATE, STREAM_FPS, with_mic, STREAM_WITH_INTERNAL_AUDIO):
 			return false
-		print("[demo] FPV stream -> %s" % url)
+		print("[demo] FPV stream -> %s (mic=%s)" % [url, with_mic])
 		_active = true
 	else:
 		_active = false
