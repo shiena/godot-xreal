@@ -216,6 +216,8 @@ func _spawn_rig() -> void:
 		_stream_manager.set_script(load("res://demo/stream_manager.gd"))
 		add_child(_stream_manager)
 		_stream_manager.setup(_system, _tracker)
+		# Pairing/streaming is async — reflect the real state back onto the phone "Stream" toggle.
+		_stream_manager.active_changed.connect(func(active: bool) -> void: _set_controller_toggle("stream", active))
 		# Photo capture manager (reads the RGB camera feed → JPG; wired the feed in _setup_camera_feed).
 		_capture_manager = Node.new()
 		_capture_manager.name = "CaptureManager"
@@ -434,22 +436,16 @@ func _on_tc_mesh(on: bool) -> void:
 		push_warning("[demo] depth meshing unavailable (non-Air-2-Ultra / perception down) — toggle disabled")
 		_set_controller_toggle("mesh", false)
 
-## Phone-menu "配信" toggle → start/stop first-person-view streaming (demo/stream_manager.gd).
-## Streams the rendered head view via the HW encoder to the destination typed into the カメラ tab's
-## field (an rtp:// URL to live-stream to scripts/stream_server; empty = record a local mp4).
+## Phone-menu "Stream" toggle → start/stop first-person-view streaming (demo/stream_manager.gd).
+## The stream pairs with XREAL's StreamingReceiver via LAN discovery (FIND-SERVER) and streams the
+## head view to it over RTP. Pairing is async, so the manager reports the resulting state back through
+## its `active_changed` signal (wired in _ready) — which flips the phone toggle to match.
 func _on_tc_stream(on: bool) -> void:
 	print("[demo] stream toggle -> %s" % ("on" if on else "off"))
 	if _stream_manager == null:
 		_set_controller_toggle("stream", false)
 		return
-	var target := ""
-	var ps := get_node_or_null(^"PhoneScreen")
-	if ps and ps.has_method(&"get_stream_target"):
-		target = ps.get_stream_target()
-	var enabled: bool = _stream_manager.set_enabled(on, target)
-	if on and not enabled:
-		push_warning("[demo] FPV streaming unavailable (encoder / start failed) — toggle disabled")
-		_set_controller_toggle("stream", false)
+	_stream_manager.set_enabled(on)
 
 ## Phone-menu "配置" button → place a spatial anchor at the currently-tracked hand fingertip.
 func _on_tc_place() -> void:

@@ -60,7 +60,3 @@ func _ready() -> void:
 ## Forward a programmatic toggle-state change to the touch controller (see its set_toggle).
 func set_toggle(name: String, on: bool) -> void:
 	($TouchController as Control).set_toggle(name, on)
-
-## The FPV stream destination typed into the カメラ tab's field ("" = record a local mp4).
-func get_stream_target() -> String:
-	return ($TouchController as Control).get_stream_target()

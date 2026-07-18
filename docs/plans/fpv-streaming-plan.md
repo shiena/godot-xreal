@@ -180,8 +180,15 @@ pairs with the `StreamingReceiver`, so our app could interop with it:
    discovered port is only the TCP control port, NOT the RTP port. So video lands on 5555 and audio on
    5557 (as captured), which is **exactly where our app already streams**.
 
-**So the RTP side already matches the receiver; the missing piece is the discovery + TCP control
-handshake (`FIND-SERVER` → TCP → `{"useAudio":true}`/`{"success":true}`).** Moderate, well-defined work
-(UDP broadcast + a TCP framed-LitJson client). Worth an empirical test first: run `StreamingReceiver.exe`
-and stream our RTP to `:5555` to see whether it decodes without the handshake, or truly needs the
-`EnterRoom`/`useAudio` control message before it opens the decode.
+**IMPLEMENTED + device-verified (2026-07-19).** Confirmed empirically that streaming to a fixed
+`rtp://<PC>:5555` does nothing until the handshake runs (the receiver flashes then drops back to its
+idle "FIND-SERVER" screen when no paired RTP arrives). The handshake now lives in
+**`demo/stream_pairing.gd`** — a `PacketPeerUDP` broadcast + `StreamPeerTCP` framed-message state machine
+(discover → connect → EnterRoom → `{"useAudio":bool}` → HeartBeat every 1 s). `stream_manager` starts it
+on the Stream toggle and, on the async `paired(ip)` signal, immediately `stream_start`s to
+`rtp://<ip>:5555`; `active_changed` reflects the real state back onto the toggle. Validated the whole
+protocol against the real `StreamingReceiver.exe` twice — once with a Python client, once by driving the
+actual GDScript headlessly — before the on-device run, which showed the receiver playing the head-POV
+**video with audio**. Framing recap (little-endian): `[u16 length][u16 type][payload]`, length includes
+the 4-byte header; a MsgSync(7) payload is `[u64 msgid][UTF-8 JSON]`; EnterRoom(4) ack is `{"result":true}`.
+Since the destination is discovered, the phone menu no longer needs a stream-target field.
