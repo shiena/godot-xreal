@@ -435,13 +435,18 @@ func _on_tc_mesh(on: bool) -> void:
 		_set_controller_toggle("mesh", false)
 
 ## Phone-menu "配信" toggle → start/stop first-person-view streaming (demo/stream_manager.gd).
-## Streams the rendered head view via the HW encoder to the target set in stream_manager.gd.
+## Streams the rendered head view via the HW encoder to the destination typed into the カメラ tab's
+## field (an rtp:// URL to live-stream to scripts/stream_server; empty = record a local mp4).
 func _on_tc_stream(on: bool) -> void:
 	print("[demo] stream toggle -> %s" % ("on" if on else "off"))
 	if _stream_manager == null:
 		_set_controller_toggle("stream", false)
 		return
-	var enabled: bool = _stream_manager.set_enabled(on)
+	var target := ""
+	var ps := get_node_or_null(^"PhoneScreen")
+	if ps and ps.has_method(&"get_stream_target"):
+		target = ps.get_stream_target()
+	var enabled: bool = _stream_manager.set_enabled(on, target)
 	if on and not enabled:
 		push_warning("[demo] FPV streaming unavailable (encoder / start failed) — toggle disabled")
 		_set_controller_toggle("stream", false)

@@ -6,6 +6,11 @@ recorded 396 frames @ ~30 fps, 1280×720 H.264, decoding clean and showing the r
 Ports the XREAL `FirstPersonViewStreamingCast` sample's streaming path — the native hardware encoder —
 to Godot. **Microphone audio also works** (2026-07-19, `fffb241`): the mic is captured as a non-silent
 AAC track and the mp4 plays with sound in Windows Media Player — see the "Audio" section below.
+**Live RTP also works** (2026-07-19): the カメラ tab has a stream-destination field (empty = local mp4,
+`rtp://<PC>:5555` = live RTP); a device test streamed `codecType 2` to a PC where ffmpeg received clean
+1280×720 H.264 with the correct head-POV content. Caveat: the RTP path carries **video only** — the
+mic AAC is muxed into the local mp4 but our `stream.sdp` declares a single video stream, so RTP audio is
+a follow-up (needs the encoder's audio RTP payload/port + an SDP audio line).
 
 ## Device verification (2026-07-18) — crash fixed; frame feeding is the open item (codex handoff)
 

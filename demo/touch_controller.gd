@@ -96,6 +96,10 @@ var _finger_widget := {}      # touch index -> widget name ("touchpad" / "tab:N"
 var _pressed := {}            # widget name -> bool (momentary press highlight)
 var _toggle_on := {}          # toggle name -> bool (persistent on/off)
 var _pad_value := Vector2.ZERO
+# Text field for the FPV stream destination (rtp://IP:port, empty = record a local mp4). A real
+# LineEdit child (unlike the custom-drawn buttons) so tapping it opens the Android soft keyboard;
+# _layout() shows it as the first row of the カメラ tab and hides it on other tabs.
+var _stream_edit: LineEdit
 
 ## The button names shown on the active tab.
 func _active_items() -> Array:
@@ -107,13 +111,31 @@ func _ready() -> void:
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	# Node-level _input handles the multitouch; don't intercept GUI focus/mouse from other UI.
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_make_stream_field()
 	resized.connect(_layout)
 	_layout()
+
+## Create the FPV stream-destination text field (shown/positioned by _layout on the カメラ tab). Its
+## text is read by get_stream_target(); empty means "record a local mp4" (see stream_manager.gd).
+func _make_stream_field() -> void:
+	_stream_edit = LineEdit.new()
+	_stream_edit.placeholder_text = "rtp://<PC-IP>:5555  (空=ローカルmp4録画)"
+	_stream_edit.visible = false
+	_stream_edit.mouse_filter = Control.MOUSE_FILTER_STOP  # receive taps → focus → soft keyboard
+	_stream_edit.clear_button_enabled = true
+	_stream_edit.virtual_keyboard_type = LineEdit.KEYBOARD_TYPE_URL
+	add_child(_stream_edit)
+
+## The FPV stream destination typed into the カメラ tab's field ("" = record a local mp4).
+func get_stream_target() -> String:
+	return _stream_edit.text.strip_edges() if _stream_edit else ""
 
 func _layout() -> void:
 	var s := size
 	var items := _active_items()
-	var rows := _row_count(items)
+	# The カメラ tab (the one with the streaming toggle) reserves an extra top row for the
+	# stream-destination field, so it counts as one more row when sizing the buttons.
+	var rows := _row_count(items) + (1 if items.has("stream") else 0)
 	_button_rects.clear()
 	_tab_rects.clear()
 	if s.y > s.x:
@@ -130,7 +152,8 @@ func _layout() -> void:
 		# Cap the height so a tab with few buttons keeps normal-sized (top-aligned) buttons instead of
 		# one giant one filling the whole area.
 		var bh := minf((bottom - top - gap * (rows - 1)) / rows, s.y * 0.09)
-		_layout_items(items, col_x, top, pad, bh, gap)
+		var items_top := _apply_stream_field(col_x, top, pad, bh, gap)
+		_layout_items(items, col_x, items_top, pad, bh, gap)
 	else:
 		# Landscape: touchpad left; tab bar + the active tab's buttons stacked on the right.
 		var pad := minf(s.x * 0.42, s.y * 0.72)
@@ -144,8 +167,23 @@ func _layout() -> void:
 		var top := tab_top + tab_h + s.y * 0.03
 		var bottom := s.y * 0.95
 		var bh := minf(s.y * 0.16, (bottom - top - gap * (rows - 1)) / rows)
-		_layout_items(items, bx, top, bw, bh, gap)
+		var items_top := _apply_stream_field(bx, top, bw, bh, gap)
+		_layout_items(items, bx, items_top, bw, bh, gap)
 	queue_redraw()
+
+## Show the stream-destination field as the カメラ tab's first row and return the y where that tab's
+## buttons should start; hide it and leave `top` unchanged on the other tabs.
+func _apply_stream_field(x: float, top: float, w: float, bh: float, gap: float) -> float:
+	if not _active_items().has("stream"):
+		if _stream_edit:
+			_stream_edit.visible = false
+		return top
+	if _stream_edit:
+		_stream_edit.position = Vector2(x, top)
+		_stream_edit.size = Vector2(w, bh)
+		_stream_edit.add_theme_font_size_override("font_size", int(maxf(18.0, bh * 0.34)))
+		_stream_edit.visible = true
+	return top + bh + gap
 
 ## Number of stacked rows for `items` — hand_l + hand_r (if both present) share one 2-column row.
 func _row_count(items: Array) -> int:
@@ -209,6 +247,10 @@ func _input(event: InputEvent) -> void:
 			get_viewport().set_input_as_handled()
 
 func _press(widget: String, pos: Vector2) -> void:
+	# Interacting with any controller widget dismisses the stream-field keyboard (its taps arrive as
+	# widgets here, so the field never auto-defocuses on its own).
+	if _stream_edit and _stream_edit.has_focus():
+		_stream_edit.release_focus()
 	if widget.begins_with("tab:"):
 		var idx := int(widget.substr(4))
 		if idx != _active_tab:

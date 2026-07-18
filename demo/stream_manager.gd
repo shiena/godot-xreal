@@ -41,9 +41,10 @@ func _mic_granted() -> bool:
 		return true
 	return "android.permission.RECORD_AUDIO" in OS.get_granted_permissions()
 
-## Toggle streaming. Returns the resulting state (false if the encoder ABI is unavailable or start
-## failed, so the phone-menu toggle can flip itself back off).
-func set_enabled(on: bool) -> bool:
+## Toggle streaming. `target` overrides the destination (an `rtp://ip:port` / `rtmp://…` URL, or a
+## file path); empty falls back to STREAM_TARGET and then to a local .mp4. Returns the resulting state
+## (false if the encoder ABI is unavailable or start failed, so the phone-menu toggle can flip back off).
+func set_enabled(on: bool, target: String = "") -> bool:
 	if not _system or not _system.has_method(&"stream_start"):
 		return false
 	if on:
@@ -62,7 +63,9 @@ func set_enabled(on: bool) -> bool:
 			with_mic = false
 			push_warning("[demo] mic not granted yet — streaming video-only; grant RECORD_AUDIO, then toggle 配信 again for audio")
 		_ensure_viewport()
-		var url := STREAM_TARGET
+		var url := target.strip_edges()
+		if url.is_empty():
+			url = STREAM_TARGET
 		if url.is_empty():
 			url = OS.get_user_data_dir().path_join("fpv_stream.mp4")
 		if not _system.stream_start(url, STREAM_W, STREAM_H, STREAM_BITRATE, STREAM_FPS, with_mic, STREAM_WITH_INTERNAL_AUDIO):
