@@ -137,7 +137,12 @@ func _update_marker(im: Dictionary) -> void:
 		mi = _make_marker()
 		add_child(mi)
 		_markers[id] = mi
-	mi.transform = im.get("transform", Transform3D.IDENTITY)
+	# The SDK reports the tracked-image pose with its normal along a different axis than Godot's QuadMesh
+	# (+Z), so the raw pose lays the quad flat (on-device: horizontal, +Z/green facing down). Rotate -90°
+	# about local X to stand the quad up coplanar with the image, normal toward the viewer. See the
+	# device-verification checklist #7 (orientation).
+	var t: Transform3D = im.get("transform", Transform3D.IDENTITY)
+	mi.transform = t * Transform3D(Basis(Vector3(1.0, 0.0, 0.0), -PI / 2.0), Vector3.ZERO)
 	var sz: Vector2 = im.get("size", Vector2(0.1, 0.1))
 	var qm := mi.mesh as QuadMesh
 	if qm and sz.length() > 0.001:
