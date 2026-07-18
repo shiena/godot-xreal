@@ -103,14 +103,16 @@ EGL context**, so the call must be on the render thread.
   view into a SubViewport,
   gets its GL id via `RenderingServer.texture_get_native_handle`, and each frame pushes it inside a
   `RenderingServer.call_on_render_thread` callback (so `HWEncoderUpdateSurface` runs on the render thread).
-- **Receiving server**: `scripts/stream_server/` — `receive.ps1` runs ffplay/ffmpeg against
-  `stream.sdp` to view/record the RTP stream; prints the PC's `rtp://IP:5555` addresses.
+- **Receiving side**: XREAL's official **`StreamingReceiver.exe`** (Unity + FFmpeg), paired via
+  `demo/stream_pairing.gd` (FIND-SERVER discovery + TCP handshake). It decodes video + audio. (An earlier
+  ffmpeg-based receiver under `scripts/stream_server/` was removed once pairing worked — a plain SDP
+  couldn't decode the proprietary RTP audio anyway; see "Audio over RTP".)
 
 ## On-device TODO (the real unknowns)
 1. **GL-context/thread correctness of `UpdateSurface`** — the encoder must read Godot's SubViewport GL
-   texture on the render thread's EGL context. First bring-up: **`codecType 0` (local mp4)** (default when
-   `STREAM_TARGET` is empty) — records on-device, `adb pull`, play — validates the encode pipeline with no
-   network. Then set `STREAM_TARGET = "rtp://<PC>:5555"` for live RTP to `scripts/stream_server`.
+   texture on the render thread's EGL context. First bring-up was **`codecType 0` (local mp4)** — records
+   on-device, `adb pull`, play — validating the encode pipeline with no network. Live RTP now pairs with
+   `StreamingReceiver.exe` (`demo/stream_pairing.gd`, FIND-SERVER) and streams to `rtp://<ip>:5555`.
 2. Confirm the config fields the encoder needs (bitrate/fps), the timestamp unit, and that a
    `useLinnerTexture`/`useAlpha` mismatch doesn't garble the frame.
 ## Audio — **WORKING, device-verified 2026-07-19 (`fffb241`)**
@@ -150,17 +152,13 @@ flows — the encoder puts audio on **video-port + 2**, RTP convention:
 So adding `m=audio 5557 RTP/AVP 97` to the SDP finds the packets — but they don't decode. Every audio
 payload is a **constant 772 bytes** = a 4-byte magic **`ff ff ff 03`** + 768 bytes of opaque data (not
 RFC 3640 AAC-hbr / not ADTS / not LATM — those sync words don't match, and constant-size frames aren't
-natural AAC). This is XREAL/Nebula's own packetization; their receiver decodes it, ffmpeg/ffplay/VLC
-can't. **Getting RTP audio into our `scripts/stream_server` would require reverse-engineering the
-`ff ff ff 03` framing + inner codec and writing a custom depacketizer — significant, uncertain effort.**
-**XREAL ships an official Windows receiver** that decodes the full A/V (video + the proprietary audio):
-`StreammingReceiver_v1.2.0` — a Unity Windows app ("StreamingReceiver" by Nreal) bundling **FFmpeg**
-(`avcodec/avformat/swresample`) + **AVPro Video** + `Audio360.dll` + `media_enc.dll`, with a
-`StreammingEncoder` (`Play,useAudio:`) pipeline and LAN discovery (`FIND-SERVER`). So the way to get
-audio is **use that receiver**, not a custom `ffffff03` depacketizer. Caveat: like the SDK sample it
-pairs via LAN discovery, whereas our app streams to a fixed `rtp://` URL — interop with it is untested
-(may need the discovery handshake or the receiver's listen port). For our own `scripts/stream_server`
-(ffmpeg), RTP stays **video-only**; the **local mp4 already carries the mic AAC**. (Capture tooling
+natural AAC). This is XREAL's own packetization; their receiver decodes it, ffmpeg/ffplay/VLC can't.
+Writing a custom `ff ff ff 03` depacketizer would be significant, uncertain effort — **so instead we
+pair with XREAL's official receiver, which already decodes the full A/V (RESOLVED — see the FIND-SERVER
+section above; audio is device-verified there).** That receiver, `StreammingReceiver_v1.2.0`, is a Unity
+Windows app ("StreamingReceiver" by Nreal) bundling **FFmpeg** (`avcodec/avformat/swresample`) + **AVPro
+Video** + `Audio360.dll` + `media_enc.dll`, with a `StreammingEncoder` (`Play,useAudio:`) pipeline and
+LAN discovery (`FIND-SERVER`). (The **local mp4** path also carries the mic AAC directly.) (Capture tooling
 used: a Python multi-port UDP sniffer — not committed.)
 
 NB: "Nebula" (`com.xreal.evapro.nebula`) is XREAL's **Android** launcher on the host device, NOT this
