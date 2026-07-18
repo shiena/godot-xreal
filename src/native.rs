@@ -1688,11 +1688,6 @@ impl XrealNative {
         unsafe { f(component, near, far, &mut mat) }.then_some(mat)
     }
 
-    /// Whether the plane-detection C ABI resolved (libXREALXRPlugin.so present + symbols).
-    pub fn plane_detection_available(&self) -> bool {
-        self.set_plane_detection_mode.is_some() && self.get_plane_detection_changes.is_some()
-    }
-
     /// Current `PlaneDetectionMode` flags (`ffi::plane_detection_mode`), or `None` if the export is absent.
     pub fn plane_detection_mode(&self) -> Option<i32> {
         self.get_plane_detection_mode.map(|f| unsafe { f() })
@@ -1767,11 +1762,6 @@ impl XrealNative {
 
     // --- Spatial anchors (libXREALXRPlugin.so; see docs/plans/ar-features-plan.md). Needs 6DoF +
     //     the nr_spatial_anchor.aar backend. ---
-
-    /// Whether the anchor C ABI resolved (libXREALXRPlugin.so present + symbols).
-    pub fn anchor_available(&self) -> bool {
-        self.set_anchor_enabled.is_some() && self.get_anchor_changes.is_some()
-    }
 
     /// Enable/disable the anchor subsystem. Returns whether the export was present (call before use).
     pub fn set_anchor_enabled(&self, enabled: bool) -> bool {
@@ -1891,11 +1881,6 @@ impl XrealNative {
 
     // --- Image tracking (libXREALXRPlugin.so; see docs/plans/ar-features-plan.md). Needs 6DoF +
     //     the nr_image_tracking.aar backend + assets/nr_plugins.json + a DB blob. ---
-
-    /// Whether the image-tracking C ABI resolved (libXREALXRPlugin.so present + symbols).
-    pub fn image_tracking_available(&self) -> bool {
-        self.init_image_db.is_some() && self.get_image_changes.is_some()
-    }
 
     /// Build a tracking database from a blob (from `trackableImageTools`) + its per-image metadata.
     /// Returns the DB handle (`None` if the export is absent or the SDK returns a 0 handle). The two

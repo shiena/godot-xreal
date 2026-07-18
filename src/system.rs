@@ -346,12 +346,12 @@ impl XrealSystem {
     #[constant]
     const PLANE_BOTH: i64 = crate::ffi::plane_detection_mode::BOTH as i64;
 
-    /// Whether the plane-detection C ABI resolved (false on desktop / older devices).
+    /// Whether the connected glasses support plane detection (`GetSupportedFeatures` bit 0; only the
+    /// Air 2 Ultra reports it). `false` on desktop / One Series / until the perception is up — so query
+    /// it at toggle time, not at startup.
     #[func]
     fn is_plane_detection_available(&self) -> bool {
-        session::shared()
-            .map(XrealSession::plane_detection_available)
-            .unwrap_or(false)
+        crate::depth_mesh::plane_detection_supported()
     }
 
     /// Enable plane detection (`PLANE_HORIZONTAL | PLANE_VERTICAL` flags). Needs a live 6DoF session;
@@ -425,12 +425,11 @@ impl XrealSystem {
     #[constant]
     const ANCHOR_QUALITY_GOOD: i64 = crate::ffi::anchor_quality::GOOD as i64;
 
-    /// Whether the spatial-anchor C ABI resolved (false on desktop / when the backend is absent).
+    /// Whether the connected glasses support spatial anchors (`GetSupportedFeatures` bit 2; only the
+    /// Air 2 Ultra reports it). `false` on desktop / One Series / until the perception is up.
     #[func]
     fn is_anchor_available(&self) -> bool {
-        session::shared()
-            .map(XrealSession::anchor_available)
-            .unwrap_or(false)
+        crate::depth_mesh::anchor_supported()
     }
 
     /// Enable/disable the anchor subsystem (call once before acquiring). Returns whether the export
@@ -541,12 +540,11 @@ impl XrealSystem {
     // --- Image tracking (see docs/plans/ar-features-plan.md). Needs a live 6DoF session + the
     //     vendored nr_image_tracking.aar backend + assets/nr_plugins.json + a DB blob. ---
 
-    /// Whether the image-tracking C ABI resolved (false on desktop / when the backend is absent).
+    /// Whether the connected glasses support image tracking (`GetSupportedFeatures` bit 1; only the
+    /// Air 2 Ultra reports it). `false` on desktop / One Series / until the perception is up.
     #[func]
     fn is_image_tracking_available(&self) -> bool {
-        session::shared()
-            .map(XrealSession::image_tracking_available)
-            .unwrap_or(false)
+        crate::depth_mesh::image_tracking_supported()
     }
 
     /// Build a tracking database from a reference-image DB `blob` (produced by `trackableImageTools`)

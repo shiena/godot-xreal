@@ -11,6 +11,10 @@
 //!
 //! **Air 2 Ultra only** (meshing = `GetSupportedFeatures() & (1<<3)`). Coordinate signs are
 //! on-device-verify-pending, like the other trackables.
+//!
+//! This module also owns the shared `NativePerception::GetSupportedFeatures()` capability query and the
+//! `*_supported()` gates it drives — plane / image / anchor / meshing (see [`feature_supported`]) — the
+//! device-accurate replacement for the per-trackable dlsym symbol-presence checks.
 
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::OnceLock;
@@ -28,7 +32,16 @@ const NP_STARTED: usize = 0x18; // NativePerception + 0x18 (non-zero once start 
 const NP_SESSION: usize = 0x28; // NativePerception + 0x28 (NR session handle)
 const NP_CONFIG: usize = 0x38; // NativePerception + 0x38 (NR config handle)
 
-/// `GetSupportedFeatures()` bit for meshing (bit 3), the gate `GetMeshInfos` checks.
+// `NRPerceptionFeature` bits in `NativePerception::GetSupportedFeatures()`, RE'd from the SDK's own
+// gates in libXREALXRPlugin.so — the bit index is the value each gate tests (plane / image / anchor via
+// `InputManager::IsFeatureSupported(NRPerceptionFeature)`, meshing via `GetMeshInfos`, hand via
+// `IsHandTrackingSupported`): bit 0 = plane, 1 = image tracking, 2 = anchor, 3 = meshing, 4 = hand.
+// This is the device-accurate capability gate (only the Air 2 Ultra reports the trackables). Exported-
+// symbol presence CANNOT gate by device — there is one shared libXREALXRPlugin.so whose exports are
+// identical on every model — so these bits replace the old dlsym-presence checks.
+const PLANE_FEATURE_BIT: u64 = 1 << 0;
+const IMAGE_FEATURE_BIT: u64 = 1 << 1;
+const ANCHOR_FEATURE_BIT: u64 = 1 << 2;
 const MESHING_FEATURE_BIT: u64 = 1 << 3;
 
 // --- MeshBlockInfo layout (128-byte block, device-confirmed from the AcquireMesh copy loop). Each
@@ -98,17 +111,42 @@ unsafe fn perception() -> Option<(usize, *mut u8)> {
     Some((lib_base, np))
 }
 
-/// Whether the connected glasses support meshing (`GetSupportedFeatures() & (1<<3)`). `false` until the
-/// perception is up / on unsupported devices (only the Air 2 Ultra reports it).
-pub fn meshing_supported() -> bool {
+/// The `NativePerception::GetSupportedFeatures()` bitmask, or `None` until the perception is fully up.
+fn supported_features() -> Option<u64> {
     unsafe {
-        let Some((lib_base, np)) = perception() else {
-            return false;
-        };
+        let (lib_base, np) = perception()?;
         let get_features: FnGetSupportedFeatures =
             std::mem::transmute(lib_base + OFF_GET_SUPPORTED_FEATURES);
-        get_features(np) & MESHING_FEATURE_BIT != 0
+        Some(get_features(np))
     }
+}
+
+/// Whether a `*_FEATURE_BIT` capability is reported by the connected glasses. Device-accurate, but
+/// `false` until the perception is fully up (so query it at feature-toggle time, not at startup) and on
+/// devices that don't support it (only the Air 2 Ultra reports the trackables).
+fn feature_supported(bit: u64) -> bool {
+    supported_features().is_some_and(|f| f & bit != 0)
+}
+
+/// Whether the glasses support spatial meshing (`GetSupportedFeatures` bit 3).
+pub fn meshing_supported() -> bool {
+    feature_supported(MESHING_FEATURE_BIT)
+}
+
+/// Whether the glasses support plane detection (`GetSupportedFeatures` bit 0). Replaces the old dlsym
+/// symbol-presence check, which couldn't tell models apart (one shared .so).
+pub fn plane_detection_supported() -> bool {
+    feature_supported(PLANE_FEATURE_BIT)
+}
+
+/// Whether the glasses support image tracking (`GetSupportedFeatures` bit 1).
+pub fn image_tracking_supported() -> bool {
+    feature_supported(IMAGE_FEATURE_BIT)
+}
+
+/// Whether the glasses support spatial anchors (`GetSupportedFeatures` bit 2).
+pub fn anchor_supported() -> bool {
+    feature_supported(ANCHOR_FEATURE_BIT)
 }
 
 /// Enable/disable meshing (`NativePerception::SetMeshingEnabled`). Returns whether the call was made

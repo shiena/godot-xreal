@@ -621,14 +621,6 @@ impl XrealSession {
             .camera_projection_matrix(component, near, far)
     }
 
-    /// Whether the plane-detection C ABI resolved (see `docs/plans/ar-features-plan.md`).
-    pub fn plane_detection_available(&self) -> bool {
-        self.native
-            .lock()
-            .expect("xreal native mutex")
-            .plane_detection_available()
-    }
-
     /// Current `PlaneDetectionMode` flags, or `None` if the export is absent.
     pub fn plane_detection_mode(&self) -> Option<i32> {
         self.native
@@ -663,14 +655,6 @@ impl XrealSession {
 
     // --- Spatial anchors (see docs/plans/ar-features-plan.md). Needs a live 6DoF session +
     //     the nr_spatial_anchor.aar backend. ---
-
-    /// Whether the anchor C ABI resolved.
-    pub fn anchor_available(&self) -> bool {
-        self.native
-            .lock()
-            .expect("xreal native mutex")
-            .anchor_available()
-    }
 
     /// Enable/disable the anchor subsystem (call before use). Returns whether the export was present.
     pub fn set_anchor_enabled(&self, enabled: bool) -> bool {
@@ -753,14 +737,6 @@ impl XrealSession {
 
     // --- Image tracking (see docs/plans/ar-features-plan.md). Needs a live 6DoF session +
     //     the nr_image_tracking.aar backend + assets/nr_plugins.json + a DB blob. ---
-
-    /// Whether the image-tracking C ABI resolved.
-    pub fn image_tracking_available(&self) -> bool {
-        self.native
-            .lock()
-            .expect("xreal native mutex")
-            .image_tracking_available()
-    }
 
     /// Build a tracking database from a blob + per-image metadata; returns the DB handle.
     pub fn init_image_database(
