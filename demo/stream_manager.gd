@@ -6,9 +6,9 @@ extends Node
 ##
 ## The encoder reads the GL texture on the render thread, so the per-frame push runs inside a
 ## RenderingServer.call_on_render_thread callback. See docs/plans/fpv-streaming-plan.md and the
-## receiving server at log/stream_server/.
+## receiving server at scripts/stream_server/.
 
-## Stream target: set to "rtp://<your-PC-IP>:5555" to send to log/stream_server (run receive.ps1),
+## Stream target: set to "rtp://<your-PC-IP>:5555" to send to scripts/stream_server (run receive.ps1),
 ## or leave "" to record a local .mp4 on-device (adb pull it) — the simplest first bring-up, no network.
 const STREAM_TARGET := ""
 const STREAM_W := 1280

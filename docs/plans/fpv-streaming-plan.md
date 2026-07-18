@@ -99,14 +99,14 @@ EGL context**, so the call must be on the render thread.
   view into a SubViewport,
   gets its GL id via `RenderingServer.texture_get_native_handle`, and each frame pushes it inside a
   `RenderingServer.call_on_render_thread` callback (so `HWEncoderUpdateSurface` runs on the render thread).
-- **Receiving server**: `log/stream_server/` (gitignored) — `receive.ps1` runs ffplay/ffmpeg against
+- **Receiving server**: `scripts/stream_server/` — `receive.ps1` runs ffplay/ffmpeg against
   `stream.sdp` to view/record the RTP stream; prints the PC's `rtp://IP:5555` addresses.
 
 ## On-device TODO (the real unknowns)
 1. **GL-context/thread correctness of `UpdateSurface`** — the encoder must read Godot's SubViewport GL
    texture on the render thread's EGL context. First bring-up: **`codecType 0` (local mp4)** (default when
    `STREAM_TARGET` is empty) — records on-device, `adb pull`, play — validates the encode pipeline with no
-   network. Then set `STREAM_TARGET = "rtp://<PC>:5555"` for live RTP to `log/stream_server`.
+   network. Then set `STREAM_TARGET = "rtp://<PC>:5555"` for live RTP to `scripts/stream_server`.
 2. Confirm the config fields the encoder needs (bitrate/fps), the timestamp unit, and that a
    `useLinnerTexture`/`useAlpha` mismatch doesn't garble the frame.
 ## Audio — **WORKING, device-verified 2026-07-19 (`fffb241`)**
