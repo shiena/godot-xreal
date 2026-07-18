@@ -3,8 +3,8 @@ extends Node
 ## texture with the libmedia_codec HW encoder (XrealSystem.stream_*), driven by the phone-menu "Stream"
 ## toggle (Camera tab). When the RGB camera is ON it instead streams the camera+AR blend (what a
 ## bystander sees, via xreal_blend_2d.gdshader like blend_manager); with the camera OFF it streams the AR
-## view alone. Like the SDK's cast this is an Eyes/RGB-camera feature — gated to One Series via
-## is_camera_supported() so it never opens the encoder on the camera-less Air 2 Ultra.
+## view alone. The encoder feeds on our own SubViewport texture, not the camera, so streaming needs no
+## RGB camera and works on the camera-less Air 2 Ultra too (it just streams the AR-only view there).
 ##
 ## The destination is XREAL's "StreamingReceiver" PC app, found by LAN discovery: demo/stream_pairing.gd
 ## broadcasts FIND-SERVER, does the TCP EnterRoom/useAudio handshake, and reports the receiver's IP; we
@@ -92,13 +92,10 @@ func set_enabled(on: bool) -> void:
 	if not _system or not _system.has_method(&"stream_start"):
 		active_changed.emit(false)
 		return
-	# The SDK's first-person-view cast is an Eyes/RGB-camera feature (One Series only). Gate on the same
-	# IsHMDFeatureSupported(RGB_CAMERA) check as the camera so the HW encoder is never opened on the Air 2
-	# Ultra (no Eyes) — avoiding the freeze the camera hit there.
-	if _system.has_method(&"is_camera_supported") and not _system.is_camera_supported():
-		push_warning("[demo] FPV streaming needs an Eye-equipped device (One Series) — unavailable")
-		active_changed.emit(false)
-		return
+	# NB: no RGB-camera gate here. We render our own head-POV AR into a SubViewport and hand that GL
+	# texture to the (device-agnostic) libmedia_codec encoder — the camera is never touched unless it
+	# happens to be on, in which case we opportunistically stream the camera+AR blend (_use_blend). With
+	# no camera (e.g. the Air 2 Ultra) it streams the AR-only view, so streaming works there too.
 	if OBSERVER_MODE:
 		# ObserverView (MRC): no mic/useAudio; the PC composites our virtual-only+alpha render over its webcam.
 		_with_mic = false

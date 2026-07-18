@@ -82,8 +82,9 @@ const _toggles := {
 #   Control — the virtual controller (3DoF): ALL glasses (One Series / Air·Air 2·Air 2 Pro / Air 2 Ultra).
 #   Camera  — the RGB camera: XREAL One Series only (Air/Air 2/Air 2 Pro and Air 2 Ultra have no RGB cam).
 #   AR      — perception (plane / spatial anchor / image tracking / depth mesh): Air 2 Ultra only.
-# Streaming (FPV) is an Eyes/RGB-camera feature (One Series only), so it lives in the Camera tab and is
-# gated the same way (main.gd / stream_manager.gd) to avoid a freeze on the camera-less Air 2 Ultra.
+# Streaming (FPV) lives in the Camera tab because it can cast the camera+AR blend when the camera is on,
+# but it does NOT require the camera: it streams our own SubViewport (the AR-only view with no camera),
+# so it works on the camera-less Air 2 Ultra too (see stream_manager.gd).
 const _tabs := [
 	{"label": "Control", "items": ["trigger", "grip", "menu", "hand_l", "hand_r", "exit"]},
 	{"label": "Camera", "items": ["capture", "blend", "camera", "stream"]},
