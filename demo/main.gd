@@ -295,6 +295,22 @@ func _set_controller_toggle(name: String, on: bool) -> void:
 	if ps and ps.has_method(&"set_toggle"):
 		ps.set_toggle(name, on)
 
+## Grey out (make inert) the phone-menu controls whose capability the device lacks, once the session
+## is up and the capabilities are known. Each control maps to a native capability query: camera / plane
+## / anchor / image / mesh. Camera-dependent capture buttons (Photo / Blend Photo) follow the camera.
+## Streaming is always available (it casts the AR view even without a camera), so it is never disabled.
+func _apply_capabilities(cam: bool, plane: bool, anchor: bool, image: bool, mesh: bool) -> void:
+	var ps := get_node_or_null(^"PhoneScreen")
+	if ps == null or not ps.has_method(&"set_disabled"):
+		return
+	var avail := {
+		"camera": cam, "capture": cam, "blend": cam,
+		"plane": plane, "anchor": anchor, "place": anchor,
+		"image": image, "image_cycle": image, "mesh": mesh,
+	}
+	for control_name in avail:
+		ps.set_disabled(control_name, not bool(avail[control_name]))
+
 ## Reveal the phone-IMU 3D pointer (demo/phone_pointer.gd — defined in ar_scene.tscn,
 ## hidden until the NRController has started so no beam shows before it can be driven).
 func _setup_phone_pointer() -> void:
@@ -345,6 +361,7 @@ func _process(_delta: float) -> void:
 			var image: bool = _system.is_image_tracking_available() if _system.has_method(&"is_image_tracking_available") else false
 			var mesh: bool = _system.is_meshing_supported() if _system.has_method(&"is_meshing_supported") else false
 			print("[demo] AR features: camera=%s plane=%s anchor=%s image=%s mesh=%s" % [cam, plane, anchor, image, mesh])
+			_apply_capabilities(cam, plane, anchor, image, mesh)
 	# Phase C path B: phone IMU (via NRController state) drives the 3D pointer. Godot's own IMU returns
 	# all-zero on this host, so we read accel (gravity → pitch/roll) + gyro (yaw) from the controller.
 	if _tracker and _tracker.has_method(&"is_tracking") and _tracker.is_tracking() and _system:

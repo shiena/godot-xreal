@@ -107,6 +107,7 @@ var _active_tab := 0
 var _finger_widget := {}      # touch index -> widget name ("touchpad" / "tab:N" / button name)
 var _pressed := {}            # widget name -> bool (momentary press highlight)
 var _toggle_on := {}          # toggle name -> bool (persistent on/off)
+var _disabled := {}           # button/toggle name -> true (unsupported: drawn greyed, not tappable)
 var _pad_value := Vector2.ZERO
 # Exit confirmation: while true, a drawn Yes/No dialog covers the controller and only its two buttons
 # are tappable (see _draw / _input). Their hit-rects are recomputed each _draw.
@@ -214,6 +215,8 @@ func _widget_at(pos: Vector2) -> String:
 		if (_tab_rects[i] as Rect2).has_point(pos):
 			return "tab:%d" % i
 	for name in _button_rects:
+		if _disabled.has(name):
+			continue  # a disabled button is not tappable — treat as not there
 		if (_button_rects[name] as Rect2).has_point(pos):
 			return name
 	return ""
@@ -364,6 +367,14 @@ func _draw() -> void:
 	# The active tab's buttons: momentary vs toggle drawn differently.
 	for name in _active_items():
 		var r: Rect2 = _button_rects[name]
+		if _disabled.has(name):
+			# Unsupported on this device: flat dark fill, faint border, dim label — reads as inert.
+			draw_rect(r, Color(0.15, 0.15, 0.17, 0.5))
+			draw_rect(r, Color(1, 1, 1, 0.12), false, 2.0)
+			var label := "%s: —" % _toggles[name] if _toggles.has(name) else str(_buttons[name])
+			_draw_label(font, font_size, r, label, Color(1, 1, 1, 0.3),
+				r.position.y + (r.size.y + font_size) * 0.5 - font_size * 0.3)
+			continue
 		if _toggles.has(name):
 			# Toggle: green while on, gray while off; a lighter flash while the finger is down.
 			var on := bool(_toggle_on.get(name, false))
@@ -418,3 +429,12 @@ func set_toggle(name: String, on: bool) -> void:
 	if _toggles.has(name):
 		_toggle_on[name] = on
 		queue_redraw()
+
+## Enable/disable a button or toggle by name. A disabled control is drawn greyed and inert (taps do
+## nothing) — used to reflect a capability the device lacks (no RGB camera, no plane detection, …).
+func set_disabled(name: String, disabled: bool) -> void:
+	if disabled:
+		_disabled[name] = true
+	else:
+		_disabled.erase(name)
+	queue_redraw()

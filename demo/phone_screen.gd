@@ -63,3 +63,7 @@ func _ready() -> void:
 ## Forward a programmatic toggle-state change to the touch controller (see its set_toggle).
 func set_toggle(name: String, on: bool) -> void:
 	($TouchController as Control).set_toggle(name, on)
+
+## Forward an enable/disable to the touch controller (greys out unsupported controls; see set_disabled).
+func set_disabled(name: String, disabled: bool) -> void:
+	($TouchController as Control).set_disabled(name, disabled)
