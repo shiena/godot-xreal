@@ -21,7 +21,63 @@ var _export_plugin: EditorExportPlugin
 var _image_db_dock: Control
 var _vendor_import_dock: Control
 
+## The `xreal/*` project settings consumed at runtime (demo/main.gd reads them with these same
+## inline defaults, so a project works with or without them persisted). Registered here so they
+## show up in Project > Project Settings with proper types/hints; only values changed from the
+## default are written to project.godot. Left in place on plugin disable (removing them would
+## drop user-chosen values).
+const PROJECT_SETTINGS: Array[Dictionary] = [
+	{
+		# Head-tracking mode applied at boot. "SDK Default" (-1) leaves the native default /
+		# `debug.xreal.tracking_type` system property in charge.
+		"name": "xreal/tracking_type",
+		"type": TYPE_INT,
+		"hint": PROPERTY_HINT_ENUM,
+		"hint_string": "SDK Default:-1,6DoF:0,3DoF:1,0DoF:2",
+		"default": -1,
+	},
+	{
+		# Start the glasses RGB camera at boot (demo: the phone-menu toggle can change it later).
+		"name": "xreal/enable_camera",
+		"type": TYPE_BOOL,
+		"hint": PROPERTY_HINT_NONE,
+		"hint_string": "",
+		"default": false,
+	},
+	{
+		# Demo: show the phone touch-controller UI (off = keep the host 3D preview for debugging).
+		"name": "xreal/enable_touch_controller",
+		"type": TYPE_BOOL,
+		"hint": PROPERTY_HINT_NONE,
+		"hint_string": "",
+		"default": true,
+	},
+	{
+		# Demo: drive the 3D pointer from the phone IMU (NRController).
+		"name": "xreal/enable_phone_pointer",
+		"type": TYPE_BOOL,
+		"hint": PROPERTY_HINT_NONE,
+		"hint_string": "",
+		"default": true,
+	},
+]
+
+func _register_project_settings() -> void:
+	for s in PROJECT_SETTINGS:
+		var setting_name: String = s["name"]
+		if not ProjectSettings.has_setting(setting_name):
+			ProjectSettings.set_setting(setting_name, s["default"])
+		ProjectSettings.set_initial_value(setting_name, s["default"])
+		ProjectSettings.add_property_info({
+			"name": setting_name,
+			"type": s["type"],
+			"hint": s["hint"],
+			"hint_string": s["hint_string"],
+		})
+		ProjectSettings.set_as_basic(setting_name, true)
+
 func _enter_tree() -> void:
+	_register_project_settings()
 	# Contribute the XREAL Android manifest/library requirements at export time so the Gradle
 	# build template needs no hand-edits (they survive template regeneration).
 	_export_plugin = ExportPluginScript.new()
