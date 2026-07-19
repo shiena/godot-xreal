@@ -47,3 +47,12 @@ Thumbs.db
 # XREAL host build tools (trackableImageTools — the image-tracking DB blob generator), vendored
 # locally by scripts/vendor_xreal_libs.*; large SDK binaries, not committed.
 /addons/godot_xreal/tools/
+
+# Image-tracking reference data — SDK-derived / large binaries, kept local only.
+# The reference.json manifest, the built .bin databases, and the source images
+# (and their Godot .import metadata) are provided per-project, not committed.
+/demo/image_tracking/reference.json
+/demo/image_tracking/*.bin
+/demo/image_tracking/*.png
+/demo/image_tracking/*.jpg
+/demo/image_tracking/*.import
