@@ -108,6 +108,7 @@ var _finger_widget := {}      # touch index -> widget name ("touchpad" / "tab:N"
 var _pressed := {}            # widget name -> bool (momentary press highlight)
 var _toggle_on := {}          # toggle name -> bool (persistent on/off)
 var _disabled := {}           # button/toggle name -> true (unsupported: drawn greyed, not tappable)
+var _label_override := {}     # button name -> label text (overrides the static _buttons label)
 var _pad_value := Vector2.ZERO
 # Exit confirmation: while true, a drawn Yes/No dialog covers the controller and only its two buttons
 # are tappable (see _draw / _input). Their hit-rects are recomputed each _draw.
@@ -371,7 +372,7 @@ func _draw() -> void:
 			# Unsupported on this device: flat dark fill, faint border, dim label — reads as inert.
 			draw_rect(r, Color(0.15, 0.15, 0.17, 0.5))
 			draw_rect(r, Color(1, 1, 1, 0.12), false, 2.0)
-			var label := "%s: —" % _toggles[name] if _toggles.has(name) else str(_buttons[name])
+			var label := "%s: —" % _toggles[name] if _toggles.has(name) else _button_label(name)
 			_draw_label(font, font_size, r, label, Color(1, 1, 1, 0.3),
 				r.position.y + (r.size.y + font_size) * 0.5 - font_size * 0.3)
 			continue
@@ -389,7 +390,7 @@ func _draw() -> void:
 			var on := _pressed.has(name)
 			draw_rect(r, Color(0.9, 0.9, 0.9, 0.28) if on else Color(0.5, 0.5, 0.5, 0.16))
 			draw_rect(r, Color(1, 1, 1, 0.85), false, 3.0)
-			_draw_label(font, font_size, r, _buttons[name], Color.WHITE,
+			_draw_label(font, font_size, r, _button_label(name), Color.WHITE,
 				r.position.y + (r.size.y + font_size) * 0.5 - font_size * 0.3)
 
 	# Modal "Exit the app?" confirmation, drawn on top of everything (its Yes/No are the only tappable
@@ -419,8 +420,21 @@ func _draw() -> void:
 			_yes_rect.position.y + (_yes_rect.size.y + font_size) * 0.5 - font_size * 0.3)
 
 func _draw_label(font: Font, font_size: int, r: Rect2, text: String, color: Color, y: float) -> void:
-	draw_string(font, Vector2(r.position.x, y), text, HORIZONTAL_ALIGNMENT_CENTER,
+	# Trim with an ellipsis if the label is wider than the button (draw_string only aligns, it does
+	# not clip), so a long image-set name on the narrow "Cycle" button can't spill over its neighbour.
+	var t := _fit_text(font, font_size, text, r.size.x - font_size * 0.6)
+	draw_string(font, Vector2(r.position.x, y), t, HORIZONTAL_ALIGNMENT_CENTER,
 		r.size.x, font_size, color)
+
+## Shorten `text` with a trailing "…" until it fits `max_width` at `font_size` (returns it unchanged
+## when it already fits).
+func _fit_text(font: Font, font_size: int, text: String, max_width: float) -> String:
+	if font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x <= max_width:
+		return text
+	var t := text
+	while t.length() > 1 and font.get_string_size(t + "…", HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x > max_width:
+		t = t.substr(0, t.length() - 1)
+	return t.strip_edges() + "…"
 
 ## Programmatically set a toggle's on/off state without emitting its signal — keeps the UI in
 ## sync when the app changes it (e.g. reflecting a camera start that failed, or a plane mode the
@@ -429,6 +443,19 @@ func set_toggle(name: String, on: bool) -> void:
 	if _toggles.has(name):
 		_toggle_on[name] = on
 		queue_redraw()
+
+## The displayed label for a momentary button: a runtime override if set, else the static one.
+func _button_label(name: String) -> String:
+	return str(_label_override.get(name, _buttons.get(name, name)))
+
+## Override a momentary button's label (e.g. show the active image set on the "Cycle Image" button).
+## Pass "" to clear the override and restore the static label.
+func set_button_label(name: String, text: String) -> void:
+	if text.is_empty():
+		_label_override.erase(name)
+	else:
+		_label_override[name] = text
+	queue_redraw()
 
 ## Enable/disable a button or toggle by name. A disabled control is drawn greyed and inert (taps do
 ## nothing) — used to reflect a capability the device lacks (no RGB camera, no plane detection, …).

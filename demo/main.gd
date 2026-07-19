@@ -102,6 +102,9 @@ func _ready() -> void:
 	for feature in [_camera, _planes, _anchors, _image_tracking, _mesh, _photo_capture, _blend_capture, _stream]:
 		if feature and feature.has_signal(&"error"):
 			feature.error.connect(_on_feature_error)
+	# Label the "Cycle Image" button with the active image-tracking set as it changes.
+	if _image_tracking and _image_tracking.has_signal(&"set_changed"):
+		_image_tracking.set_changed.connect(_on_image_set_changed)
 	_setup_touch_controller()
 	# Reflect the boot camera state on the phone-menu toggle (on only when the XrealCamera
 	# instance was saved with `enabled` ticked; the other toggles start off).
@@ -280,6 +283,12 @@ func _show_no_glasses_and_quit() -> void:
 	add_child(layer)
 	await get_tree().create_timer(NO_GLASSES_QUIT_DELAY_S).timeout
 	get_tree().quit()
+
+## The active image-tracking set changed — show its name on the phone-menu "Cycle Image" button.
+func _on_image_set_changed(name: String) -> void:
+	var ps := get_node_or_null(^"PhoneScreen")
+	if ps and ps.has_method(&"set_button_label"):
+		ps.set_button_label("image_cycle", "Cycle: %s" % name)
 
 ## A feature component reported an error (via its `error` signal) — show it on the debug Status
 ## label and log it, so the failure is visible at the load site instead of buried in warnings.

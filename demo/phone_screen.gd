@@ -67,3 +67,7 @@ func set_toggle(name: String, on: bool) -> void:
 ## Forward an enable/disable to the touch controller (greys out unsupported controls; see set_disabled).
 func set_disabled(name: String, disabled: bool) -> void:
 	($TouchController as Control).set_disabled(name, disabled)
+
+## Forward a runtime button-label override to the touch controller (see set_button_label).
+func set_button_label(name: String, text: String) -> void:
+	($TouchController as Control).set_button_label(name, text)

@@ -15,6 +15,10 @@ extends Node3D
 ## the same human-readable text also pushed as a warning.
 signal error(message: String)
 
+## Emitted with the active set's name when the active tracking set changes (on load and on
+## cycle_set), so the load site can label a "cycle" button with the current set.
+signal set_changed(name: String)
+
 ## Enable at boot (applied in _ready). At runtime call set_enabled().
 @export var enabled := false
 ## The reference-image manifest (JSON). Required — set_enabled(true) refuses while empty.
@@ -128,6 +132,7 @@ func _activate(index: int) -> void:
 	_active_set = index
 	_system.set_image_database(_sets[index].handle)
 	_clear_markers()  # a different set tracks different images
+	set_changed.emit(str(_sets[index].name))
 	print("[xreal-image] active set -> '%s' (handle=%d)" % [_sets[index].name, _sets[index].handle])
 
 ## Cycle to the next set. No-op with 0/1 set.
