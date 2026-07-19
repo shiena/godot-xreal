@@ -80,8 +80,10 @@ func _init_set(s: Dictionary) -> int:
 	var sizes := PackedVector2Array()
 	for img in s.get("images", []):
 		guids.append(str(img.get("guid", "")))
+		# Physical size X/Y (metres). Height defaults to width for back-compat with width-only manifests.
 		var w := float(img.get("width", 0.1))
-		sizes.append(Vector2(w, w))
+		var h := float(img.get("height", w))
+		sizes.append(Vector2(w, h))
 	var handle: int = _system.init_image_database(blob, guids, sizes)
 	if handle == 0:
 		push_warning("[image] set '%s' init_image_database failed (needs 6DoF + nr_plugins.json + backend)" % name)

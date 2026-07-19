@@ -13,6 +13,7 @@ const DEFAULT_MANIFEST := "res://demo/image_tracking/reference.json"
 
 var _manifest_edit: LineEdit
 var _set_selector: OptionButton
+var _set_name_edit: LineEdit
 var _list: VBoxContainer
 var _status: RichTextLabel
 var _file_dialog: EditorFileDialog
@@ -59,6 +60,19 @@ func _build_ui() -> void:
 	rm_set.pressed.connect(_on_remove_set)
 	srow.add_child(rm_set)
 	add_child(srow)
+
+	# Rename the current set (its `name` in the manifest, i.e. the tracking-set label the runtime cycles).
+	var nrow := HBoxContainer.new()
+	var nlabel := Label.new()
+	nlabel.text = "Set name:"
+	nrow.add_child(nlabel)
+	_set_name_edit = LineEdit.new()
+	_set_name_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_set_name_edit.placeholder_text = "(set name)"
+	_set_name_edit.text_submitted.connect(func(_t): _rename_current_set())
+	_set_name_edit.focus_exited.connect(_rename_current_set)
+	nrow.add_child(_set_name_edit)
+	add_child(nrow)
 
 	var scroll := ScrollContainer.new()
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -145,6 +159,9 @@ func _refresh_list() -> void:
 	if not sets.is_empty():
 		_current_set = clampi(_current_set, 0, sets.size() - 1)
 		_set_selector.select(_current_set)
+	# Reflect the current set's name in the rename field.
+	if _set_name_edit:
+		_set_name_edit.text = str(_cur_set(data).get("name", "")) if not sets.is_empty() else ""
 	# Show the current set's images.
 	for c in _list.get_children():
 		c.queue_free()
@@ -165,16 +182,12 @@ func _make_row(index: int, img: Dictionary) -> Control:
 	name_label.clip_text = true
 	row.add_child(name_label)
 
-	var wlabel := Label.new()
-	wlabel.text = "Width (m):"
-	row.add_child(wlabel)
-	var width := SpinBox.new()
-	width.min_value = 0.01
-	width.max_value = 100.0
-	width.step = 0.01
-	width.value = float(img.get("width", 0.2))
-	width.value_changed.connect(func(v): _set_width(index, v))
-	row.add_child(width)
+	# Physical size X / Y in metres — the per-image size passed to init_image_database at runtime
+	# (ManagedReferenceImage.size). Height defaults to width for back-compat with width-only manifests.
+	var w := float(img.get("width", 0.2))
+	var h := float(img.get("height", w))
+	row.add_child(_size_field("X (m):", w, func(v): _set_image_size(index, false, v)))
+	row.add_child(_size_field("Y (m):", h, func(v): _set_image_size(index, true, v)))
 
 	var rm := Button.new()
 	rm.text = "Remove"
@@ -182,11 +195,28 @@ func _make_row(index: int, img: Dictionary) -> Control:
 	row.add_child(rm)
 	return row
 
-func _set_width(index: int, v: float) -> void:
+## A "<label> [SpinBox]" metres pair for a physical-size field; calls `on_changed(value)` on edit.
+func _size_field(label: String, value: float, on_changed: Callable) -> Control:
+	var box := HBoxContainer.new()
+	var l := Label.new()
+	l.text = label
+	box.add_child(l)
+	var sb := SpinBox.new()
+	sb.min_value = 0.01
+	sb.max_value = 100.0
+	sb.step = 0.01
+	sb.value = value
+	sb.value_changed.connect(on_changed)
+	box.add_child(sb)
+	return box
+
+## Update one image's physical width (`is_y=false`) or height (`is_y=true`) in the current set.
+func _set_image_size(index: int, is_y: bool, v: float) -> void:
 	var data := _load_manifest()
 	var images: Array = _cur_set(data).get("images", [])
 	if index >= 0 and index < images.size():
-		images[index]["width"] = v
+		var key := "height" if is_y else "width"
+		images[index][key] = v
 		_save_manifest(data)
 
 func _remove(index: int) -> void:
@@ -220,6 +250,25 @@ func _on_remove_set() -> void:
 		_refresh_list()
 		_set_status("Removed set: %s" % removed)
 
+## Rename the current set to the text in the set-name field (updates the manifest + selector). No-op on
+## an empty name or when unchanged.
+func _rename_current_set() -> void:
+	if _set_name_edit == null:
+		return
+	var new_name := _set_name_edit.text.strip_edges()
+	if new_name.is_empty():
+		return
+	var data := _load_manifest()
+	var sets: Array = data["sets"]
+	if _current_set < 0 or _current_set >= sets.size():
+		return
+	if str(sets[_current_set].get("name", "")) == new_name:
+		return
+	sets[_current_set]["name"] = new_name
+	_save_manifest(data)
+	_refresh_list()
+	_set_status("Renamed set -> %s" % new_name)
+
 # --- add image -----------------------------------------------------------------------------------
 
 func _on_add_pressed() -> void:
@@ -241,6 +290,7 @@ func _on_file_selected(res_path: String) -> void:
 	_cur_set(data)["images"].append({
 		"guid": _gen_guid(),
 		"width": 0.2,
+		"height": 0.2,
 		"image": dest_name,
 		"label": dest_name.get_basename(),
 	})
