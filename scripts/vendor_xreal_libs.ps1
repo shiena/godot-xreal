@@ -79,6 +79,23 @@ try {
         throw "Not found: $srcAbi  (is -XrealPackage the com.xreal.xr/package root?)"
     }
 
+    # --- Version gate: refuse packages older than $minVersion. The Rust internal-call offsets
+    #     (hand tracking / depth mesh / signal_guard patches) were RE'd against this version; an
+    #     older package can crash. Read from the Unity UPM manifest (package.json).
+    $minVersion = '3.1.0'
+    $pkgJson = Join-Path $XrealPackage 'package.json'
+    if (-not (Test-Path $pkgJson)) {
+        throw "package.json not found in $XrealPackage (is this a com.xreal.xr package?)"
+    }
+    $pkgVer = (Get-Content $pkgJson -Raw | ConvertFrom-Json).version
+    if (-not $pkgVer) { throw "Could not read `"version`" from $pkgJson" }
+    # Compare the numeric core (strip any -pre / +build suffix) as a System.Version.
+    $verCore = ($pkgVer -split '[-+]')[0]
+    if ([version]$verCore -lt [version]$minVersion) {
+        throw "com.xreal.xr $pkgVer is too old — this addon needs $minVersion or newer (the native offsets were RE'd against $minVersion; an older package can crash). Nothing was vendored."
+    }
+    Write-Host "com.xreal.xr version $pkgVer (>= $minVersion) - ok"
+
     $jniDir = Join-Path $repo 'jniLibs/arm64-v8a'
     $addonDir = Join-Path $repo 'addons/godot_xreal/android'
     New-Item -ItemType Directory -Force -Path $jniDir, $addonDir | Out-Null

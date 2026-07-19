@@ -16,6 +16,11 @@ extends VBoxContainer
 ## launcher is Unity-only). Keep the package version pinned to the one the Rust internal-call offsets
 ## were RE'd against (hand tracking / depth mesh / signal_guard) — a different version can crash.
 
+# Minimum com.xreal.xr version accepted. The Rust internal-call offsets (hand tracking / depth mesh /
+# signal_guard patches) were RE'd against this package; an older one can crash, so vendoring is refused
+# below it. Read from the package's package.json (Unity UPM manifest).
+const MIN_VERSION := "3.1.0"
+
 # arm64-v8a core .so in Runtime/Plugins/Android/arm64-v8a/ -> jniLibs/arm64-v8a/.
 const CORE_SO := ["libXREALNativeSessionManager.so", "libXREALXRPlugin.so", "libVulkanSupport.so"]
 # The FPV HW encoder lives under the Camera Features plugin path.
@@ -113,6 +118,14 @@ func _import(path: String) -> void:
 		_fail("Doesn't look like a com.xreal.xr package (%s missing)" % src_abi)
 		return
 
+	# Version gate: the native offsets were RE'd against MIN_VERSION+, so refuse older packages
+	# (crash risk) before copying anything.
+	var verr := _version_error(pkg)
+	if not verr.is_empty():
+		if temp: _rmtree(temp)
+		_fail(verr)
+		return
+
 	# Destinations (all gitignored).
 	var jni := ProjectSettings.globalize_path("res://jniLibs/arm64-v8a")
 	var addon := ProjectSettings.globalize_path("res://addons/godot_xreal/android")
@@ -164,6 +177,41 @@ func _import(path: String) -> void:
 		_status.text = "[color=orange]Partly missing[/color] (possible package-version mismatch):\n[code]%s[/code]\n[color=orange]missing:\n  - %s[/color]" % [body, "\n  - ".join(missing)]
 
 # --- helpers --------------------------------------------------------------------------------------
+
+## Validate the package version against MIN_VERSION. Returns "" when ok, or a user-facing error
+## message (unreadable manifest / too old) — kept as one function so `_import` stays under
+## gdlint's max-returns.
+func _version_error(pkg: String) -> String:
+	var ver := _package_version(pkg)
+	if ver.is_empty():
+		return "Could not read \"version\" from package.json — is this a com.xreal.xr package?"
+	if _version_lt(ver, MIN_VERSION):
+		return "com.xreal.xr %s is too old — this addon needs %s or newer (the native hand-tracking / depth-mesh / signal_guard offsets were reverse-engineered against %s; an older package can crash). Nothing was imported." % [ver, MIN_VERSION, MIN_VERSION]
+	return ""
+
+## Read the package version from the Unity UPM manifest (`<pkg>/package.json`), or "" if unreadable.
+func _package_version(pkg: String) -> String:
+	var pj := pkg.path_join("package.json")
+	if not FileAccess.file_exists(pj):
+		return ""
+	var f := FileAccess.open(pj, FileAccess.READ)
+	if f == null:
+		return ""
+	var data = JSON.parse_string(f.get_as_text())
+	f.close()
+	return str(data.get("version", "")) if typeof(data) == TYPE_DICTIONARY else ""
+
+## True if semver `a` is older than `b`, comparing the dot-separated numeric core (any -pre / +build
+## suffix is ignored). Missing components read as 0 (so "3.1" == "3.1.0").
+func _version_lt(a: String, b: String) -> bool:
+	var pa := a.split("-")[0].split("+")[0].split(".")
+	var pb := b.split("-")[0].split("+")[0].split(".")
+	for i in 3:
+		var na := int(pa[i]) if i < pa.size() else 0
+		var nb := int(pb[i]) if i < pb.size() else 0
+		if na != nb:
+			return na < nb
+	return false
 
 ## Extract a .tar.gz into `dest` using the system tar (bsdtar on Win10+, native tar on macOS/Linux).
 func _extract(archive: String, dest: String, log: PackedStringArray) -> int:

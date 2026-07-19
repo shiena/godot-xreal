@@ -73,6 +73,22 @@ src_android="$pkg/Runtime/Plugins/Android"
 src_abi="$src_android/arm64-v8a"
 [ -d "$src_abi" ] || die "Not found: $src_abi  (is the argument the com.xreal.xr/package root?)"
 
+# --- Version gate: refuse packages older than MIN_VERSION. The Rust internal-call offsets
+#     (hand tracking / depth mesh / signal_guard patches) were RE'd against this version; an older
+#     package can crash. Read from the Unity UPM manifest (package.json).
+MIN_VERSION="3.1.0"
+pkg_json="$pkg/package.json"
+[ -f "$pkg_json" ] || die "package.json not found in $pkg (is this a com.xreal.xr package?)"
+pkg_ver="$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$pkg_json" | head -1)"
+[ -n "$pkg_ver" ] || die "Could not read \"version\" from $pkg_json"
+# Compare the numeric core (strip any -pre / +build suffix) via sort -V.
+ver_core="${pkg_ver%%[-+]*}"
+if [ "$ver_core" != "$MIN_VERSION" ] && \
+   [ "$(printf '%s\n%s\n' "$ver_core" "$MIN_VERSION" | sort -V | head -1)" = "$ver_core" ]; then
+    die "com.xreal.xr $pkg_ver is too old — this addon needs $MIN_VERSION or newer (the native offsets were RE'd against $MIN_VERSION; an older package can crash). Nothing was vendored."
+fi
+echo "com.xreal.xr version $pkg_ver (>= $MIN_VERSION) — ok"
+
 jni_dir="$repo_root/jniLibs/arm64-v8a"
 addon_dir="$repo_root/addons/godot_xreal/android"
 mkdir -p "$jni_dir" "$addon_dir"
