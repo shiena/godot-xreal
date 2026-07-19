@@ -48,10 +48,11 @@ var _cursor_mat: StandardMaterial3D
 # tracking hasn't started within this window we assume they're absent, show a message and quit —
 # rather than sitting forever in the session-bootstrap retry loop. Detection is heuristic-free: it
 # keys on "did tracking actually start", not on any display name/resolution guess. Disarmed for
-# good the moment tracking first goes live (a mid-session unplug is a separate, unhandled case).
-# 8 s: a glasses-at-launch session comes up in ~4-6 s of _process time (device-measured), so this
-# leaves ~2-4 s of margin before declaring the glasses absent.
-const NO_GLASSES_TIMEOUT_S := 8.0
+# good the moment the session goes live — on the `display_started` signal (the reliable "glasses up"
+# event) OR the first `is_tracking()` true. A mid-session unplug is a separate, unhandled case.
+# 15 s: session bring-up is ~4-6 s normally but a cold first launch after (re)install is slower, and
+# a false "no glasses" quit while they ARE connected is worse than a couple extra seconds of wait.
+const NO_GLASSES_TIMEOUT_S := 15.0
 const NO_GLASSES_QUIT_DELAY_S := 3.0
 var _boot_elapsed := 0.0
 var _tracking_seen := false
@@ -307,7 +308,10 @@ func _on_recenter_pressed() -> void:
 		_tracker.recenter()
 
 func _on_display_started() -> void:
-	# Glasses display + tracking are live: make the current head direction "forward".
+	# Glasses display + tracking are live — disarm the no-glasses watchdog (reliable "glasses up"
+	# event, in case is_tracking() lags past the timeout on a slow cold start).
+	_tracking_seen = true
+	# Make the current head direction "forward".
 	if _tracker and _tracker.has_method(&"recenter"):
 		_tracker.recenter()
 
