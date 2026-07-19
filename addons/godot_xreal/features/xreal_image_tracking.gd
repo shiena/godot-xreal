@@ -168,6 +168,12 @@ func _update_marker(im: Dictionary) -> void:
 	# QuadMesh (+Z), so the raw pose lays the quad flat (on-device: horizontal, +Z/green facing
 	# down). Rotate -90° about local X to stand the quad up coplanar with the image, normal toward
 	# the viewer.
+	# The SDK reports the tracked-image pose with its normal along a different axis than Godot's
+	# QuadMesh, so the raw pose lays the quad flat. Post-multiply -90° about local X to stand it up
+	# coplanar with the image: this makes it a Godot-friendly frame — device-verified with the
+	# marker cues, +X (yellow) → the image's right and +Y (white) → up, a proper (non-mirrored)
+	# basis, so child content attaches with the expected orientation. (Which face reads green/red is
+	# just the QuadMesh winding — cosmetic, not an orientation error.)
 	var t: Transform3D = im.get("transform", Transform3D.IDENTITY)
 	mi.transform = t * Transform3D(Basis(Vector3(1.0, 0.0, 0.0), -PI / 2.0), Vector3.ZERO)
 	var sz: Vector2 = im.get("size", Vector2(0.1, 0.1))
