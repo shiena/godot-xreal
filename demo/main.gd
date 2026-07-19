@@ -44,6 +44,18 @@ var _controller_started := false
 var _imu_poll_count := 0
 var _phone_pointer: Node3D
 var _cursor_mat: StandardMaterial3D
+# No-glasses watchdog: the head-tracking session only comes up with the glasses connected, so if
+# tracking hasn't started within this window we assume they're absent, show a message and quit —
+# rather than sitting forever in the session-bootstrap retry loop. Detection is heuristic-free: it
+# keys on "did tracking actually start", not on any display name/resolution guess. Disarmed for
+# good the moment tracking first goes live (a mid-session unplug is a separate, unhandled case).
+# 8 s: a glasses-at-launch session comes up in ~4-6 s of _process time (device-measured), so this
+# leaves ~2-4 s of margin before declaring the glasses absent.
+const NO_GLASSES_TIMEOUT_S := 8.0
+const NO_GLASSES_QUIT_DELAY_S := 3.0
+var _boot_elapsed := 0.0
+var _tracking_seen := false
+var _no_glasses := false
 
 @onready var _status: Label = $UI/Panel/Margin/VBox/Status
 @onready var _ar: Node3D = $ARScene
@@ -223,6 +235,45 @@ func _on_tc_blend() -> void:
 func _on_tc_exit() -> void:
 	get_tree().quit()
 
+## No-glasses watchdog: if the head-tracking session hasn't started within NO_GLASSES_TIMEOUT_S, the
+## glasses aren't connected — show a message on the phone and quit. Once tracking is seen it disarms
+## permanently. Only runs with the real extension (never on desktop, where tracking is inert by design).
+func _check_no_glasses(delta: float) -> void:
+	if _tracking_seen or _no_glasses or not _extension_loaded or _tracker == null:
+		return
+	if _tracker.has_method(&"is_tracking") and _tracker.is_tracking():
+		_tracking_seen = true
+		return
+	_boot_elapsed += delta
+	if _boot_elapsed >= NO_GLASSES_TIMEOUT_S:
+		_no_glasses = true
+		_show_no_glasses_and_quit()
+
+## Cover the screen with a "no glasses — quitting" message, then quit after a short delay so the
+## message is readable. Uses its own top CanvasLayer so it sits over the debug UI / controller.
+func _show_no_glasses_and_quit() -> void:
+	print("[demo] no XREAL glasses detected within %.0fs — quitting" % NO_GLASSES_TIMEOUT_S)
+	var layer := CanvasLayer.new()
+	layer.layer = 128
+	var bg := ColorRect.new()
+	bg.color = Color(0, 0, 0, 1)
+	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	layer.add_child(bg)
+	var label := Label.new()
+	label.text = "No XREAL glasses connected.\nExiting the app."
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	# Scale the font to the screen (≈5% of the shorter side) so it's legible at any resolution
+	# instead of the tiny theme default.
+	var vp := get_viewport().get_visible_rect().size
+	label.add_theme_font_size_override(&"font_size", int(minf(vp.x, vp.y) * 0.05))
+	label.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	layer.add_child(label)
+	add_child(layer)
+	await get_tree().create_timer(NO_GLASSES_QUIT_DELAY_S).timeout
+	get_tree().quit()
+
 ## Push a toggle's on/off state onto the phone-menu controller (keeps the UI in sync when the app,
 ## not the user, changes it — e.g. a failed camera start or an unsupported plane mode).
 func _set_controller_toggle(name: String, on: bool) -> void:
@@ -264,6 +315,7 @@ func _on_wearing_changed(wearing: bool) -> void:
 		_on_recenter_pressed()
 
 func _process(_delta: float) -> void:
+	_check_no_glasses(_delta)
 	# One-shot AR-feature availability diagnostic, ~2 s in (once the session has had time to come up),
 	# so a glance at logcat shows which native AR ABIs this device exposes.
 	if _ar_diag_frames >= 0 and _system:
