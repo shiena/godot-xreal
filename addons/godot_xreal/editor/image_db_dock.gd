@@ -51,6 +51,11 @@ func _build_ui() -> void:
 	_set_selector.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_set_selector.item_selected.connect(func(i): _current_set = i; _refresh_list())
 	srow.add_child(_set_selector)
+	# Reorder the current set within the manifest (the runtime activates sets[0] first and cycles in
+	# manifest order, so order is meaningful). Use the editor's built-in ArrowUp/ArrowDown icons so
+	# no glyph-coverage issues (▲/▼ aren't guaranteed in the editor's non-CJK UI font).
+	srow.add_child(_reorder_button(true, "Move set up (earlier)"))
+	srow.add_child(_reorder_button(false, "Move set down (later)"))
 	var add_set := Button.new()
 	add_set.text = "Add set"
 	add_set.pressed.connect(_on_add_set)
@@ -238,6 +243,37 @@ func _on_add_set() -> void:
 	_save_manifest(data)
 	_refresh_list()
 	_set_status("Added set: set%d" % n)
+
+## An up/down reorder button using the editor's built-in arrow icon (falls back to an ASCII caret
+## only if the icon can't be resolved, e.g. running outside the editor theme).
+func _reorder_button(up: bool, tip: String) -> Button:
+	var b := Button.new()
+	b.tooltip_text = tip
+	var icon_name := &"ArrowUp" if up else &"ArrowDown"
+	var theme := EditorInterface.get_editor_theme()
+	if theme and theme.has_icon(icon_name, &"EditorIcons"):
+		b.icon = theme.get_icon(icon_name, &"EditorIcons")
+	else:
+		b.text = "^" if up else "v"
+	b.pressed.connect(func(): _move_set(-1 if up else 1))
+	return b
+
+## Move the current set by `delta` (-1 earlier / +1 later) in the manifest, keeping it selected.
+## No-op at the ends. Set order matters: the runtime activates sets[0] first and cycles in order.
+func _move_set(delta: int) -> void:
+	var data := _load_manifest()
+	var sets: Array = data["sets"]
+	var to := _current_set + delta
+	if _current_set < 0 or _current_set >= sets.size() or to < 0 or to >= sets.size():
+		return
+	var moved := str(sets[_current_set].get("name", "?"))
+	var s = sets[_current_set]
+	sets.remove_at(_current_set)
+	sets.insert(to, s)
+	_current_set = to
+	_save_manifest(data)
+	_refresh_list()
+	_set_status("Moved set '%s' %s" % [moved, "up" if delta < 0 else "down"])
 
 func _on_remove_set() -> void:
 	var data := _load_manifest()
