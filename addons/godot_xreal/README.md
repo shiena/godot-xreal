@@ -91,10 +91,9 @@ their real state comes back through `active_changed`.
 
 ### Project settings
 
-With the plugin enabled, the `xreal/*` settings appear in *Project > Project Settings*:
-`xreal/tracking_type` (SDK default / 6DoF / 3DoF / 0DoF, applied at boot) plus the demo's
-`xreal/enable_camera`, `xreal/enable_touch_controller`, `xreal/enable_phone_pointer`. They are
-read at runtime with the same defaults, so a project without them saved behaves identically.
+With the plugin enabled, `xreal/tracking_type` appears in *Project > Project Settings*
+(SDK default / 6DoF / 3DoF / 0DoF, applied at boot). It is read at runtime with the same
+default, so a project without it saved behaves identically.
 
 ### Editor tooling
 

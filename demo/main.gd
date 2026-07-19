@@ -40,7 +40,6 @@ var _extension_loaded := false
 # a short delay after boot (so the session has come up). See docs/plans/ar-features-plan.md.
 var _ar_diag_frames := 0
 # Phase C path B: phone IMU (via NRController state) drives the 3D pointer (_ar.phone_pointer).
-var _phone_pointer_enabled := true
 var _controller_started := false
 var _imu_poll_count := 0
 var _phone_pointer: Node3D
@@ -84,21 +83,10 @@ func _ready() -> void:
 	# the phone-menu toggles through the components' active_changed signals.
 	_camera.active_changed.connect(func(active: bool) -> void: _set_controller_toggle("camera", active))
 	_stream.active_changed.connect(func(active: bool) -> void: _set_controller_toggle("stream", active))
-	# The camera defaults OFF — enable at boot via the `xreal/enable_camera` project setting.
-	# (6DoF and the RGB camera coexist: on-device logcat confirmed SLAM uses the grayscale camera.)
-	if _extension_loaded and bool(ProjectSettings.get_setting("xreal/enable_camera", false)):
-		_camera.set_enabled(true)
-	if bool(ProjectSettings.get_setting("xreal/enable_touch_controller", true)):
-		_setup_touch_controller()
-		# Reflect the boot camera state on the phone-menu toggle (the others start off).
-		_set_controller_toggle("camera", _camera.enabled)
-	else:
-		$PhoneScreen.queue_free()
-		_cursor.queue_free()
-		_cursor = null
-	_phone_pointer_enabled = bool(ProjectSettings.get_setting("xreal/enable_phone_pointer", true))
-	if not _phone_pointer_enabled:
-		_ar.phone_pointer.queue_free()
+	_setup_touch_controller()
+	# Reflect the boot camera state on the phone-menu toggle (on only when the XrealCamera
+	# instance was saved with `enabled` ticked; the other toggles start off).
+	_set_controller_toggle("camera", _camera.enabled)
 
 func _spawn_rig() -> void:
 	if _extension_loaded:
@@ -136,7 +124,7 @@ func _setup_touch_controller() -> void:
 	# The phone shows the controller, not a 3D preview, so stop the rig's host-preview camera: the
 	# root viewport no longer renders the world (one fewer full scene pass — the world was drawn 3×:
 	# host preview + two eyes). The glasses are unaffected; they render from the extension's own
-	# per-eye SubViewports. (Only when the controller is on; otherwise the preview stays for debugging.)
+	# per-eye SubViewports.
 	if _tracker:
 		var host_cam := _tracker.get_node_or_null(^"Camera3D") as Camera3D
 		if host_cam:
@@ -290,7 +278,7 @@ func _process(_delta: float) -> void:
 			print("[demo] AR features: camera=%s plane=%s anchor=%s image=%s mesh=%s" % [cam, plane, anchor, image, mesh])
 	# Phase C path B: phone IMU (via NRController state) drives the 3D pointer. Godot's own IMU returns
 	# all-zero on this host, so we read accel (gravity → pitch/roll) + gyro (yaw) from the controller.
-	if _phone_pointer_enabled and _tracker and _tracker.has_method(&"is_tracking") and _tracker.is_tracking() and _system:
+	if _tracker and _tracker.has_method(&"is_tracking") and _tracker.is_tracking() and _system:
 		if not _controller_started and _system.has_method(&"start_controller"):
 			_controller_started = true
 			_system.start_controller()

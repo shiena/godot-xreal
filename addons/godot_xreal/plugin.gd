@@ -36,30 +36,6 @@ const PROJECT_SETTINGS: Array[Dictionary] = [
 		"hint_string": "SDK Default:-1,6DoF:0,3DoF:1,0DoF:2",
 		"default": -1,
 	},
-	{
-		# Start the glasses RGB camera at boot (demo: the phone-menu toggle can change it later).
-		"name": "xreal/enable_camera",
-		"type": TYPE_BOOL,
-		"hint": PROPERTY_HINT_NONE,
-		"hint_string": "",
-		"default": false,
-	},
-	{
-		# Demo: show the phone touch-controller UI (off = keep the host 3D preview for debugging).
-		"name": "xreal/enable_touch_controller",
-		"type": TYPE_BOOL,
-		"hint": PROPERTY_HINT_NONE,
-		"hint_string": "",
-		"default": true,
-	},
-	{
-		# Demo: drive the 3D pointer from the phone IMU (NRController).
-		"name": "xreal/enable_phone_pointer",
-		"type": TYPE_BOOL,
-		"hint": PROPERTY_HINT_NONE,
-		"hint_string": "",
-		"default": true,
-	},
 ]
 
 func _register_project_settings() -> void:
