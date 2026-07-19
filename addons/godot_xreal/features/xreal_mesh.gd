@@ -8,6 +8,10 @@ extends Node3D
 ## rig) so the mesh stays registered to the real room as the head moves. OFF hides the meshes but
 ## keeps meshing running so ON restores them.
 
+## Emitted when the feature is unavailable (e.g. meshing unsupported on this device), so the load
+## site can react — show UI, log, flip a toggle.
+signal error(message: String)
+
 ## Enable at boot (applied in _ready). At runtime call set_enabled().
 @export var enabled := false
 
@@ -29,6 +33,8 @@ func _ready() -> void:
 func set_enabled(on: bool) -> bool:
 	if not _system or not _system.has_method(&"is_meshing_supported") or not _system.is_meshing_supported():
 		enabled = false
+		if on:
+			error.emit("[xreal-mesh] depth meshing unsupported on this device (Air 2 Ultra only)")
 		return false
 	if on:
 		_ensure_ar()

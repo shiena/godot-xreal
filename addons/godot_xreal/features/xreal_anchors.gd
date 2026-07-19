@@ -11,6 +11,11 @@ extends Node3D
 ## enable so the fingertip/pinch placement works with just this scene dropped in.
 
 # XRHandTracker joint ordinals (OpenXR): thumb tip / index tip.
+## Emitted when an operation fails or the feature is unavailable, so the load site can react
+## (show UI, log, flip a toggle). Carries the same human-readable text also pushed as a warning.
+signal error(message: String)
+
+
 const TIP_THUMB := 5
 const TIP_INDEX := 10
 # Pinch trigger with hysteresis so one pinch = one anchor (thumb–index tip distance, metres).
@@ -46,6 +51,8 @@ func _ready() -> void:
 func set_enabled(on: bool) -> bool:
 	if not _system or not _system.has_method(&"is_anchor_available") or not _system.is_anchor_available():
 		enabled = false
+		if on:
+			error.emit("[xreal-anchors] spatial anchors unavailable on this device (Air 2 Ultra only)")
 		return false
 	if on:
 		_ensure_ar()
@@ -87,7 +94,7 @@ func place_at_fingertip() -> void:
 		if tracker and tracker.get_has_tracking_data():
 			_place_anchor(tracker.get_hand_joint_transform(TIP_INDEX))
 			return
-	push_warning("[xreal-anchors] no hand tracked — hold a hand up to place")
+	_fail("[xreal-anchors] no hand tracked — hold a hand up to place")
 
 func _process(_delta: float) -> void:
 	if not _enabled or not _system:
@@ -129,7 +136,7 @@ func _vibrate(ms: int) -> void:
 func _place_anchor(pose: Transform3D) -> void:
 	var a: Dictionary = _system.acquire_anchor(pose)
 	if a.is_empty():
-		push_warning("[xreal-anchors] acquire failed")
+		_fail("[xreal-anchors] acquire failed")
 		return
 	var id: String = a.get("id", "")
 	if id.is_empty():
@@ -235,7 +242,7 @@ func _load_saved() -> void:
 		var s := str(guid)
 		var a: Dictionary = _system.load_anchor(s)
 		if a.is_empty():
-			push_warning("[xreal-anchors] load failed for %s (different space?)" % s)
+			_fail("[xreal-anchors] load failed for %s (different space?)" % s)
 			continue
 		var id: String = a.get("id", "")
 		if id.is_empty():
@@ -258,3 +265,8 @@ func _exit_tree() -> void:
 	# Release the shared stream switch (the shared XrealAR outlives us).
 	if _enabled and _ar and is_instance_valid(_ar):
 		_ar.set(&"anchors", false)
+
+## Push a warning AND emit `error` so the load site can detect the failure (not just see the log).
+func _fail(msg: String) -> void:
+	push_warning(msg)
+	error.emit(msg)

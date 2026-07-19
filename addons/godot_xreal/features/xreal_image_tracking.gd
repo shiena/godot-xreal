@@ -10,6 +10,11 @@ extends Node3D
 ## rig) so a marker sits on the real image as the head moves. OFF hides the markers but keeps the
 ## databases active so ON restores them.
 
+## Emitted whenever an operation fails or the feature is unavailable (unbuilt/missing blob, DB init
+## failure, manifest not set…), so the load site can react — show UI, log, flip a toggle. Carries
+## the same human-readable text also pushed as a warning.
+signal error(message: String)
+
 ## Enable at boot (applied in _ready). At runtime call set_enabled().
 @export var enabled := false
 ## The reference-image manifest (JSON). Required — set_enabled(true) refuses while empty.
@@ -38,10 +43,12 @@ func _ready() -> void:
 func set_enabled(on: bool) -> bool:
 	if not _system or not _system.has_method(&"is_image_tracking_available") or not _system.is_image_tracking_available():
 		enabled = false
+		if on:
+			error.emit("[xreal-image] image tracking unavailable on this device (Air 2 Ultra only)")
 		return false
 	if on:
 		if manifest_path.is_empty():
-			push_warning("[xreal-image] manifest_path not set — point it at a reference.json")
+			_fail("[xreal-image] manifest_path not set — point it at a reference.json")
 			enabled = false
 			return false
 		_ensure_ar()
@@ -85,7 +92,7 @@ func _load_sets() -> bool:
 		if handle != 0:
 			_sets.append({"name": str(s.get("name", "?")), "handle": handle})
 	if _sets.is_empty():
-		push_warning("[xreal-image] no image sets loaded (build the blobs — editor dock / build_image_db)")
+		_fail("[xreal-image] no image sets loaded (build the blobs — editor dock / build_image_db)")
 		return false
 	_activate(0)
 	print("[xreal-image] %d set(s) loaded; active='%s'" % [_sets.size(), _sets[0].name])
@@ -96,7 +103,7 @@ func _init_set(s: Dictionary) -> int:
 	var name := str(s.get("name", "?"))
 	var blob_path := manifest_path.get_base_dir().path_join(str(s.get("blob", "")))
 	if not FileAccess.file_exists(blob_path):
-		push_warning("[xreal-image] set '%s' blob missing: %s — build it (editor dock / build_image_db)" % [name, blob_path])
+		_fail("[xreal-image] set '%s' blob missing: %s — build it (editor dock / build_image_db)" % [name, blob_path])
 		return 0
 	var bf := FileAccess.open(blob_path, FileAccess.READ)
 	var blob := bf.get_buffer(bf.get_length())
@@ -111,7 +118,7 @@ func _init_set(s: Dictionary) -> int:
 		sizes.append(Vector2(w, h))
 	var handle: int = _system.init_image_database(blob, guids, sizes)
 	if handle == 0:
-		push_warning("[xreal-image] set '%s' init_image_database failed (needs 6DoF + nr_plugins.json + backend)" % name)
+		_fail("[xreal-image] set '%s' init_image_database failed (needs 6DoF + nr_plugins.json + backend)" % name)
 	return handle
 
 ## Activate a set (switch the tracking DB) and clear the previous set's markers.
@@ -131,7 +138,7 @@ func cycle_set() -> void:
 
 func _read_manifest() -> Dictionary:
 	if not FileAccess.file_exists(manifest_path):
-		push_warning("[xreal-image] manifest missing: %s" % manifest_path)
+		_fail("[xreal-image] manifest missing: %s" % manifest_path)
 		return {}
 	var mf := FileAccess.open(manifest_path, FileAccess.READ)
 	var data = JSON.parse_string(mf.get_as_text())
@@ -164,10 +171,6 @@ func _update_marker(im: Dictionary) -> void:
 		mi = _make_marker()
 		add_child(mi)
 		_markers[id] = mi
-	# The SDK reports the tracked-image pose with its normal along a different axis than Godot's
-	# QuadMesh (+Z), so the raw pose lays the quad flat (on-device: horizontal, +Z/green facing
-	# down). Rotate -90° about local X to stand the quad up coplanar with the image, normal toward
-	# the viewer.
 	# The SDK reports the tracked-image pose with its normal along a different axis than Godot's
 	# QuadMesh, so the raw pose lays the quad flat. Post-multiply -90° about local X to stand it up
 	# coplanar with the image: this makes it a Godot-friendly frame — device-verified with the
@@ -228,3 +231,8 @@ func _exit_tree() -> void:
 		for s in _sets:
 			_system.release_image_database(s.handle)
 		_sets.clear()
+
+## Push a warning AND emit `error` so the load site can detect the failure (not just see the log).
+func _fail(msg: String) -> void:
+	push_warning(msg)
+	error.emit(msg)

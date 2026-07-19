@@ -7,6 +7,11 @@ extends Node3D
 ## rig) so the boxes sit on the real surface as the head moves. Plane changes stream in through
 ## the shared XrealAR poller (XrealShared.get_ar) — its "planes" switch is gated on this toggle.
 
+## Emitted when an operation fails or the feature is unavailable, so the load site can react
+## (show UI, log, flip a toggle). Carries the same human-readable text also pushed as a warning.
+signal error(message: String)
+
+
 const PLANE_NONE := 0
 const PLANE_BOTH := 3   # horizontal | vertical
 const TRACKING_6DOF := 0
@@ -41,7 +46,7 @@ func set_enabled(on: bool) -> bool:
 		# discards that value, and it reads false even when the mode takes; XREALPlaneSubsystem.cs).
 		# Enable optimistically and let the plane stream surface whatever the SDK detects.
 		if _system.has_method(&"is_plane_detection_available") and not _system.is_plane_detection_available():
-			push_warning("[xreal-planes] plane detection ABI unavailable on this device")
+			_fail("[xreal-planes] plane detection ABI unavailable on this device")
 			enabled = false
 			return false
 		_ensure_ar()
@@ -139,3 +144,8 @@ func _exit_tree() -> void:
 			_system.set_plane_detection_mode(PLANE_NONE)
 		if _ar and is_instance_valid(_ar):
 			_ar.set(&"planes", false)
+
+## Push a warning AND emit `error` so the load site can detect the failure (not just see the log).
+func _fail(msg: String) -> void:
+	push_warning(msg)
+	error.emit(msg)

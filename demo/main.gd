@@ -95,6 +95,12 @@ func _ready() -> void:
 	# the phone-menu toggles through the components' active_changed signals.
 	_camera.active_changed.connect(func(active: bool) -> void: _set_controller_toggle("camera", active))
 	_stream.active_changed.connect(func(active: bool) -> void: _set_controller_toggle("stream", active))
+	# Surface each feature component's `error` signal at the load site (here: the debug Status label
+	# + logcat). A real app might disable a control or show a toast; the point is the failure is
+	# detectable, not just a buried warning.
+	for feature in [_camera, _planes, _anchors, _image_tracking, _mesh, _photo_capture, _blend_capture, _stream]:
+		if feature and feature.has_signal(&"error"):
+			feature.error.connect(_on_feature_error)
 	_setup_touch_controller()
 	# Reflect the boot camera state on the phone-menu toggle (on only when the XrealCamera
 	# instance was saved with `enabled` ticked; the other toggles start off).
@@ -273,6 +279,13 @@ func _show_no_glasses_and_quit() -> void:
 	add_child(layer)
 	await get_tree().create_timer(NO_GLASSES_QUIT_DELAY_S).timeout
 	get_tree().quit()
+
+## A feature component reported an error (via its `error` signal) — show it on the debug Status
+## label and log it, so the failure is visible at the load site instead of buried in warnings.
+func _on_feature_error(message: String) -> void:
+	print("[demo] feature error: %s" % message)
+	if _status:
+		_status.text = message
 
 ## Push a toggle's on/off state onto the phone-menu controller (keeps the UI in sync when the app,
 ## not the user, changes it — e.g. a failed camera start or an unsupported plane mode).

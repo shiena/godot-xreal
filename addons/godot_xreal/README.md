@@ -55,6 +55,12 @@ plumbing themselves — no wiring:
 
 On desktop (editor / PC runs) every component is inert, so scenes stay runnable.
 
+Every feature component emits an **`error(message: String)`** signal when an operation fails or the
+feature is unavailable (missing/unbuilt blob, DB init failure, no RGB camera, save failed…), so the
+load site can detect it — show UI, flip a toggle, log — instead of the failure being a buried
+warning. `set_enabled(on) -> bool` still returns `false` for the unavailable case; `error` adds the
+reason and covers runtime failures too. The demo connects them in `demo/main.gd` (`_on_feature_error`).
+
 | Scene | World-locked¹ | API | Devices |
 |---|---|---|---|
 | `xreal_camera.tscn` | — (preview is head-locked) | `set_enabled(on) -> bool`, `get_feed()`, `is_feed_live()`, signals `feed_changed(feed)` / `active_changed(active)`; exports `enabled`, `show_preview` | RGB camera = One Series |

@@ -12,6 +12,11 @@ extends Node3D
 ## camera (e.g. Air 2 Ultra) refuse set_enabled(true).
 
 ## The live XrealCameraFeed after each start/stop (null on stop).
+## Emitted when an operation fails or the feature is unavailable, so the load site can react
+## (show UI, log, flip a toggle). Carries the same human-readable text also pushed as a warning.
+signal error(message: String)
+
+
 signal feed_changed(feed: Object)
 ## The actual camera state: true once the capture started, false on stop OR on an async start
 ## failure (wedged camera) — wire this to any UI toggle so it reflects reality.
@@ -57,7 +62,7 @@ func set_enabled(on: bool) -> bool:
 		# Gate on the device actually having an RGB camera (IsHMDFeatureSupported). The Air 2 Ultra
 		# has none — opening it there froze the app.
 		if _system.has_method(&"is_camera_supported") and not _system.is_camera_supported():
-			push_warning("[xreal-camera] this device has no RGB camera (e.g. Air 2 Ultra) — camera unavailable")
+			_fail("[xreal-camera] this device has no RGB camera (e.g. Air 2 Ultra) — camera unavailable")
 			enabled = false
 			return false
 		_failed = false
@@ -98,7 +103,7 @@ func _setup_feed(tracker: Node3D) -> void:
 		# The XREAL capture didn't start: an unclean prior exit left the glasses camera wedged
 		# ("Recv Frame, -99"). Re-plug the glasses to reset it. Don't show an unfed (pink) panel or
 		# spin re-attempting — disable cleanly for this run.
-		push_warning("[xreal-camera] XREAL RGB camera did not start (glasses camera wedged? re-plug to reset) — camera disabled")
+		_fail("[xreal-camera] XREAL RGB camera did not start (glasses camera wedged? re-plug to reset) — camera disabled")
 		CameraServer.remove_feed(_feed)
 		_feed = null
 		_failed = true
@@ -152,3 +157,8 @@ func _exit_tree() -> void:
 	# The preview panel lives under the tracker once live — take it down with us.
 	if _panel and is_instance_valid(_panel) and _panel.get_parent() != self:
 		_panel.queue_free()
+
+## Push a warning AND emit `error` so the load site can detect the failure (not just see the log).
+func _fail(msg: String) -> void:
+	push_warning(msg)
+	error.emit(msg)

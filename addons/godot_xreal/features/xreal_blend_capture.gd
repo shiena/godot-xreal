@@ -8,6 +8,11 @@ extends Node
 ## Needs the camera running (xreal_camera.tscn enabled) and the head rig in the tree — both are
 ## discovered at capture time (XrealShared.find_camera_feed / find_head_tracker), no wiring needed.
 
+## Emitted when an operation fails or the feature is unavailable, so the load site can react
+## (show UI, log, flip a toggle). Carries the same human-readable text also pushed as a warning.
+signal error(message: String)
+
+
 const W := 1280
 const H := 720
 
@@ -63,16 +68,16 @@ func _feed_textures() -> Array:
 	if _system == null:
 		return []
 	if _system.has_method(&"is_camera_supported") and not _system.is_camera_supported():
-		push_warning("[xreal-blend] this device has no RGB camera (One Series only)")
+		_fail("[xreal-blend] this device has no RGB camera (One Series only)")
 		return []
 	var feed := XrealShared.find_camera_feed(get_tree())
 	if feed == null or not feed.has_method(&"get_y_texture"):
-		push_warning("[xreal-blend] camera feed not ready (enable the camera first)")
+		_fail("[xreal-blend] camera feed not ready (enable the camera first)")
 		return []
 	var yt = feed.get_y_texture()
 	var ct = feed.get_cbcr_texture()
 	if yt == null or ct == null:
-		push_warning("[xreal-blend] no camera frame yet")
+		_fail("[xreal-blend] no camera frame yet")
 		return []
 	return [yt, ct]
 
@@ -95,14 +100,19 @@ func capture_blended() -> String:
 	await RenderingServer.frame_post_draw
 	var img := _comp_vp.get_texture().get_image()
 	if img == null:
-		push_warning("[xreal-blend] readback failed")
+		_fail("[xreal-blend] readback failed")
 		return ""
 	img.flip_y()  # SubViewport read-back is bottom-up (GL origin) — flip to upright before saving
 	var path := OS.get_user_data_dir().path_join("blend_%d.jpg" % Time.get_ticks_msec())
 	var err := img.save_jpg(path)
 	if err != OK:
-		push_warning("[xreal-blend] save_jpg failed (err %d)" % err)
+		_fail("[xreal-blend] save_jpg failed (err %d)" % err)
 		return ""
 	print("[xreal-blend] composite saved -> %s" % path)
 	XrealShared.save_to_gallery(path, "image/jpeg", false)  # also into the phone gallery (optional helper)
 	return path
+
+## Push a warning AND emit `error` so the load site can detect the failure (not just see the log).
+func _fail(msg: String) -> void:
+	push_warning(msg)
+	error.emit(msg)

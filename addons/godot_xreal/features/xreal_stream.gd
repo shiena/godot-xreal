@@ -19,6 +19,11 @@ extends Node
 
 ## Emitted whenever streaming actually starts/stops (incl. async pairing success/failure), so a UI
 ## toggle can reflect the real state.
+## Emitted when an operation fails or the feature is unavailable, so the load site can react
+## (show UI, log, flip a toggle). Carries the same human-readable text also pushed as a warning.
+signal error(message: String)
+
+
 signal active_changed(active: bool)
 
 ## Include the microphone in the stream (captured natively by the encoder; needs RECORD_AUDIO).
@@ -105,7 +110,7 @@ func set_enabled(on: bool) -> void:
 	if _mic_now and OS.has_feature("android") and not _mic_granted():
 		OS.request_permission("android.permission.RECORD_AUDIO")
 		_mic_now = false
-		push_warning("[xreal-stream] mic not granted yet — streaming video-only; grant RECORD_AUDIO, then toggle streaming again for audio")
+		_fail("[xreal-stream] mic not granted yet — streaming video-only; grant RECORD_AUDIO, then toggle streaming again for audio")
 	print("[xreal-stream] FPV stream: pairing with StreamingReceiver (mic=%s) ..." % _mic_now)
 	_pairing.start(_mic_now)
 
@@ -117,7 +122,7 @@ func _on_paired(server_ip: String) -> void:
 	_apply_fov()  # in case the receiver's UpdateCameraParam arrived before the viewport existed
 	# ObserverView streams the virtual-only AR with alpha (useAlpha) for the PC-webcam composite.
 	if not _system.stream_start(url, stream_width, stream_height, stream_bitrate, stream_fps, _mic_now, STREAM_WITH_INTERNAL_AUDIO, observer_mode):
-		push_warning("[xreal-stream] stream_start failed for %s" % url)
+		_fail("[xreal-stream] stream_start failed for %s" % url)
 		_pairing.stop()
 		active_changed.emit(false)
 		return
@@ -141,7 +146,7 @@ func _apply_fov() -> void:
 		print("[xreal-stream] observer FOV applied -> vfov=%.1f deg" % _ar_cam.fov)
 
 func _on_pair_failed(reason: String) -> void:
-	push_warning("[xreal-stream] FPV pairing failed: %s" % reason)
+	_fail("[xreal-stream] FPV pairing failed: %s" % reason)
 	_active = false
 	active_changed.emit(false)
 
@@ -259,3 +264,8 @@ func _exit_tree() -> void:
 		_system.stream_stop()
 	if _pairing:
 		_pairing.stop()
+
+## Push a warning AND emit `error` so the load site can detect the failure (not just see the log).
+func _fail(msg: String) -> void:
+	push_warning(msg)
+	error.emit(msg)
