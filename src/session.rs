@@ -47,6 +47,16 @@ pub fn tracking_mode_override() -> i32 {
     TRACKING_MODE_OVERRIDE.load(Ordering::Relaxed)
 }
 
+/// Explicit stereo-rendering-mode override set from GDScript (`XrealSystem.set_stereo_mode`).
+/// `-1` = unset (fall through to system property / default Multipass). Must be set **before** the
+/// session bootstraps — it is read once at `InitUserDefinedSettings`.
+static STEREO_MODE_OVERRIDE: AtomicI32 = AtomicI32::new(-1);
+
+/// Set the stereo-mode override from GDScript. See [`stereo_rendering_mode`].
+pub fn set_stereo_mode_override(mode: i32) {
+    STEREO_MODE_OVERRIDE.store(mode, Ordering::Relaxed);
+}
+
 /// Read a NUL-terminated Android system property as `i32` (`None` off-Android or if unset/unparseable).
 fn android_prop_i32(key: &[u8]) -> Option<i32> {
     #[cfg(target_os = "android")]
@@ -71,9 +81,11 @@ fn android_prop_i32(key: &[u8]) -> Option<i32> {
     None
 }
 
-/// Stereo rendering mode for `InitUserDefinedSettings`. Defaults to **Multipass** (`0`) — the complete
-/// shipping path. **Multiview** (`2`, single-pass-instanced) is a working option, enabled via
-/// `adb shell setprop debug.xreal.stereo_mode 2` (any other value → Multipass).
+/// Stereo rendering mode for `InitUserDefinedSettings`, resolved **once at bootstrap** from, in
+/// priority order: the GDScript override (`XrealSystem.set_stereo_mode`, how the ProjectSetting
+/// `xreal/stereo_mode` is applied), then `adb shell setprop debug.xreal.stereo_mode 2`, then the
+/// default. Defaults to **Multipass** (`0`) — the complete shipping path. **Multiview** (`2`,
+/// single-pass-instanced) is a working option (any other value → Multipass).
 ///
 /// Multiview **now renders correctly** (both eyes, 2026-07-17). The long-standing black right eye was
 /// NOT the NR compositor (the old "libnr_api can't sample layer 1" conclusion was wrong — a solid-colour
@@ -87,7 +99,12 @@ fn android_prop_i32(key: &[u8]) -> Option<i32> {
 /// SubViewports every frame in both modes; the single-pass-instanced win needs the *engine* to draw
 /// both eyes in one pass). See `docs/archive/multiview-investigation.md`.
 fn stereo_rendering_mode() -> i32 {
-    // Flag branch: opt into Multiview only when the debug property is explicitly 2; everything else
+    // 1) Explicit override (GDScript API — carries the `xreal/stereo_mode` ProjectSetting).
+    let ovr = STEREO_MODE_OVERRIDE.load(Ordering::Relaxed);
+    if ovr >= 0 {
+        return if ovr == 2 { 2 } else { 0 };
+    }
+    // 2) Debug property, else the default. Opt into Multiview only when explicitly 2; everything else
     // (unset, off-Android, any other value) stays on the default Multipass path.
     match android_prop_i32(b"debug.xreal.stereo_mode\0") {
         Some(2) => 2,

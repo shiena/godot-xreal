@@ -7,7 +7,7 @@
 //! native libraries are absent, so the node stays at identity and logs a single warning.
 
 use godot::classes::sub_viewport::UpdateMode;
-use godot::classes::{Camera3D, INode3D, Node3D, RenderingServer, SubViewport};
+use godot::classes::{Camera3D, INode3D, Node3D, ProjectSettings, RenderingServer, SubViewport};
 use godot::prelude::*;
 
 use crate::session;
@@ -60,6 +60,9 @@ pub struct XrealHeadTracker {
     recenter_reference: Quaternion,
     /// The raw (uncorrected) rotation from the last pose sample; captured by `recenter()`.
     last_raw_rotation: Quaternion,
+    /// Keep the glasses display awake when not worn (bypass the proximity sensor's auto-off). Read
+    /// once in `ready()` from the ProjectSetting `xreal/display_bypass_psensor` (default `true`).
+    bypass_psensor: bool,
 }
 
 #[godot_api]
@@ -76,10 +79,21 @@ impl INode3D for XrealHeadTracker {
             last_disconnect_count: 0,
             recenter_reference: Quaternion::default(),
             last_raw_rotation: Quaternion::default(),
+            bypass_psensor: true,
         }
     }
 
     fn ready(&mut self) {
+        // Boot-time addon setting: keep the display awake while not worn (default on). Falls back to
+        // `true` when the project never persisted the setting (fresh project / unchanged default).
+        let ps = ProjectSettings::singleton();
+        self.bypass_psensor = if ps.has_setting("xreal/display_bypass_psensor") {
+            ps.get_setting("xreal/display_bypass_psensor")
+                .try_to::<bool>()
+                .unwrap_or(true)
+        } else {
+            true
+        };
         // Kick off initialization early; `shared()` logs its own outcome (and retries on
         // later frames if the Android Activity has not been published yet).
         let _ = session::shared();
@@ -98,10 +112,11 @@ impl INode3D for XrealHeadTracker {
             return;
         };
 
-        // Keep the glasses display awake by bypassing the proximity (wear) sensor auto-off.
-        // The SDK no-ops this until `NativeGlasses` is ready and its return value is ambiguous,
-        // so call it every frame for the first ~10s after the session appears.
-        if self.frames < 600 {
+        // Keep the glasses display awake by bypassing the proximity (wear) sensor auto-off (unless
+        // disabled via `xreal/display_bypass_psensor`). The SDK no-ops this until `NativeGlasses` is
+        // ready and its return value is ambiguous, so call it every frame for the first ~10s after
+        // the session appears.
+        if self.bypass_psensor && self.frames < 600 {
             let status = session.set_display_bypass_psensor(true);
             if self.frames < 3 || self.frames == 120 || self.frames == 300 {
                 godot_print!(

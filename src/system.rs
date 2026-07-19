@@ -721,10 +721,17 @@ impl XrealSystem {
         crate::video_encoder::is_active()
     }
 
-    // NOTE: there is no GDScript stereo-mode selector — Multipass is the default. Multiview
-    // (single-pass-instanced) is opt-in for on-device experiments only, via
-    // `adb shell setprop debug.xreal.stereo_mode 2` (see session.rs::stereo_rendering_mode). It gains
-    // nothing on our two-SubViewport rig; see docs/archive/multiview-investigation.md.
+    /// Select the stereo rendering mode applied when the native session **bootstraps** (a startup
+    /// selector): `0` = Multipass (both eyes — the default shipping path), `2` = Multiview
+    /// (single-pass-instanced). **Call before the session starts** (e.g. an autoload `_ready`, before
+    /// the XR rig enters the tree) — it is read once at `InitUserDefinedSettings`. Equivalent to the
+    /// ProjectSetting `xreal/stereo_mode` or `adb shell setprop debug.xreal.stereo_mode <n>`. Multiview
+    /// buys nothing on this two-SubViewport rig (see docs/archive/multiview-investigation.md), so
+    /// Multipass stays the recommended default.
+    #[func]
+    fn set_stereo_mode(&self, mode: i64) {
+        session::set_stereo_mode_override(mode as i32);
+    }
 
     /// Select the head-tracking mode applied when the native session **bootstraps** (a startup
     /// selector): `0` = 6DoF (SLAM position + orientation, no drift — the recommended mode),

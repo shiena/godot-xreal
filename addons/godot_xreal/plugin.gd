@@ -47,6 +47,23 @@ const PROJECT_SETTINGS: Array[Dictionary] = [
 		"hint_string": "SDK Default:-1,6DoF:0,3DoF:1,0DoF:2",
 		"default": -1,
 	},
+	{
+		# Stereo rendering mode applied at boot. "SDK Default" (-1) leaves the
+		# `debug.xreal.stereo_mode` system property / native default (Multipass) in charge.
+		# Multiview is single-pass-instanced but buys no GPU on this rig — Multipass recommended.
+		"name": "xreal/stereo_mode",
+		"type": TYPE_INT,
+		"hint": PROPERTY_HINT_ENUM,
+		"hint_string": "SDK Default:-1,Multipass:0,Multiview:2",
+		"default": -1,
+	},
+	{
+		# Keep the glasses display on while the headset is not worn (bypass the proximity sensor's
+		# auto-off). On by default; turn off to let the display sleep when the glasses are taken off.
+		"name": "xreal/display_bypass_psensor",
+		"type": TYPE_BOOL,
+		"default": true,
+	},
 ]
 
 func _register_project_settings() -> void:
@@ -58,8 +75,8 @@ func _register_project_settings() -> void:
 		ProjectSettings.add_property_info({
 			"name": setting_name,
 			"type": s["type"],
-			"hint": s["hint"],
-			"hint_string": s["hint_string"],
+			"hint": s.get("hint", PROPERTY_HINT_NONE),
+			"hint_string": s.get("hint_string", ""),
 		})
 		ProjectSettings.set_as_basic(setting_name, true)
 

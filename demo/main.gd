@@ -81,14 +81,16 @@ func _ready() -> void:
 		and ClassDB.class_exists(&"XrealSystem") and ClassDB.class_exists(&"XrealHeadTracker")
 	if _extension_loaded:
 		_system = ClassDB.instantiate(&"XrealSystem")
-		# (No stereo-mode selector: the port always uses Multipass. Multiview is shelved
-		# -- docs/archive/codex-righteye-analysis.md -- reachable only via `setprop debug.xreal.force_multiview 1`.)
-		# Head-tracking mode from the project setting `xreal/tracking_type`
-		# (0 = 6DoF [recommended], 1 = 3DoF, 2 = 0DoF). Read once at bootstrap; absent (-1) falls
-		# back to the `debug.xreal.tracking_type` property / default.
+		# Boot-time settings from Project Settings (xreal/*), applied before the session starts.
+		# Each "SDK Default" (-1) falls back to the matching debug.xreal.* property / native default.
+		# Head-tracking mode (0 = 6DoF [recommended], 1 = 3DoF, 2 = 0DoF).
 		var tracking_type := int(ProjectSettings.get_setting("xreal/tracking_type", -1))
 		if tracking_type >= 0 and _system.has_method(&"set_tracking_type"):
 			_system.set_tracking_type(tracking_type)
+		# Stereo rendering mode (0 = Multipass [recommended], 2 = Multiview).
+		var stereo_mode := int(ProjectSettings.get_setting("xreal/stereo_mode", -1))
+		if stereo_mode >= 0 and _system.has_method(&"set_stereo_mode"):
+			_system.set_stereo_mode(stereo_mode)
 	else:
 		push_error("[demo] godot_xreal GDExtension not loaded — XrealSystem/XrealHeadTracker missing. Build the Android .so (cargo ndk) and check the .gdextension paths.")
 	_spawn_rig()
