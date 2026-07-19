@@ -14,6 +14,10 @@ extends Node3D
 @export var enabled := false
 ## The reference-image manifest (JSON). Required — set_enabled(true) refuses while empty.
 @export_file("*.json") var manifest_path := ""
+## Optional override for the tracked-image overlay material. Each marker gets its own duplicate.
+## A ShaderMaterial declaring a `tracking` bool uniform receives the per-marker tracking state
+## (replacing the default material's green/gray albedo tint).
+@export var marker_material: Material
 
 var _system: Object                 # XrealSystem (this feature's own stateless instance)
 var _ar: Object                     # the shared XrealAR poller
@@ -170,10 +174,16 @@ func _update_marker(im: Dictionary) -> void:
 	var qm := mi.mesh as QuadMesh
 	if qm and sz.length() > 0.001:
 		qm.size = sz
-	# Green while tracking, gray when limited/not tracking.
-	var state: int = im.get("tracking_state", 0)
-	var mat := mi.material_override as StandardMaterial3D
-	mat.albedo_color = Color(0.3, 1.0, 0.5, 0.4) if state == 2 else Color(0.6, 0.6, 0.6, 0.3)
+	_tint_marker(mi, int(im.get("tracking_state", 0)) == 2)
+
+## Tracking-state tint. Default material: green while tracking, gray when limited/not tracking.
+## A custom `marker_material` (ShaderMaterial) gets the state as its `tracking` uniform instead.
+func _tint_marker(mi: MeshInstance3D, tracking: bool) -> void:
+	var mat := mi.material_override
+	if mat is StandardMaterial3D:
+		mat.albedo_color = Color(0.3, 1.0, 0.5, 0.4) if tracking else Color(0.6, 0.6, 0.6, 0.3)
+	elif mat is ShaderMaterial:
+		mat.set_shader_parameter(&"tracking", tracking)
 
 ## A translucent quad sized to the tracked image (updated per frame), unshaded + double-sided.
 func _make_marker() -> MeshInstance3D:
@@ -181,12 +191,15 @@ func _make_marker() -> MeshInstance3D:
 	var q := QuadMesh.new()
 	q.size = Vector2(0.1, 0.1)
 	mi.mesh = q
-	var mat := StandardMaterial3D.new()
-	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
-	mat.albedo_color = Color(0.3, 1.0, 0.5, 0.4)
-	mi.material_override = mat
+	if marker_material:
+		mi.material_override = marker_material.duplicate()  # own copy: per-marker tracking tint
+	else:
+		var mat := StandardMaterial3D.new()
+		mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+		mat.albedo_color = Color(0.3, 1.0, 0.5, 0.4)
+		mi.material_override = mat
 	return mi
 
 func _remove_marker(id: String) -> void:

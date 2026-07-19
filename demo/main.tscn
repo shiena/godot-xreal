@@ -12,6 +12,12 @@
 [ext_resource type="PackedScene" uid="uid://xrphotoscn001" path="res://addons/godot_xreal/features/xreal_photo_capture.tscn" id="10_photo"]
 [ext_resource type="PackedScene" uid="uid://xrblendscn001" path="res://addons/godot_xreal/features/xreal_blend_capture.tscn" id="11_blend"]
 [ext_resource type="PackedScene" uid="uid://xrstreamscn01" path="res://addons/godot_xreal/features/xreal_stream.tscn" id="12_stream"]
+[ext_resource type="Shader" uid="uid://xrimgmarker01" path="res://demo/xreal_image_marker.gdshader" id="13_marker"]
+
+; Front/back-coloured tracked-image marker (green front / red back via FRONT_FACING) so the
+; tracked pose's facing is readable — assigned to XrealImageTracking's marker_material override.
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_marker"]
+shader = ExtResource("13_marker")
 
 [node name="Main" type="Node3D" unique_id=265623934]
 script = ExtResource("1_main")
@@ -31,6 +37,7 @@ script = ExtResource("1_main")
 
 [node name="XrealImageTracking" parent="." instance=ExtResource("7_image")]
 manifest_path = "res://demo/image_tracking/reference.json"
+marker_material = SubResource("ShaderMaterial_marker")
 
 [node name="XrealMesh" parent="." instance=ExtResource("8_mesh")]
 

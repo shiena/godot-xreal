@@ -60,7 +60,7 @@ On desktop (editor / PC runs) every component is inert, so scenes stay runnable.
 | `xreal_camera.tscn` | — (preview is head-locked) | `set_enabled(on) -> bool`, `get_feed()`, `is_feed_live()`, signals `feed_changed(feed)` / `active_changed(active)`; exports `enabled`, `show_preview` | RGB camera = One Series |
 | `xreal_planes.tscn` | ✔ | `set_enabled(on) -> bool`; exports `enabled`, `switch_to_6dof` (plane detection needs 6DoF) | 6DoF devices |
 | `xreal_anchors.tscn` | ✔ | `set_enabled(on) -> bool`, `place_at_fingertip()` (pinch also places); exports `enabled`, `save_file` (Guid persistence) | Air 2 Ultra |
-| `xreal_image_tracking.tscn` | ✔ | `set_enabled(on) -> bool`, `cycle_set()`; exports `enabled`, `manifest_path` (**required** — a reference.json, see `demo/image_tracking/`) | Air 2 Ultra |
+| `xreal_image_tracking.tscn` | ✔ | `set_enabled(on) -> bool`, `cycle_set()`; exports `enabled`, `manifest_path` (**required** — a reference.json, see `demo/image_tracking/`), `marker_material` (optional overlay override; a ShaderMaterial with a `tracking` bool uniform gets the per-marker state) | Air 2 Ultra |
 | `xreal_mesh.tscn` | ✔ | `set_enabled(on) -> bool`; exports `enabled` | Air 2 Ultra |
 | `xreal_hands.tscn` | ✔ | autonomous (spheres on the 26 joints/hand); hide via `visible` | Air 2 Ultra |
 | `xreal_photo_capture.tscn` | — | `capture_photo() -> String` (JPG path) — needs the camera component enabled | One Series |
