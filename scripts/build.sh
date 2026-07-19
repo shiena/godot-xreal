@@ -124,11 +124,16 @@ if [ "$do_build" -eq 1 ]; then
         say "cargo clippy --release"; cargo clippy --release || die "cargo clippy failed"
     fi
     say "cargo ndk -t arm64-v8a build ($profile)"
-    ndk_args=(ndk -t arm64-v8a -o ./jniLibs build)
+    ndk_args=(ndk -t arm64-v8a build)
     [ "$cargo_debug" -eq 0 ] && ndk_args+=(--release)
     cargo "${ndk_args[@]}" || die "cargo ndk build failed"
-    so="$repo_root/jniLibs/arm64-v8a/libgodot_xreal.so"
-    [ -f "$so" ] || die "Build artifact not found: $so"
+    profile_dir=release; [ "$cargo_debug" -eq 1 ] && profile_dir=debug
+    built="$repo_root/target/aarch64-linux-android/$profile_dir/libgodot_xreal.so"
+    [ -f "$built" ] || die "Build artifact not found: $built"
+    # Place it where the .gdextension expects it (addons/godot_xreal/bin/android/, packed on export).
+    so="$repo_root/addons/godot_xreal/bin/android/libgodot_xreal.so"
+    mkdir -p "$(dirname "$so")"
+    cp -f "$built" "$so"
     ok "Built: $so"
 fi
 

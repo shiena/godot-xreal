@@ -121,12 +121,17 @@ if ($Build) {
         cargo clippy --release; if ($LASTEXITCODE -ne 0) { Die 'cargo clippy failed' }
     }
     Say "cargo ndk -t arm64-v8a build ($profile_)"
-    $cargoArgs = @('ndk', '-t', 'arm64-v8a', '-o', './jniLibs', 'build')
+    $cargoArgs = @('ndk', '-t', 'arm64-v8a', 'build')
     if (-not $CargoDebug) { $cargoArgs += '--release' }
     cargo @cargoArgs
     if ($LASTEXITCODE -ne 0) { Die "cargo ndk build failed (exit $LASTEXITCODE)" }
-    $so = Join-Path $repoRoot 'jniLibs\arm64-v8a\libgodot_xreal.so'
-    if (-not (Test-Path $so)) { Die "Build artifact not found: $so" }
+    $profileDir = if ($CargoDebug) { 'debug' } else { 'release' }
+    $built = Join-Path $repoRoot "target\aarch64-linux-android\$profileDir\libgodot_xreal.so"
+    if (-not (Test-Path $built)) { Die "Build artifact not found: $built" }
+    # Place it where the .gdextension expects it (addons/godot_xreal/bin/android/, packed on export).
+    $so = Join-Path $repoRoot 'addons\godot_xreal\bin\android\libgodot_xreal.so'
+    New-Item -ItemType Directory -Force (Split-Path -Parent $so) | Out-Null
+    Copy-Item -Force $built $so
     Ok "Built: $so"
 }
 

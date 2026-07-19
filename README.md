@@ -241,6 +241,7 @@ addons/godot_xreal/      the installable addon
   xreal_rig.tscn         XrealHeadTracker + Camera3D rig
   editor/                docks: vendor_import_dock.gd (SDK import), image_db_dock.gd
   android/               bridge Java source + nr_plugins.json (vendored .aar git-ignored)
+  bin/                   built libs (git-ignored): android/libgodot_xreal.so + desktop dummy stubs
 src/                     the Rust GDExtension
   lib.rs                 ExtensionLibrary entry
   ffi.rs / native.rs     RE'd ABI (repr(C) structs) + dlopen/dlsym of the XREAL .so
@@ -256,8 +257,8 @@ src/                     the Rust GDExtension
   glasses_events.rs / native_error.rs   cached event funnels
 demo/                    AR demo (main.tscn + managers: hand/anchor/image/mesh/stream/
                          capture/blend + phone touch controller)
-dummy/                   desktop GDExtension stubs (gdext_dummy.c) so the editor loads
-jniLibs/                 vendored XREAL .so (git-ignored) + built libgodot_xreal.so
+dummy/                   desktop GDExtension stub source (gdext_dummy.c) — built into addons/godot_xreal/bin/
+jniLibs/                 vendored XREAL core .so (git-ignored)
 scripts/                 build + vendor_xreal_libs + build_dummy_libs + build_image_db (.ps1/.sh)
 .github/workflows/       CI (fmt/clippy/test/build) + Release (prebuilt addon)
 docs/                    guides / reference / plans / archive — see docs/README.md for the index

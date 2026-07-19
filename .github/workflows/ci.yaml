@@ -163,7 +163,7 @@ jobs:
           name: addon-build
           path: |
             target/aarch64-linux-android/release/libgodot_xreal.so
-            dummy/*.dll
-            dummy/*.so
-            dummy/*.dylib
+            addons/godot_xreal/bin/windows/*.dll
+            addons/godot_xreal/bin/linux/*.so
+            addons/godot_xreal/bin/macos/*.dylib
           if-no-files-found: error

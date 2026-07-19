@@ -216,6 +216,7 @@ addons/godot_xreal/      インストール可能なアドオン
   xreal_rig.tscn         XrealHeadTracker + Camera3D リグ
   editor/                dock: vendor_import_dock.gd（SDK 取込）, image_db_dock.gd
   android/               ブリッジ Java ソース + nr_plugins.json（vendoring した .aar は git 管理外）
+  bin/                   ビルド済みライブラリ（git 管理外）: android/libgodot_xreal.so + デスクトップ dummy スタブ
 src/                     Rust GDExtension 本体
   lib.rs                 ExtensionLibrary エントリ
   ffi.rs / native.rs     RE した ABI（repr(C) 構造体）+ XREAL .so の dlopen/dlsym
@@ -231,8 +232,8 @@ src/                     Rust GDExtension 本体
   glasses_events.rs / native_error.rs   キャッシュ型イベント funnel
 demo/                    AR デモ（main.tscn + 各 manager: hand/anchor/image/mesh/stream/
                          capture/blend + スマホタッチコントローラ）
-dummy/                   デスクトップ GDExtension スタブ（gdext_dummy.c）= エディタ用
-jniLibs/                 vendoring した XREAL .so（git 管理外）+ ビルド成果物 libgodot_xreal.so
+dummy/                   デスクトップ GDExtension スタブのソース（gdext_dummy.c）= ビルド先は addons/godot_xreal/bin/
+jniLibs/                 vendoring した XREAL コア .so（git 管理外）
 scripts/                 build + vendor_xreal_libs + build_dummy_libs + build_image_db（.ps1/.sh）
 .github/workflows/       CI（fmt/clippy/test/build）+ Release（プリビルトアドオン）
 docs/                    guides / reference / plans / archive — 目次は docs/README.md

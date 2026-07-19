@@ -143,7 +143,9 @@ jobs:
           # commits exactly what was built.
           ./scripts/build_dummy_libs.sh
           mkdir -p out
-          cp dummy/*.dll dummy/*.so dummy/*.dylib \
+          cp addons/godot_xreal/bin/windows/*.dll \
+             addons/godot_xreal/bin/linux/*.so \
+             addons/godot_xreal/bin/macos/*.dylib \
              dummy/stub_classes.inc dummy/stub_docs.inc dummy/stub_members.inc out/
 
       - name: Upload artifact
@@ -199,13 +201,19 @@ jobs:
           VER="${{ needs.prepare.outputs.version }}"
           NAME="godot-xreal-${VER}"
           # Drop-in tree: extract over a Godot project, then vendor the XREAL libs (see INSTALL.md).
-          mkdir -p "${NAME}/dummy" "${NAME}/target/aarch64-linux-android/release" "${NAME}/addons"
+          mkdir -p "${NAME}/addons"
           cp godot_xreal.gdextension "${NAME}/"
           cp LICENSE-MIT LICENSE-APACHE "${NAME}/"
-          cp -r addons/godot_xreal "${NAME}/addons/"   # aar / tools are gitignored -> not in the checkout
-          cp artifacts/android-lib/libgodot_xreal.so "${NAME}/target/aarch64-linux-android/release/"
-          # Binaries only — stub_classes.inc in this artifact exists for the commit step.
-          cp artifacts/dummy-stubs/*.dll artifacts/dummy-stubs/*.so artifacts/dummy-stubs/*.dylib "${NAME}/dummy/"
+          cp -r addons/godot_xreal "${NAME}/addons/"   # aar / tools / bin are gitignored -> not in the checkout
+          # Built libraries into the addon's bin/ (Godot convention; the .gdextension points here).
+          bin="${NAME}/addons/godot_xreal/bin"
+          mkdir -p "$bin/android" "$bin/windows" "$bin/linux" "$bin/macos"
+          cp artifacts/android-lib/libgodot_xreal.so "$bin/android/"
+          # Desktop stubs sorted by extension: .dll -> windows, .so -> linux, .dylib -> macos.
+          # (stub_classes.inc also rides in this artifact for the commit step; not copied here.)
+          cp artifacts/dummy-stubs/*.dll "$bin/windows/"
+          cp artifacts/dummy-stubs/*.so  "$bin/linux/"
+          cp artifacts/dummy-stubs/*.dylib "$bin/macos/"
           cat > "${NAME}/INSTALL.md" <<'EOF'
           # Godot XREAL — prebuilt addon
 
@@ -213,14 +221,13 @@ jobs:
           NOT need Rust / cargo-ndk / clang to use them.
 
           ## Install
-          1. Copy this folder's contents into your Godot **4.7** project root, merging:
-             `godot_xreal.gdextension`, `dummy/`, `target/aarch64-linux-android/release/libgodot_xreal.so`,
-             and `addons/godot_xreal/`.
+          1. Copy this folder's contents into your Godot **4.7** project root, merging
+             `godot_xreal.gdextension` and `addons/godot_xreal/` (the built libraries are inside
+             `addons/godot_xreal/bin/`, where the .gdextension references them).
           2. Enable the plugin: Project > Project Settings > Plugins > "Godot XREAL".
-          3. Vendor the XREAL proprietary libraries (NOT redistributable, so not included): use the
-             **XREAL Import** editor dock (pick `com.xreal.xr(.tgz|.tar.gz)`), or run
-             `scripts/vendor_xreal_libs.*`. Pin the SDK to the version these offsets were built against
-             (**com.xreal.xr 3.1.0**).
+          3. Vendor the XREAL proprietary libraries (NOT redistributable, so not included) with the
+             **XREAL Import** editor dock: pick `com.xreal.xr(.tgz|.tar.gz)`. Pin the SDK to the version
+             these offsets were built against (**com.xreal.xr 3.1.0**).
           4. Android export: *Use Gradle Build* ON, Min SDK 29, Architectures arm64-v8a, renderer
              Compatibility (GLES3). See docs/guides/android-setup.md.
           EOF
@@ -243,5 +250,4 @@ jobs:
           gh release create ${{ needs.prepare.outputs.version }} \
             --title "Release ${{ needs.prepare.outputs.version }}" \
             --notes-file CHANGELOG.md \
-            "${{ env.ARCHIVE }}" \
-            artifacts/android-lib/libgodot_xreal.so
+            "${{ env.ARCHIVE }}"

@@ -48,6 +48,10 @@ Thumbs.db
 # locally by scripts/vendor_xreal_libs.*; large SDK binaries, not committed.
 /addons/godot_xreal/tools/
 
+# XREAL addon built libraries (Android GDExtension .so + desktop dummy stubs), placed by
+# scripts/build.* and scripts/build_dummy_libs.* — build artifacts, not committed.
+/addons/godot_xreal/bin/
+
 # Image-tracking reference data — SDK-derived / large binaries, kept local only.
 # The reference.json manifest, the built .bin databases, and the source images
 # (and their Godot .import metadata) are provided per-project, not committed.

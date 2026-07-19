@@ -22,25 +22,30 @@ bash "$root/scripts/gen_stub_classes.sh"
 # That file is a committed prerequisite regenerated separately by scripts/gen_docs.sh (it needs a
 # Rust host toolchain, kept out of this clang-only build); CI checks it stays in sync.
 
+# Built into per-platform folders under the addon's bin/ (Godot convention); the .gdextension
+# points its desktop entries there. Gitignored — built locally, not committed.
+bin_root="$root/addons/godot_xreal/bin"
+
 build() { # triple out extra-flags…
 	local triple="$1" out="$2"
 	shift 2
+	mkdir -p "$(dirname "$bin_root/$out")"
 	# -Wl,-noentry (dash form) — the slash form is mangled by MSYS path conversion.
 	# -fno-stack-protector: the freestanding build has no __stack_chk_fail / __stack_chk_guard to
 	# link against, and some targets (e.g. macOS) enable the stack protector by default for
 	# functions with local buffers (register_members' PropertyInfo arrays).
 	"$CLANG" --target="$triple" -O2 -ffreestanding -nostdlib -fno-stack-protector -shared -fuse-ld=lld "$@" \
-		-o "$root/dummy/$out" "$src"
+		-o "$bin_root/$out" "$src"
 	echo "built $out"
 }
 
-build x86_64-pc-windows-msvc    godot_xreal_dummy.windows.x86_64.dll   -Wl,-noentry
-build aarch64-pc-windows-msvc   godot_xreal_dummy.windows.arm64.dll    -Wl,-noentry
-build x86_64-unknown-linux-gnu  libgodot_xreal_dummy.linux.x86_64.so   -fPIC
-build aarch64-unknown-linux-gnu libgodot_xreal_dummy.linux.arm64.so    -fPIC
+build x86_64-pc-windows-msvc    windows/godot_xreal_dummy.x86_64.dll   -Wl,-noentry
+build aarch64-pc-windows-msvc   windows/godot_xreal_dummy.arm64.dll    -Wl,-noentry
+build x86_64-unknown-linux-gnu  linux/libgodot_xreal_dummy.x86_64.so   -fPIC
+build aarch64-unknown-linux-gnu linux/libgodot_xreal_dummy.arm64.so    -fPIC
 # lld ad-hoc-codesigns arm64 Mach-O output (mandatory on Apple Silicon).
-build arm64-apple-macos11       libgodot_xreal_dummy.macos.arm64.dylib
-build x86_64-apple-macos11      libgodot_xreal_dummy.macos.x86_64.dylib
+build arm64-apple-macos11       macos/libgodot_xreal_dummy.arm64.dylib
+build x86_64-apple-macos11      macos/libgodot_xreal_dummy.x86_64.dylib
 
 # lld-link emits an import .lib next to each DLL; the stubs are dlopen-only.
-rm -f "$root"/dummy/*.lib
+rm -f "$bin_root"/windows/*.lib

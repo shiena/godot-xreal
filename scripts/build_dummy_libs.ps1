@@ -31,19 +31,23 @@ $src = Join-Path $root 'dummy/gdext_dummy.c'
 # That file is a committed prerequisite regenerated separately by scripts/gen_docs.ps1 (it needs a
 # Rust host toolchain, kept out of this clang-only build); CI checks it stays in sync.
 
+# Built into per-platform folders under the addon's bin/ (Godot convention); the .gdextension
+# points its desktop entries there. Gitignored — built locally, not committed.
+$binRoot = Join-Path $root 'addons/godot_xreal/bin'
 # -Wl,-noentry: no CRT means no DllMainCRTStartup; a resident DLL needs no entry point.
 $targets = @(
-	@{ triple = 'x86_64-pc-windows-msvc';    out = 'godot_xreal_dummy.windows.x86_64.dll';   extra = @('-Wl,-noentry') },
-	@{ triple = 'aarch64-pc-windows-msvc';   out = 'godot_xreal_dummy.windows.arm64.dll';    extra = @('-Wl,-noentry') },
-	@{ triple = 'x86_64-unknown-linux-gnu';  out = 'libgodot_xreal_dummy.linux.x86_64.so';   extra = @('-fPIC') },
-	@{ triple = 'aarch64-unknown-linux-gnu'; out = 'libgodot_xreal_dummy.linux.arm64.so';    extra = @('-fPIC') },
+	@{ triple = 'x86_64-pc-windows-msvc';    out = 'windows/godot_xreal_dummy.x86_64.dll';   extra = @('-Wl,-noentry') },
+	@{ triple = 'aarch64-pc-windows-msvc';   out = 'windows/godot_xreal_dummy.arm64.dll';    extra = @('-Wl,-noentry') },
+	@{ triple = 'x86_64-unknown-linux-gnu';  out = 'linux/libgodot_xreal_dummy.x86_64.so';   extra = @('-fPIC') },
+	@{ triple = 'aarch64-unknown-linux-gnu'; out = 'linux/libgodot_xreal_dummy.arm64.so';    extra = @('-fPIC') },
 	# lld ad-hoc-codesigns arm64 Mach-O output (mandatory on Apple Silicon).
-	@{ triple = 'arm64-apple-macos11';       out = 'libgodot_xreal_dummy.macos.arm64.dylib'; extra = @() },
-	@{ triple = 'x86_64-apple-macos11';      out = 'libgodot_xreal_dummy.macos.x86_64.dylib'; extra = @() }
+	@{ triple = 'arm64-apple-macos11';       out = 'macos/libgodot_xreal_dummy.arm64.dylib'; extra = @() },
+	@{ triple = 'x86_64-apple-macos11';      out = 'macos/libgodot_xreal_dummy.x86_64.dylib'; extra = @() }
 )
 
 foreach ($t in $targets) {
-	$out = Join-Path $root "dummy/$($t.out)"
+	$out = Join-Path $binRoot $t.out
+	New-Item -ItemType Directory -Force (Split-Path -Parent $out) | Out-Null
 	# -fno-stack-protector: freestanding has no __stack_chk_fail/guard to link, and some targets
 	# (e.g. macOS) enable the stack protector by default for functions with local buffers.
 	& $Clang "--target=$($t.triple)" -O2 -ffreestanding -nostdlib -fno-stack-protector -shared -fuse-ld=lld @($t.extra) -o $out $src
@@ -52,4 +56,4 @@ foreach ($t in $targets) {
 }
 
 # lld-link emits an import .lib next to each DLL; the stubs are dlopen-only.
-Remove-Item (Join-Path $root 'dummy/*.lib') -ErrorAction SilentlyContinue
+Remove-Item (Join-Path $binRoot 'windows/*.lib') -ErrorAction SilentlyContinue

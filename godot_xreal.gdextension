@@ -5,10 +5,10 @@ reloadable = true
 
 [libraries]
 ; The real extension is Android-only (the XREAL native libraries ship solely for Android
-; arm64-v8a). Build with:
-;   cargo ndk -t arm64-v8a -o ./jniLibs build --release
-android.debug.arm64 = "res://target/aarch64-linux-android/release/libgodot_xreal.so"
-android.release.arm64 = "res://target/aarch64-linux-android/release/libgodot_xreal.so"
+; arm64-v8a). Built and placed at the path below by scripts/build.ps1 / .sh:
+;   cargo ndk -t arm64-v8a build --release  ->  addons/godot_xreal/bin/android/libgodot_xreal.so
+android.debug.arm64 = "res://addons/godot_xreal/bin/android/libgodot_xreal.so"
+android.release.arm64 = "res://addons/godot_xreal/bin/android/libgodot_xreal.so"
 ; Desktop entries point at placeholder stubs: Godot has no way to declare an extension
 ; platform-only and errors on every editor start when no entry matches the host
 ; ("No GDExtension library found for current OS and architecture"). The stubs register
@@ -18,12 +18,12 @@ android.release.arm64 = "res://target/aarch64-linux-android/release/libgodot_xre
 ; the real-extension path on OS.get_name() == "Android" (see XrealShared.is_native_runtime).
 ; Not committed — build once after cloning with scripts/build_dummy_libs.ps1 / .sh
 ; (clang + lld only; source: dummy/gdext_dummy.c).
-windows.x86_64 = "res://dummy/godot_xreal_dummy.windows.x86_64.dll"
-windows.arm64 = "res://dummy/godot_xreal_dummy.windows.arm64.dll"
-linux.x86_64 = "res://dummy/libgodot_xreal_dummy.linux.x86_64.so"
-linux.arm64 = "res://dummy/libgodot_xreal_dummy.linux.arm64.so"
-macos.arm64 = "res://dummy/libgodot_xreal_dummy.macos.arm64.dylib"
-macos.x86_64 = "res://dummy/libgodot_xreal_dummy.macos.x86_64.dylib"
+windows.x86_64 = "res://addons/godot_xreal/bin/windows/godot_xreal_dummy.x86_64.dll"
+windows.arm64 = "res://addons/godot_xreal/bin/windows/godot_xreal_dummy.arm64.dll"
+linux.x86_64 = "res://addons/godot_xreal/bin/linux/libgodot_xreal_dummy.x86_64.so"
+linux.arm64 = "res://addons/godot_xreal/bin/linux/libgodot_xreal_dummy.arm64.so"
+macos.arm64 = "res://addons/godot_xreal/bin/macos/libgodot_xreal_dummy.arm64.dylib"
+macos.x86_64 = "res://addons/godot_xreal/bin/macos/libgodot_xreal_dummy.x86_64.dylib"
 
 [dependencies]
 ; The vendored XREAL core libraries that the GDExtension dlopen()s at startup.

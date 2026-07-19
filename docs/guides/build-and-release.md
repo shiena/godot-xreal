@@ -25,19 +25,21 @@ output directory and the Gradle Android template library directory are not the s
 rustup target add aarch64-linux-android
 cargo install cargo-ndk
 # ANDROID_NDK_HOME must point at an installed NDK
-cargo ndk -t arm64-v8a -o ./jniLibs build --release
-#   -> jniLibs/arm64-v8a/libgodot_xreal.so
-#   -> target/aarch64-linux-android/release/libgodot_xreal.so  (referenced by the .gdextension)
+cargo ndk -t arm64-v8a build --release
+#   -> target/aarch64-linux-android/release/libgodot_xreal.so
+# Copy it to where the .gdextension references it (scripts/build.ps1 / .sh do this for you):
+Copy-Item target/aarch64-linux-android/release/libgodot_xreal.so `
+  addons/godot_xreal/bin/android/libgodot_xreal.so
 ```
 
 When building the Android template directly with Gradle, copy the freshly built `.so` from
-`jniLibs` into the template paths that Gradle actually packages:
+`addons/godot_xreal/bin/android` into the template paths that Gradle actually packages:
 
 ```powershell
 # Must be run from repo root, not from android/build.
-Copy-Item -LiteralPath .\jniLibs\arm64-v8a\libgodot_xreal.so `
+Copy-Item -LiteralPath .\addons\godot_xreal\bin\android\libgodot_xreal.so `
   -Destination .\android\build\libs\debug\arm64-v8a\libgodot_xreal.so -Force
-Copy-Item -LiteralPath .\jniLibs\arm64-v8a\libgodot_xreal.so `
+Copy-Item -LiteralPath .\addons\godot_xreal\bin\android\libgodot_xreal.so `
   -Destination .\android\build\libs\release\arm64-v8a\libgodot_xreal.so -Force
 ```
 

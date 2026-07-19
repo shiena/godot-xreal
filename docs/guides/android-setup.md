@@ -127,7 +127,7 @@ This repo already ships the wiring — the steps below are what produced the cur
 3. Build the Rust extension for Android and stage the XREAL libs:
    ```bash
    $env:ANDROID_NDK_HOME = "<sdk>/ndk/<version>"
-   cargo ndk -t arm64-v8a -o ./jniLibs build --release      # -> libgodot_xreal.so
+   cargo ndk -t arm64-v8a build --release   # scripts/build.* copy the .so to addons/godot_xreal/bin/android/
    pwsh scripts/vendor_xreal_libs.ps1 -XrealPackage "<...>/com.xreal.xr/package"
    ```
    `vendor_xreal_libs.ps1` stages the 4 `.so` into `jniLibs/arm64-v8a/` (the 3 core + the FPV
