@@ -1,37 +1,37 @@
 extends Node3D
-## Depth-mesh demo / on-device verification (Air 2 Ultra). Driven by the phone-menu "メッシュ" toggle
-## (main.gd). Enables meshing (XrealSystem.set_meshing_enabled) and builds/updates an ArrayMesh per
-## block — a translucent overlay of the scanned environment.
+## Depth meshing as a drop-in feature component (Air 2 Ultra). Enables meshing
+## (XrealSystem.set_meshing_enabled) and builds/updates an ArrayMesh per block — a translucent
+## overlay of the scanned environment. Mesh-block changes stream in through the shared XrealAR
+## poller; its "mesh" stream is gated on this toggle so it only polls while meshing is on.
 ##
-## The per-frame poll is done by the shared XrealAR node (injected via setup): it re-emits each block
-## as mesh_block_changed / mesh_block_removed and we just visualize. We gate its "mesh" stream on our
-## toggle so it only polls while meshing is on.
-##
-## World-locked: child of Main (like the hand joints / anchors), so the mesh stays registered to the
-## real room as the head moves. OFF hides the meshes but keeps meshing running so ON restores them.
+## World-locked: add this component under a world-fixed node (e.g. the scene root, NOT the head
+## rig) so the mesh stays registered to the real room as the head moves. OFF hides the meshes but
+## keeps meshing running so ON restores them.
 
-var _system: Object                 # XrealSystem, injected by main.gd via setup()
-var _ar: Object                     # XrealAR node (per-frame poller → signals), injected via setup()
+## Enable at boot (applied in _ready). At runtime call set_enabled().
+@export var enabled := false
+
+var _system: Object                 # XrealSystem (this feature's own stateless instance)
+var _ar: Object                     # the shared XrealAR poller
+var _connected := false
 var _initialized := false           # meshing enabled once
 var _enabled := false
 var _meshes := {}                   # block id(String) -> MeshInstance3D
 var _mat: StandardMaterial3D
 
-## Injected once by main.gd after the rig spawns. `ar` is the shared XrealAR node whose
-## mesh_block_changed / mesh_block_removed signals drive the overlay.
-func setup(system: Object, ar: Object = null) -> void:
-	_system = system
-	_ar = ar
-	if _ar:
-		_ar.connect(&"mesh_block_changed", _on_mesh_changed)
-		_ar.connect(&"mesh_block_removed", _on_mesh_removed)
+func _ready() -> void:
+	_system = XrealShared.make_system()  # null off-device -> inert
+	if enabled:
+		enabled = set_enabled(true)
 
-## Toggle meshing. Returns the resulting state (false if unsupported — non-Air-2-Ultra — so the
-## phone-menu toggle can flip itself back off).
+## Toggle meshing. Returns the resulting state (false if unsupported — non-Air-2-Ultra — so a UI
+## toggle can flip itself back off).
 func set_enabled(on: bool) -> bool:
 	if not _system or not _system.has_method(&"is_meshing_supported") or not _system.is_meshing_supported():
+		enabled = false
 		return false
 	if on:
+		_ensure_ar()
 		if not _initialized:
 			_system.set_meshing_enabled(true)
 			_initialized = true
@@ -41,8 +41,21 @@ func set_enabled(on: bool) -> bool:
 		_enabled = false
 		visible = false  # keep meshing running; just hide the overlay
 	if _ar:
-		_ar.set(&"mesh", _enabled)  # only let XrealAR poll the mesh stream while we're on
+		_ar.set(&"mesh", _enabled)  # only let the shared XrealAR poll the mesh stream while on
+	enabled = _enabled
 	return _enabled
+
+## Resolve the shared XrealAR and connect its mesh signals once — BEFORE the stream switch goes
+## on, so no change event is ever polled without a listener.
+func _ensure_ar() -> void:
+	if _connected:
+		return
+	_ar = XrealShared.get_ar(get_tree())
+	if _ar == null:
+		return
+	_ar.connect(&"mesh_block_changed", _on_mesh_changed)
+	_ar.connect(&"mesh_block_removed", _on_mesh_removed)
+	_connected = true
 
 ## XrealAR signal: a block was added/updated.
 func _on_mesh_changed(b: Dictionary) -> void:
@@ -99,6 +112,8 @@ func _material() -> StandardMaterial3D:
 	return _mat
 
 func _exit_tree() -> void:
-	# Stop meshing on clean shutdown.
+	# Release the shared stream switch + stop meshing on clean shutdown.
+	if _enabled and _ar and is_instance_valid(_ar):
+		_ar.set(&"mesh", false)
 	if _initialized and _system:
 		_system.set_meshing_enabled(false)

@@ -3,6 +3,15 @@
 [ext_resource type="Script" uid="uid://b7gtq7lduwbnw" path="res://demo/main.gd" id="1_main"]
 [ext_resource type="PackedScene" uid="uid://rdemoscene1" path="res://demo/ar_scene.tscn" id="2_ar"]
 [ext_resource type="PackedScene" uid="uid://phonescreen1" path="res://demo/phone_screen.tscn" id="3_phone"]
+[ext_resource type="PackedScene" uid="uid://xrcamerascn01" path="res://addons/godot_xreal/features/xreal_camera.tscn" id="4_camera"]
+[ext_resource type="PackedScene" uid="uid://xrplanesscn01" path="res://addons/godot_xreal/features/xreal_planes.tscn" id="5_planes"]
+[ext_resource type="PackedScene" uid="uid://xranchorsscn1" path="res://addons/godot_xreal/features/xreal_anchors.tscn" id="6_anchors"]
+[ext_resource type="PackedScene" uid="uid://xrimagetrscn1" path="res://addons/godot_xreal/features/xreal_image_tracking.tscn" id="7_image"]
+[ext_resource type="PackedScene" uid="uid://xrmeshscn0001" path="res://addons/godot_xreal/features/xreal_mesh.tscn" id="8_mesh"]
+[ext_resource type="PackedScene" uid="uid://xrhandsscn001" path="res://addons/godot_xreal/features/xreal_hands.tscn" id="9_hands"]
+[ext_resource type="PackedScene" uid="uid://xrphotoscn001" path="res://addons/godot_xreal/features/xreal_photo_capture.tscn" id="10_photo"]
+[ext_resource type="PackedScene" uid="uid://xrblendscn001" path="res://addons/godot_xreal/features/xreal_blend_capture.tscn" id="11_blend"]
+[ext_resource type="PackedScene" uid="uid://xrstreamscn01" path="res://addons/godot_xreal/features/xreal_stream.tscn" id="12_stream"]
 
 [node name="Main" type="Node3D" unique_id=265623934]
 script = ExtResource("1_main")
@@ -11,7 +20,27 @@ script = ExtResource("1_main")
 
 [node name="PhoneScreen" parent="." unique_id=1941116838 instance=ExtResource("3_phone")]
 
-[node name="XrealHandTracker" type="XrealHandTracker" parent="." unique_id=1941116839]
+; The godot_xreal feature components — each is self-contained; delete the ones you don't need.
+; All sit under Main (a world-fixed node), which the world-locked features (planes, anchors,
+; image tracking, mesh, hands) require: under the head rig they would appear head-locked.
+[node name="XrealCamera" parent="." instance=ExtResource("4_camera")]
+
+[node name="XrealPlanes" parent="." instance=ExtResource("5_planes")]
+
+[node name="XrealAnchors" parent="." instance=ExtResource("6_anchors")]
+
+[node name="XrealImageTracking" parent="." instance=ExtResource("7_image")]
+manifest_path = "res://demo/image_tracking/reference.json"
+
+[node name="XrealMesh" parent="." instance=ExtResource("8_mesh")]
+
+[node name="XrealHands" parent="." instance=ExtResource("9_hands")]
+
+[node name="XrealPhotoCapture" parent="." instance=ExtResource("10_photo")]
+
+[node name="XrealBlendCapture" parent="." instance=ExtResource("11_blend")]
+
+[node name="XrealStream" parent="." instance=ExtResource("12_stream")]
 
 [node name="UI" type="CanvasLayer" parent="." unique_id=1039389148]
 

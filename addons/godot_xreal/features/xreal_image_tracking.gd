@@ -1,42 +1,49 @@
 extends Node3D
-## Image-tracking demo / on-device verification (Air 2 Ultra). Driven by the phone-menu "画像" toggle +
-## "画像切替" button (main.gd). On first enable it loads EVERY set in demo/image_tracking/reference.json
-## (each set = one blob built by scripts/build_image_db.* / the editor dock from its images), builds a
-## database per set (XrealSystem.init_image_database), activates the first, and overlays a world-locked
-## quad on each tracked image. "画像切替" cycles the active set (set_image_database). Display/print one of
-## the active set's images for the glasses to see.
+## Image tracking as a drop-in feature component (Air 2 Ultra). On first enable it loads EVERY set
+## in the manifest JSON (each set = one blob built by scripts/build_image_db.* / the editor dock),
+## builds a database per set (XrealSystem.init_image_database), activates the first, and overlays a
+## world-locked quad on each tracked image. cycle_set() switches the active set. Point `manifest_path`
+## at a reference.json (see demo/image_tracking/reference.json for the schema): top-level `sets[]`,
+## each {name, blob, images:[{guid, width, height?}]} with blob paths relative to the manifest.
 ##
-## World-locked: child of Main (like the hand joints / anchors), so a marker sits on the real image as
-## the head moves. OFF hides the markers but keeps the databases active so ON restores them.
+## World-locked: add this component under a world-fixed node (e.g. the scene root, NOT the head
+## rig) so a marker sits on the real image as the head moves. OFF hides the markers but keeps the
+## databases active so ON restores them.
 
-const MANIFEST := "res://demo/image_tracking/reference.json"
+## Enable at boot (applied in _ready). At runtime call set_enabled().
+@export var enabled := false
+## The reference-image manifest (JSON). Required — set_enabled(true) refuses while empty.
+@export_file("*.json") var manifest_path := ""
 
-var _system: Object                 # XrealSystem, injected by main.gd via setup()
-var _ar: Object                     # XrealAR node (per-frame poller → signals), injected via setup()
+var _system: Object                 # XrealSystem (this feature's own stateless instance)
+var _ar: Object                     # the shared XrealAR poller
+var _connected := false
 var _initialized := false           # sets loaded + registered once
 var _enabled := false
 var _sets := []                     # [{name: String, handle: int}] — one registered DB per set
 var _active_set := -1               # index into _sets of the currently-active set
 var _markers := {}                  # image id(String) -> MeshInstance3D
 
-## Injected once by main.gd after the rig spawns. `ar` is the shared XrealAR node whose
-## image_added / image_updated / image_removed signals drive the overlay.
-func setup(system: Object, ar: Object = null) -> void:
-	_system = system
-	_ar = ar
-	if _ar:
-		_ar.connect(&"image_added", _on_image_added)
-		_ar.connect(&"image_updated", _on_image_updated)
-		_ar.connect(&"image_removed", _on_image_removed)
+func _ready() -> void:
+	_system = XrealShared.make_system()  # null off-device -> inert
+	if enabled:
+		enabled = set_enabled(true)
 
-## Toggle image-tracking mode. Returns the resulting state (false if the ABI/sets are unavailable, so
-## the phone-menu toggle can flip itself back off).
+## Toggle image-tracking mode. Returns the resulting state (false if the ABI / manifest / blobs are
+## unavailable, so a UI toggle can flip itself back off).
 func set_enabled(on: bool) -> bool:
 	if not _system or not _system.has_method(&"is_image_tracking_available") or not _system.is_image_tracking_available():
+		enabled = false
 		return false
 	if on:
+		if manifest_path.is_empty():
+			push_warning("[xreal-image] manifest_path not set — point it at a reference.json")
+			enabled = false
+			return false
+		_ensure_ar()
 		if not _initialized:
 			if not _load_sets():
+				enabled = false
 				return false
 			_initialized = true
 		_enabled = true
@@ -45,8 +52,22 @@ func set_enabled(on: bool) -> bool:
 		_enabled = false
 		visible = false  # keep the databases active; just hide the markers
 	if _ar:
-		_ar.set(&"images", _enabled)  # only let XrealAR poll the image stream while we're on
+		_ar.set(&"images", _enabled)  # only let the shared XrealAR poll the image stream while on
+	enabled = _enabled
 	return _enabled
+
+## Resolve the shared XrealAR and connect its image signals once — BEFORE the stream switch goes
+## on, so no change event is ever polled without a listener.
+func _ensure_ar() -> void:
+	if _connected:
+		return
+	_ar = XrealShared.get_ar(get_tree())
+	if _ar == null:
+		return
+	_ar.connect(&"image_added", _on_image_added)
+	_ar.connect(&"image_updated", _on_image_updated)
+	_ar.connect(&"image_removed", _on_image_removed)
+	_connected = true
 
 ## Load every set in the manifest, register a database for each, and activate the first.
 func _load_sets() -> bool:
@@ -60,18 +81,18 @@ func _load_sets() -> bool:
 		if handle != 0:
 			_sets.append({"name": str(s.get("name", "?")), "handle": handle})
 	if _sets.is_empty():
-		push_warning("[image] no image sets loaded (build the blobs — editor dock / build_image_db)")
+		push_warning("[xreal-image] no image sets loaded (build the blobs — editor dock / build_image_db)")
 		return false
 	_activate(0)
-	print("[image] %d set(s) loaded; active='%s'" % [_sets.size(), _sets[0].name])
+	print("[xreal-image] %d set(s) loaded; active='%s'" % [_sets.size(), _sets[0].name])
 	return true
 
 ## Build + register one set's database. Returns its handle (0 on failure).
 func _init_set(s: Dictionary) -> int:
 	var name := str(s.get("name", "?"))
-	var blob_path := MANIFEST.get_base_dir().path_join(str(s.get("blob", "")))
+	var blob_path := manifest_path.get_base_dir().path_join(str(s.get("blob", "")))
 	if not FileAccess.file_exists(blob_path):
-		push_warning("[image] set '%s' blob missing: %s — build it (editor dock / build_image_db)" % [name, blob_path])
+		push_warning("[xreal-image] set '%s' blob missing: %s — build it (editor dock / build_image_db)" % [name, blob_path])
 		return 0
 	var bf := FileAccess.open(blob_path, FileAccess.READ)
 	var blob := bf.get_buffer(bf.get_length())
@@ -86,7 +107,7 @@ func _init_set(s: Dictionary) -> int:
 		sizes.append(Vector2(w, h))
 	var handle: int = _system.init_image_database(blob, guids, sizes)
 	if handle == 0:
-		push_warning("[image] set '%s' init_image_database failed (needs 6DoF + nr_plugins.json + backend)" % name)
+		push_warning("[xreal-image] set '%s' init_image_database failed (needs 6DoF + nr_plugins.json + backend)" % name)
 	return handle
 
 ## Activate a set (switch the tracking DB) and clear the previous set's markers.
@@ -96,19 +117,19 @@ func _activate(index: int) -> void:
 	_active_set = index
 	_system.set_image_database(_sets[index].handle)
 	_clear_markers()  # a different set tracks different images
-	print("[image] active set -> '%s' (handle=%d)" % [_sets[index].name, _sets[index].handle])
+	print("[xreal-image] active set -> '%s' (handle=%d)" % [_sets[index].name, _sets[index].handle])
 
-## Cycle to the next set (phone-menu "画像切替" button). No-op with 0/1 set.
+## Cycle to the next set. No-op with 0/1 set.
 func cycle_set() -> void:
 	if _sets.size() <= 1:
 		return
 	_activate((_active_set + 1) % _sets.size())
 
 func _read_manifest() -> Dictionary:
-	if not FileAccess.file_exists(MANIFEST):
-		push_warning("[image] manifest missing: %s" % MANIFEST)
+	if not FileAccess.file_exists(manifest_path):
+		push_warning("[xreal-image] manifest missing: %s" % manifest_path)
 		return {}
-	var mf := FileAccess.open(MANIFEST, FileAccess.READ)
+	var mf := FileAccess.open(manifest_path, FileAccess.READ)
 	var data = JSON.parse_string(mf.get_as_text())
 	mf.close()
 	return data if typeof(data) == TYPE_DICTIONARY else {}
@@ -118,7 +139,7 @@ func _on_image_added(im: Dictionary) -> void:
 	if not _enabled:
 		return
 	_update_marker(im)
-	print("[image] detected %s" % str(im.get("source_image", "")))
+	print("[xreal-image] detected %s" % str(im.get("source_image", "")))
 
 ## XrealAR signal: a tracked image's pose/state updated.
 func _on_image_updated(im: Dictionary) -> void:
@@ -139,10 +160,10 @@ func _update_marker(im: Dictionary) -> void:
 		mi = _make_marker()
 		add_child(mi)
 		_markers[id] = mi
-	# The SDK reports the tracked-image pose with its normal along a different axis than Godot's QuadMesh
-	# (+Z), so the raw pose lays the quad flat (on-device: horizontal, +Z/green facing down). Rotate -90°
-	# about local X to stand the quad up coplanar with the image, normal toward the viewer. See the
-	# device-verification checklist #7 (orientation).
+	# The SDK reports the tracked-image pose with its normal along a different axis than Godot's
+	# QuadMesh (+Z), so the raw pose lays the quad flat (on-device: horizontal, +Z/green facing
+	# down). Rotate -90° about local X to stand the quad up coplanar with the image, normal toward
+	# the viewer.
 	var t: Transform3D = im.get("transform", Transform3D.IDENTITY)
 	mi.transform = t * Transform3D(Basis(Vector3(1.0, 0.0, 0.0), -PI / 2.0), Vector3.ZERO)
 	var sz: Vector2 = im.get("size", Vector2(0.1, 0.1))
@@ -180,7 +201,9 @@ func _clear_markers() -> void:
 	_markers.clear()
 
 func _exit_tree() -> void:
-	# Deactivate + free every registered database on clean shutdown.
+	# Release the shared stream switch, then deactivate + free every registered database.
+	if _enabled and _ar and is_instance_valid(_ar):
+		_ar.set(&"images", false)
 	if _system and not _sets.is_empty():
 		_system.set_image_database(0)
 		for s in _sets:

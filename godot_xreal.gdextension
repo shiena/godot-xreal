@@ -12,10 +12,11 @@ android.release.arm64 = "res://target/aarch64-linux-android/release/libgodot_xre
 ; Desktop entries point at placeholder stubs: Godot has no way to declare an extension
 ; platform-only and errors on every editor start when no entry matches the host
 ; ("No GDExtension library found for current OS and architecture"). The stubs register
-; empty placeholders for the Node-derived classes (XrealHeadTracker / XrealHandTracker /
-; XrealAR) so scenes that place them open warning-free, but NOT XrealSystem — so
-; ClassDB.class_exists(&"XrealSystem") stays false and scripts take their no-extension
-; path. Not committed — build once after cloning with scripts/build_dummy_libs.ps1 / .sh
+; ALL five classes (XrealHeadTracker / XrealHandTracker / XrealAR / XrealCameraFeed /
+; XrealSystem) with their full member lists, so scenes open warning-free and the F1 help
+; documents them — which means class_exists() is true on desktop too: scripts must gate
+; the real-extension path on OS.get_name() == "Android" (see XrealShared.is_native_runtime).
+; Not committed — build once after cloning with scripts/build_dummy_libs.ps1 / .sh
 ; (clang + lld only; source: dummy/gdext_dummy.c).
 windows.x86_64 = "res://dummy/godot_xreal_dummy.windows.x86_64.dll"
 windows.arm64 = "res://dummy/godot_xreal_dummy.windows.arm64.dll"

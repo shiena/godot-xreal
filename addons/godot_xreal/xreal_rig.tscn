@@ -11,7 +11,7 @@ func _ready() -> void:
 		current = true
 "
 
-[node name="XrealCameraRig" type="XrealHeadTracker"]
+[node name="XrealCameraRig" type="XrealHeadTracker" groups=["xreal_head_tracker"]]
 
 [node name="Camera3D" type="Camera3D" parent="."]
 script = SubResource("GDScript_rig")

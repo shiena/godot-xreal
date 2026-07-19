@@ -1,7 +1,9 @@
 # Godot XREAL (addon)
 
 Use XREAL glasses from Godot 4. Provides **6DoF head tracking** (rotation + position;
-3DoF/0DoF selectable) through a native GDExtension (Rust / godot-rust). See the repository root for build/RE details.
+3DoF/0DoF selectable) through a native GDExtension (Rust / godot-rust), plus drop-in
+**feature sub-scenes** for the rest of the SDK surface (camera, planes, anchors, image
+tracking, meshing, hands, capture, streaming). See the repository root for build/RE details.
 
 ## Install
 
@@ -10,14 +12,18 @@ Use XREAL glasses from Godot 4. Provides **6DoF head tracking** (rotation + posi
    `docs/guides/build-and-release.md`). For local dev the repo ships a `godot_xreal.gdextension`
    at the project root pointing at `res://target/...`.
 3. Enable **Godot XREAL** in *Project > Project Settings > Plugins* (optional — the
-   runtime classes load with the GDExtension regardless).
+   runtime classes load with the GDExtension regardless; the plugin adds editor docks
+   and the Android export hooks).
 
-## Runtime classes
+## Runtime classes (GDExtension)
 
 | Class | Base | Purpose |
 |---|---|---|
-| `XrealHeadTracker` | `Node3D` | Drives its transform (rotation + position) from the native head pose each frame. Parent a `Camera3D` under it. `is_tracking() -> bool`, `recenter()`. Emits hot-plug (`glasses_connected` / `glasses_disconnected`) and hardware-input signals (`key_event`, `key_state_changed`, `wearing_changed`, `brightness_changed`, `volume_changed`, `ec_level_changed`, `glasses_event`) with `KEY_*` / `ACTION_*` / `KEY_STATE_*` constants. |
-| `XrealSystem` | `RefCounted` | SDK info + control: `is_available()`, `is_session_started()`, `get_plugin_version() -> String`, `get_device_type() -> int`, `get_tracking_state()/get_tracking_reason()/get_tracking_type() -> int`, `switch_tracking_type(type) -> bool` (`TRACKING_*` constants), `set_display_bypass_psensor(bypass) -> int`, `get_hmd_time_nanos() -> int`, `get_head_rotation() -> Quaternion`, `get_diagnostics() -> String`. |
+| `XrealHeadTracker` | `Node3D` | Drives its transform (rotation + position) from the native head pose each frame. Parent a `Camera3D` under it. `is_tracking() -> bool`, `recenter()`. Emits hot-plug (`glasses_connected` / `glasses_disconnected`) and hardware-input signals (`key_event`, `key_state_changed`, `wearing_changed`, `brightness_changed`, `volume_changed`, `ec_level_changed`, `glasses_event`) with `KEY_*` / `ACTION_*` / `KEY_STATE_*` constants. **One per tree** (it owns the stereo eye viewports + render driver). |
+| `XrealSystem` | `RefCounted` | SDK info + control: session/tracking state, tracking-type switching, AR-feature availability/config, controller, streaming, metrics, device/camera geometry. Stateless facade over process-global native state — create as many instances as you like. |
+| `XrealAR` | `Node` | Per-frame poller for the plane/anchor/image/mesh change streams, re-emitted as signals. The native change queues are **consumed on poll — keep exactly one XrealAR in the tree** (the feature components share one automatically via `XrealShared.get_ar`). |
+| `XrealHandTracker` | `Node` | Registers the XRServer hand trackers `/user/hand_tracker/left`/`right` (Air 2 Ultra). One per tree suffices (`XrealShared.get_hand_tracker`). |
+| `XrealCameraFeed` | `CameraFeed` | The glasses RGB camera as a CameraServer feed (Y/CbCr ImageTextures). Only one capture can be active; prefer the `xreal_camera.tscn` feature component, which owns the lifecycle. |
 
 ## Quick start
 
@@ -32,9 +38,66 @@ var sys := XrealSystem.new()
 print(sys.is_available(), sys.get_plugin_version(), sys.get_device_type())
 ```
 
-A complete example is in the repo's `demo/` scene.
+Then add only the feature sub-scenes you need (below). A complete example wiring every
+feature to a phone touch-controller UI is in the repo's `demo/` scene.
+
+## Feature sub-scenes (`features/*.tscn`)
+
+Each feature is a self-contained scene: instance it (editor or code), call `set_enabled(true)`
+(or tick `enabled` in the inspector), delete what you don't use. They find their shared
+plumbing themselves — no wiring:
+
+- A single shared `XrealAR` poller / `XrealHandTracker` are find-or-created under the tree
+  root on first use (groups `xreal_shared_ar` / `xreal_shared_hand_tracker`).
+- The head rig is looked up via the `xreal_head_tracker` group (`xreal_rig.tscn` already
+  joins it; add the group to a custom rig).
+- The live camera feed is discovered via the `xreal_camera_feature` group.
+
+On desktop (editor / PC runs) every component is inert, so scenes stay runnable.
+
+| Scene | World-locked¹ | API | Devices |
+|---|---|---|---|
+| `xreal_camera.tscn` | — (preview is head-locked) | `set_enabled(on) -> bool`, `get_feed()`, `is_feed_live()`, signals `feed_changed(feed)` / `active_changed(active)`; exports `enabled`, `show_preview` | RGB camera = One Series |
+| `xreal_planes.tscn` | ✔ | `set_enabled(on) -> bool`; exports `enabled`, `switch_to_6dof` (plane detection needs 6DoF) | 6DoF devices |
+| `xreal_anchors.tscn` | ✔ | `set_enabled(on) -> bool`, `place_at_fingertip()` (pinch also places); exports `enabled`, `save_file` (Guid persistence) | Air 2 Ultra |
+| `xreal_image_tracking.tscn` | ✔ | `set_enabled(on) -> bool`, `cycle_set()`; exports `enabled`, `manifest_path` (**required** — a reference.json, see `demo/image_tracking/`) | Air 2 Ultra |
+| `xreal_mesh.tscn` | ✔ | `set_enabled(on) -> bool`; exports `enabled` | Air 2 Ultra |
+| `xreal_hands.tscn` | ✔ | autonomous (spheres on the 26 joints/hand); hide via `visible` | Air 2 Ultra |
+| `xreal_photo_capture.tscn` | — | `capture_photo() -> String` (JPG path) — needs the camera component enabled | One Series |
+| `xreal_blend_capture.tscn` | — | `capture_blended() -> String` (camera+AR composite JPG) — needs camera + rig | One Series |
+| `xreal_stream.tscn` | — | `set_enabled(on)` (async — watch `active_changed(active)`), streams FPV/MRC to XREAL's StreamingReceiver over LAN; exports `with_mic`, `observer_mode`, size/bitrate/fps | any (camera-less devices stream AR-only) |
+
+¹ World-locked components must sit under a **world-fixed** node (e.g. the scene root) — under
+the head rig their content would appear head-locked (stuck to the screen).
+
+`set_enabled(true)` returns `false` when the feature is unavailable on the device (missing
+ABI / hardware) — wire that to your UI toggle. Camera start and stream pairing are async:
+their real state comes back through `active_changed`.
+
+### Sharing caveats
+
+- **One `XrealAR` per tree.** If you place your own `XrealAR` node, add it to the
+  `xreal_shared_ar` group so the features adopt it instead of creating a second one — and
+  note its per-stream switches (`planes`/`anchors`/`images`/`mesh`) default to **on**; the
+  feature components will take control of their own stream's switch anyway.
+- **One camera.** The glasses have a single RGB camera; keep one `xreal_camera.tscn`
+  instance (a second activation fails cleanly).
+- `XrealGallery` (`xreal_gallery.gd`, optional file) copies captures into the phone's
+  MediaStore gallery via the bundled `XrealBridge.java`; the capture components soft-load
+  it and work fine without it.
+- `XrealAndroidBridge.register()` (call once at startup) registers the Java bridge:
+  companion-display handling + auto-enter PiP so the glasses keep rendering while the app
+  is backgrounded (multi-resume).
+
+### Editor tooling
+
+The plugin adds two editor docks: **XREAL Vendor** (imports SDK `.aar`/`.so` packages) and
+**XREAL Image DB** (builds image-tracking reference databases). Their default paths point at
+the repo's `demo/image_tracking/` — adjust in the docks for your own project layout.
 
 ## Platform
 
 XREAL natives are Android arm64 only → target a Godot Android app on an XREAL host. On
-desktop the classes load but head tracking is inert (so you can edit scenes on PC).
+desktop the classes load as documented stubs (F1 help works) but everything is inert, so
+you can edit and run scenes on PC. Gate device-only code on `OS.get_name() == "Android"`
+(class presence alone is not enough) — that's what `XrealShared.is_native_runtime()` does.

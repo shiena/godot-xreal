@@ -1,13 +1,11 @@
 extends Node3D
 ## Root script of the static AR scene (demo/ar_scene.tscn): environment, sun and the ring of
-## colored boxes need no code at all; this script only exposes the three nodes that main.gd
+## colored boxes need no code at all; this script only exposes the two nodes that main.gd
 ## drives at runtime, so the consumer never reaches into the scene's internals by path:
-##   - cam_panel     head-locked camera preview quad — reparented under the head tracker and
-##                   revealed once the first camera frame wires its Y/CbCr textures
 ##   - cursor        head-locked touch-controller cursor — reparented under the head tracker
 ##   - phone_pointer phone-IMU 3D pointer — revealed once the NRController starts
+## (The camera preview quad now lives in the addon: addons/godot_xreal/features/xreal_camera.tscn.)
 
-@onready var cam_panel: MeshInstance3D = $CamPanel
 @onready var cursor: MeshInstance3D = $Cursor
 @onready var phone_pointer: Node3D = $PhonePointer
 

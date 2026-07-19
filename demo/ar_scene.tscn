@@ -1,8 +1,7 @@
-[gd_scene load_steps=10 format=3 uid="uid://ardemoscene1"]
+[gd_scene load_steps=8 format=3 uid="uid://ardemoscene1"]
 
 [ext_resource type="Script" uid="uid://d3eet4asknvow" path="res://demo/ar_scene.gd" id="1_ar"]
 [ext_resource type="Script" uid="uid://dn5lfmr5kgaik" path="res://demo/phone_pointer.gd" id="2_pointer"]
-[ext_resource type="Shader" uid="uid://bvvu0x0a8g2cv" path="res://demo/xreal_ycbcr.gdshader" id="3_ycbcr"]
 
 ; Solid black background: on the XREAL optical see-through display black reads as
 ; transparent, so the scene appears to float over the real world.
@@ -16,15 +15,6 @@ ambient_light_energy = 0.6
 [sub_resource type="BoxMesh" id="BoxMesh_unit"]
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_unit"]
-
-; Head-locked camera preview: a 16:9 quad ~1/3 of the view at 2 m depth (the eye cameras see
-; roughly +/-0.8 x +/-0.45 m there), with the YCbCr->RGB shader (demo/xreal_ycbcr.gdshader —
-; orientation and the R/B swap are baked in as device-calibrated constants).
-[sub_resource type="QuadMesh" id="QuadMesh_campanel"]
-size = Vector2(0.5333, 0.3)
-
-[sub_resource type="ShaderMaterial" id="ShaderMaterial_campanel"]
-shader = ExtResource("3_ycbcr")
 
 [sub_resource type="BoxMesh" id="BoxMesh_cursor"]
 size = Vector3(0.18, 0.18, 0.18)
@@ -155,16 +145,6 @@ mesh = SubResource("BoxMesh_unit")
 
 [node name="Col" type="CollisionShape3D" parent="Room/Box11/Body"]
 shape = SubResource("BoxShape3D_unit")
-
-; Camera preview panel — reparented under the head tracker at runtime (main.gd), positioned
-; top-right, 2 m in front. The eye cameras invert Y (pose handedness (x,-y,z,w)), so on the
-; glasses buffer +X is right but -Y is up: hence +x, -y. Hidden until the first camera frame
-; wires the Y/CbCr textures, so the not-yet-fed shader never shows as a pink placeholder.
-[node name="CamPanel" type="MeshInstance3D" parent="."]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.48, -0.3, -2)
-visible = false
-mesh = SubResource("QuadMesh_campanel")
-material_override = SubResource("ShaderMaterial_campanel")
 
 ; Head-locked cursor driven by the phone touch controller — reparented under the head tracker
 ; at runtime (main.gd) so phone touches are visible in the glasses.

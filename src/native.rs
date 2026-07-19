@@ -1233,6 +1233,21 @@ impl XrealNative {
             let session_lib =
                 Library::new(SESSION_LIB).map_err(|e| format!("dlopen {SESSION_LIB}: {e}"))?;
             let plugin_lib = Library::new(PLUGIN_LIB).ok();
+            // Pin both XREAL libs for the process lifetime (RTLD_NODELETE). `load()` runs on every
+            // session bring-up retry, and a FAILED attempt drops this XrealNative — dlclosing the
+            // libraries. That opens an unload window in which `signal_guard::lib_base()` (published
+            // on load), the code patches, and every callback pointer the SDK stored all dangle;
+            // scudo reuses the address range and the next `blr lib_base+offset` (e.g.
+            // hand_tracking::ensure_enabled) executes heap memory. Observed on-device: SIGSEGV
+            // SEGV_ACCERR on GLThread at exactly lib_base+0x47a10. The XREAL runtime is a
+            // process-global singleton — unloading it is never useful, so pin it.
+            #[cfg(target_os = "android")]
+            for name in [SESSION_LIB, PLUGIN_LIB] {
+                let cname = std::ffi::CString::new(name).unwrap();
+                if libc::dlopen(cname.as_ptr(), libc::RTLD_NOW | libc::RTLD_NODELETE).is_null() {
+                    godot::global::godot_warn!("[xreal] RTLD_NODELETE pin failed for {name}");
+                }
+            }
 
             let hmd_time_nanos: FnHmdTimeNanos = *session_lib
                 .get(b"XREALGetHMDTimeNanos\0")

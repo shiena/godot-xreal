@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3 uid="uid://xrmeshscn0001"]
+
+[ext_resource type="Script" uid="uid://xrmeshgd0001" path="res://addons/godot_xreal/features/xreal_mesh.gd" id="1_script"]
+
+[node name="XrealMesh" type="Node3D"]
+script = ExtResource("1_script")

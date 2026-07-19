@@ -1,28 +1,30 @@
 extends Node3D
-
-## Minimal 3DoF demo for the Godot XREAL addon.
+## Demo for the Godot XREAL addon — a consumer of the per-feature components in
+## addons/godot_xreal/features/*.
 ##
-## The static content lives in two sub-scenes instanced by demo/main.tscn:
+## The static content lives in sub-scenes instanced by demo/main.tscn:
 ##   - $ARScene (demo/ar_scene.tscn + ar_scene.gd) — the 3D world: WorldEnvironment (black
 ##     background — on the XREAL optical see-through display black reads as transparent), sun,
 ##     the ring of colored boxes (with colliders for the phone-pointer raycast), plus the
-##     head-locked camera preview panel, controller cursor and phone-IMU pointer, exposed as
-##     `cam_panel` / `cursor` / `phone_pointer`.
+##     head-locked controller cursor and phone-IMU pointer, exposed as `cursor` / `phone_pointer`.
 ##   - $PhoneScreen (demo/phone_screen.tscn + phone_screen.gd) — the phone-only touch
-##     controller layer; its signals are re-emitted at the scene root and wired to the
-##     _on_tc_* handlers here via main.tscn connections.
+##     controller layer; its signals are wired to the _on_tc_* handlers here via main.tscn.
+##   - $Xreal* — the addon feature components (camera, planes, anchors, image tracking, mesh,
+##     hands, photo/blend capture, FPV streaming), instanced straight from
+##     addons/godot_xreal/features/*.tscn. Each is self-contained: this script only toggles them
+##     from the phone menu and reflects their state back onto the toggles. Delete the instances
+##     you don't need — they don't know about each other.
 ## The debug UI ($UI) also lives in main.tscn, its Recenter button wired the same way.
 ##
-## This script does only what has to be dynamic: detect the GDExtension, instance the addon
-## camera rig (addons/godot_xreal/xreal_rig.tscn — an XrealHeadTracker with a Camera3D child),
-## reparent the head-locked nodes under the tracker, and pump the camera feed / controller IMU
-## per frame. On XREAL hardware the camera looks around with the wearer's head; on desktop the
-## rig stays at identity so the scene is still runnable.
+## This script does only the demo glue: detect the GDExtension, instance the addon camera rig
+## (addons/godot_xreal/xreal_rig.tscn — an XrealHeadTracker with a Camera3D child), map the
+## phone-menu controls to the feature components, and pump the controller IMU into the phone
+## pointer per frame. On XREAL hardware the camera looks around with the wearer's head; on
+## desktop the rig stays at identity and the features are inert, so the scene is still runnable.
 
 # The GDExtension classes (XrealHeadTracker / XrealSystem) only exist if the native
 # extension loaded. We look everything up defensively so a missing/failed extension
-# shows a diagnostic on screen instead of a blank scene — exactly the case to debug
-# the "gray screen" on device.
+# shows a diagnostic instead of a blank scene.
 const RIG_SCENE := "res://addons/godot_xreal/xreal_rig.tscn"
 
 # XrealHeadTracker key/action constants, mirrored locally so this script parses even
@@ -31,52 +33,12 @@ const XREAL_KEY_MULTI := 1
 const XREAL_KEY_MENU := 4
 const XREAL_ACTION_LONG_PRESS := 3
 
-# XrealSystem plane-detection mode flags and tracking types, mirrored locally (same reason).
-const XREAL_PLANE_NONE := 0
-const XREAL_PLANE_BOTH := 3   # horizontal | vertical
-const XREAL_TRACKING_6DOF := 0
-const XREAL_TRACKING_3DOF := 1
-
 var _tracker: Node3D
 var _system: Object
 var _extension_loaded := false
-# XREAL RGB camera as a Godot CameraFeed (see docs/plans/camera-feed-plan.md), shown on the
-# head-locked cam_panel quad via its YCbCr→RGB ShaderMaterial (both defined in ar_scene.tscn).
-var _cam_feed: Object
-var _camera_enabled := false
-# Set once the RGB capture fails to start (wedged glasses camera), so _process stops re-attempting
-# setup — a hard failure isn't retried; re-plug the glasses and relaunch to recover.
-var _cam_failed := false
-# Plane detection on/off, driven by the phone-menu "平面検出" toggle. Needs a live 6DoF session
-# (Air 2 Ultra); independent of the camera toggle. See docs/plans/ar-features-plan.md.
-var _plane_enabled := false
 # One-shot AR-feature availability diagnostic: logs which native AR ABIs resolved on this device,
 # a short delay after boot (so the session has come up). See docs/plans/ar-features-plan.md.
 var _ar_diag_frames := 0
-# Spatial-anchor manager (demo/anchor_manager.gd), driven by the phone-menu "アンカー" toggle + "配置".
-var _anchor_manager: Node3D
-# Image-tracking manager (demo/image_manager.gd), driven by the phone-menu "画像" toggle.
-var _image_manager: Node3D
-# Depth-mesh manager (demo/mesh_manager.gd), driven by the phone-menu "メッシュ" toggle.
-var _mesh_manager: Node3D
-# FPV streaming manager (demo/stream_manager.gd), driven by the phone-menu "配信" toggle.
-var _stream_manager: Node
-# Photo capture manager (demo/capture_manager.gd), driven by the phone-menu "撮影" button.
-var _capture_manager: Node
-# Frame-blend (mixed-reality) manager (demo/blend_manager.gd), driven by the phone-menu "合成撮影" button.
-var _blend_manager: Node
-# Shared AR event source (XrealAR node): polls the plane/anchor/image/mesh change streams each frame
-# and re-emits them as signals. The plane visualization here + the anchor/image/mesh managers connect
-# to it instead of calling XrealSystem.poll_* themselves (so each stream is polled exactly once). Its
-# per-stream switches are gated on the matching phone-menu toggle.
-var _xreal_ar: Object
-# Detected-plane visualization: a thin, semi-transparent box overlaid on each plane's bounds,
-# keyed by plane id. World-locked (children of Main, like the hand joints) so they sit on the real
-# surface as the head moves. On the see-through display the translucent fill reads as a tint.
-const PLANE_BOX_THICKNESS := 0.01  # metres; a slab, not a cuboid
-var _plane_boxes := {}          # plane id(String) -> MeshInstance3D
-var _plane_container: Node3D
-var _plane_mat: StandardMaterial3D
 # Phase C path B: phone IMU (via NRController state) drives the 3D pointer (_ar.phone_pointer).
 var _phone_pointer_enabled := true
 var _controller_started := false
@@ -86,11 +48,20 @@ var _cursor_mat: StandardMaterial3D
 
 @onready var _status: Label = $UI/Panel/Margin/VBox/Status
 @onready var _ar: Node3D = $ARScene
-@onready var _cam_panel: MeshInstance3D = $ARScene.cam_panel
 @onready var _cursor: MeshInstance3D = $ARScene.cursor
+# The addon feature components (instanced in main.tscn as children of Main — a world-fixed node,
+# which the world-locked features require).
+@onready var _camera: Node3D = $XrealCamera
+@onready var _planes: Node3D = $XrealPlanes
+@onready var _anchors: Node3D = $XrealAnchors
+@onready var _image_tracking: Node3D = $XrealImageTracking
+@onready var _mesh: Node3D = $XrealMesh
+@onready var _photo_capture: Node = $XrealPhotoCapture
+@onready var _blend_capture: Node = $XrealBlendCapture
+@onready var _stream: Node = $XrealStream
 
 func _ready() -> void:
-	_try_register_android_bridge()
+	XrealAndroidBridge.register()
 	# The GDExtension is Android-only. On desktop the editor loads a dummy stub that DOES register
 	# these classes (so the F1 help can document them), so class presence alone no longer means the
 	# real extension is live — gate on the platform too, or the demo would drive no-op placeholders.
@@ -101,32 +72,26 @@ func _ready() -> void:
 		# (No stereo-mode selector: the port always uses Multipass. Multiview is shelved
 		# -- docs/archive/codex-righteye-analysis.md -- reachable only via `setprop debug.xreal.force_multiview 1`.)
 		# Head-tracking mode from the project setting `xreal/tracking_type`
-		# (0 = 6DoF [recommended], 1 = 3DoF, 2 = 0DoF). Same rules as above -- read once at
-		# bootstrap; absent (-1) falls back to the `debug.xreal.tracking_type` property / default.
+		# (0 = 6DoF [recommended], 1 = 3DoF, 2 = 0DoF). Read once at bootstrap; absent (-1) falls
+		# back to the `debug.xreal.tracking_type` property / default.
 		var tracking_type := int(ProjectSettings.get_setting("xreal/tracking_type", -1))
 		if tracking_type >= 0 and _system.has_method(&"set_tracking_type"):
 			_system.set_tracking_type(tracking_type)
-		# Camera and plane detection both default OFF — enable them explicitly from the phone-menu
-		# toggles at runtime (_on_tc_camera / _on_tc_plane). The RGB camera shares the tracking camera
-		# with 6DoF SLAM, so enabling it in 6DoF breaks head tracking (NRSDK "GetPoseWithStates failed"
-		# -> identity pose); when the camera is on we force 3DoF (the DISP pose still carries full
-		# pitch/yaw/roll). Override the default with the `xreal/enable_camera` project setting.
-		_camera_enabled = bool(ProjectSettings.get_setting("xreal/enable_camera", false))
-		# The RGB camera used to force 3DoF here (6DoF SLAM was thought to fight it). On-device
-		# logcat (One Pro) disproved that: 6DoF and the RGB camera coexist with zero
-		# GetPoseWithStates failures — SLAM uses the grayscale camera, the RGB camera is separate.
-		# So we stay in the configured tracking mode (6DoF by default) with the camera on.
 	else:
 		push_error("[demo] godot_xreal GDExtension not loaded — XrealSystem/XrealHeadTracker missing. Build the Android .so (cargo ndk) and check the .gdextension paths.")
 	_spawn_rig()
-	if not _camera_enabled:
-		# No camera at boot — keep the (hidden) preview panel so the phone-menu camera toggle
-		# can still bring it up at runtime (rather than freeing it here).
-		_cam_panel.visible = false
+	# Async feature states (camera start is lazy, stream pairing is async) are reflected back onto
+	# the phone-menu toggles through the components' active_changed signals.
+	_camera.active_changed.connect(func(active: bool) -> void: _set_controller_toggle("camera", active))
+	_stream.active_changed.connect(func(active: bool) -> void: _set_controller_toggle("stream", active))
+	# The camera defaults OFF — enable at boot via the `xreal/enable_camera` project setting.
+	# (6DoF and the RGB camera coexist: on-device logcat confirmed SLAM uses the grayscale camera.)
+	if _extension_loaded and bool(ProjectSettings.get_setting("xreal/enable_camera", false)):
+		_camera.set_enabled(true)
 	if bool(ProjectSettings.get_setting("xreal/enable_touch_controller", true)):
 		_setup_touch_controller()
-		# Reflect the boot camera state on the phone-menu toggle (plane starts off).
-		_set_controller_toggle("camera", _camera_enabled)
+		# Reflect the boot camera state on the phone-menu toggle (the others start off).
+		_set_controller_toggle("camera", _camera.enabled)
 	else:
 		$PhoneScreen.queue_free()
 		_cursor.queue_free()
@@ -135,105 +100,14 @@ func _ready() -> void:
 	if not _phone_pointer_enabled:
 		_ar.phone_pointer.queue_free()
 
-func _try_register_android_bridge() -> void:
-	if not OS.has_feature("android"):
-		return
-	if not Engine.has_singleton(&"AndroidRuntime"):
-		return
-
-	var runtime := Engine.get_singleton(&"AndroidRuntime")
-	if runtime == null:
-		return
-	var activity = runtime.getActivity()
-	if activity == null:
-		return
-
-	var bridge = JavaClassWrapper.wrap("com.godot.game.XrealBridge")
-	if bridge == null:
-		return
-
-	# XrealBridge methods are idempotent; this is a Godot-side fallback for template drift.
-	var register_bridge := func() -> void:
-		bridge.register(activity)
-		bridge.startCompanionOnXrealDisplayIfNeeded(activity)
-		# Multi-resume: auto-enter Picture-in-Picture on background so the glasses keep rendering
-		# (the app stays paused-but-visible as a phone tile). See docs/plans/background-render-plan.md.
-		bridge.enableAutoEnterPiP(activity)
-
-	activity.runOnUiThread(runtime.createRunnableFromGodotCallable(register_bridge))
-
 func _spawn_rig() -> void:
 	if _extension_loaded:
 		var rig := (load(RIG_SCENE) as PackedScene).instantiate()
 		add_child(rig)
 		_tracker = rig  # the rig's root node IS the XrealHeadTracker
-		# Hand-joint visualizer (Air 2 Ultra): small spheres at the tracked hand joints. The joint poses
-		# are in world/tracking space (fixed as the head moves), so parent under Main (a fixed node) — NOT
-		# the head rig. Under the rotating rig the head rotation cancels against the eye cameras and the
-		# hand would be head-locked (stuck to the screen). Under a fixed node the rotating eye cameras see
-		# the fixed hand, so it stays world-locked on the real hand.
-		var hand_vis := Node3D.new()
-		hand_vis.name = "HandVisualizer"
-		hand_vis.set_script(load("res://demo/hand_visualizer.gd"))
-		add_child(hand_vis)
-		# Shared AR event source: one XrealAR node that polls the plane/anchor/image/mesh change streams
-		# each frame and re-emits them as signals. Created in code (not the .tscn) so the demo scene still
-		# loads without the GDExtension. Its per-stream switches start off — each toggle turns its stream on
-		# so exactly one poll happens per enabled stream.
-		if ClassDB.class_exists(&"XrealAR"):
-			_xreal_ar = ClassDB.instantiate(&"XrealAR")
-			_xreal_ar.name = "XrealAR"
-			for stream in ["planes", "anchors", "images", "mesh"]:
-				_xreal_ar.set(stream, false)
-			add_child(_xreal_ar)
-			_xreal_ar.connect(&"plane_added", _on_plane_changed)
-			_xreal_ar.connect(&"plane_updated", _on_plane_changed)
-			_xreal_ar.connect(&"plane_removed", _on_plane_removed)
-		# Spatial-anchor manager (also world-locked under Main). Drives placement (pinch / 配置 button),
-		# anchor-change visualization (via XrealAR signals), and save/restore — from the アンカー toggle.
-		_anchor_manager = Node3D.new()
-		_anchor_manager.name = "AnchorManager"
-		_anchor_manager.set_script(load("res://demo/anchor_manager.gd"))
-		add_child(_anchor_manager)
-		_anchor_manager.setup(_system, _xreal_ar)
-		# Image-tracking manager (also world-locked under Main). Loads the reference-image DB + overlays
-		# a quad on each tracked image — enabled from the phone-menu 画像 toggle.
-		_image_manager = Node3D.new()
-		_image_manager.name = "ImageManager"
-		_image_manager.set_script(load("res://demo/image_manager.gd"))
-		add_child(_image_manager)
-		_image_manager.setup(_system, _xreal_ar)
-		# Depth-mesh manager (also world-locked under Main). Enables meshing + overlays an ArrayMesh per
-		# scanned block — enabled from the phone-menu メッシュ toggle.
-		_mesh_manager = Node3D.new()
-		_mesh_manager.name = "MeshManager"
-		_mesh_manager.set_script(load("res://demo/mesh_manager.gd"))
-		add_child(_mesh_manager)
-		_mesh_manager.setup(_system, _xreal_ar)
-		# FPV streaming manager (renders a head-locked view into a SubViewport + feeds the HW encoder).
-		_stream_manager = Node.new()
-		_stream_manager.name = "StreamManager"
-		_stream_manager.set_script(load("res://demo/stream_manager.gd"))
-		add_child(_stream_manager)
-		_stream_manager.setup(_system, _tracker)
-		# Pairing/streaming is async — reflect the real state back onto the phone "Stream" toggle.
-		_stream_manager.active_changed.connect(func(active: bool) -> void: _set_controller_toggle("stream", active))
-		# Photo capture manager (reads the RGB camera feed → JPG; wired the feed in _setup_camera_feed).
-		_capture_manager = Node.new()
-		_capture_manager.name = "CaptureManager"
-		_capture_manager.set_script(load("res://demo/capture_manager.gd"))
-		add_child(_capture_manager)
-		_capture_manager.setup(_system)
-		# Frame-blend (mixed-reality) manager — composites the AR scene over the camera for a blended photo.
-		_blend_manager = Node.new()
-		_blend_manager.name = "BlendManager"
-		_blend_manager.set_script(load("res://demo/blend_manager.gd"))
-		add_child(_blend_manager)
-		_blend_manager.setup(_system, _tracker)
 		# Recenter the view to the current head direction once tracking goes live.
 		if _tracker.has_signal(&"display_started"):
 			_tracker.display_started.connect(_on_display_started)
-		# React to glasses hot-plug (connect/disconnect) at runtime.
 		# Glasses hardware inputs (One Pro: physical keys + wear sensor).
 		if _tracker.has_signal(&"key_event"):
 			_tracker.key_event.connect(_on_key_event)
@@ -243,60 +117,6 @@ func _spawn_rig() -> void:
 		var camera := Camera3D.new()
 		camera.current = true
 		add_child(camera)
-
-## Expose the XREAL glasses RGB camera as a Godot CameraFeed (docs/plans/camera-feed-plan.md), register it
-## with the CameraServer, and show it on the head-locked cam_panel quad (defined in ar_scene.tscn).
-## The feed is driven per-frame from _process (poll_frame grabs the latest frame → set_rgb_image).
-func _setup_camera_feed() -> void:
-	# Android-only + real extension present (the desktop dummy registers XrealCameraFeed for docs).
-	if OS.get_name() != "Android" or not ClassDB.class_exists(&"XrealCameraFeed"):
-		return
-	# Runtime CAMERA permission (also grant via `adb shell pm grant … android.permission.CAMERA`).
-	if OS.has_feature("android"):
-		OS.request_permission("android.permission.CAMERA")
-
-	_cam_feed = ClassDB.instantiate(&"XrealCameraFeed")
-	# Name it so it's identifiable among CameraServer.feeds() — the XREAL glasses camera is NOT an
-	# Android Camera2 device, so it only exists as this feed (Godot's built-in CameraAndroid feeds,
-	# if you enable CameraServer.monitoring_feeds, are the HOST device's cameras — routed by id/class).
-	_cam_feed.set_name("XREAL Glasses RGB")
-	CameraServer.add_feed(_cam_feed)
-	_cam_feed.set_active(true)  # -> activate_feed() starts the XREAL capture
-	if not _cam_feed.is_active():
-		# The XREAL capture didn't start. On this device that means the glasses RGB camera is wedged:
-		# an unclean prior exit (e.g. a render-thread crash) left it holding the capture, so NRSDK
-		# rejects the new connection ("Recv Frame, -99"). Re-plug the glasses to reset it. Don't show
-		# an unfed (pink) panel or spin re-attempting — disable the preview cleanly for this run.
-		push_warning("[demo] XREAL RGB camera did not start (glasses camera wedged? re-plug to reset) — preview disabled")
-		CameraServer.remove_feed(_cam_feed)
-		_cam_feed = null
-		_cam_failed = true
-		return
-
-	# The panel's shader samples the feed's Y (R8) + CbCr (RG8) ImageTextures DIRECTLY
-	# (get_y_texture / get_cbcr_texture). A CameraTexture on a script-fed feed only shows Godot's
-	# placeholder, so we bypass it — matching the XREAL SDK's YUVTransRGB sample. The textures are
-	# wired in _process once the first frame has created them; until then the panel stays hidden so
-	# the not-yet-fed shader never shows as a pink (unset-sampler) placeholder.
-	# Reparent the panel under the tracker (the head node), so it follows the gaze; rendered by the
-	# eye SubViewports (shared world). Its corner position/size are set in ar_scene.tscn.
-	if _tracker and _cam_panel.get_parent() != _tracker:
-		_cam_panel.reparent(_tracker, false)
-	# Hand the live feed to the photo-capture + frame-blend managers (they read its Y/CbCr textures), and
-	# to the stream manager so live streaming casts the camera+AR blend while the camera is on.
-	if _capture_manager:
-		_capture_manager.set_feed(_cam_feed)
-	if _blend_manager:
-		_blend_manager.set_feed(_cam_feed)
-	if _stream_manager:
-		_stream_manager.set_feed(_cam_feed)
-	# Diagnostic: read the RGB camera geometry (Unity space) newly exposed from libXREALXRPlugin — see
-	# docs/plans/coordinate-systems-notes.md. Confirms the RE'd device/camera-param APIs return real data.
-	if _system and _system.has_method(&"get_camera_intrinsics"):
-		var comp := 2  # XREALComponent.RGB_CAMERA
-		print("[cam-geom] RGB res=%s intrinsics[fx,fy,cx,cy]=%s" % [_system.get_device_resolution(comp), _system.get_camera_intrinsics(comp)])
-		print("[cam-geom] RGB pose_from_head[px,py,pz,qx,qy,qz,qw]=%s" % [_system.get_device_pose_from_head(comp)])
-		print("[cam-geom] RGB projection=%s" % [_system.get_camera_projection_matrix(comp, 0.1, 100.0)])
 
 ## Set up the runtime side of the phone touch controller ($PhoneScreen — its layout and signal
 ## wiring are static in phone_screen.tscn / main.tscn; it only renders on the phone's root
@@ -352,203 +172,68 @@ func _on_tc_menu() -> void:
 	if _phone_pointer:
 		_phone_pointer.recenter()
 
-## Phone-menu "カメラ" toggle → start/stop the XREAL RGB camera feed at runtime. Stays in the
-## current tracking mode (6DoF by default): on-device logcat confirmed 6DoF SLAM and the RGB
-## camera coexist (they use separate cameras — SLAM grayscale vs. RGB). Independent of the plane toggle.
+## Phone-menu "カメラ" toggle → the XrealCamera component. set_enabled(true) only *requests* the
+## camera (the capture starts lazily once tracking is live); an async start failure comes back
+## through active_changed(false), which is wired to the toggle in _ready. An immediate refusal
+## (device without an RGB camera) flips the toggle back here.
 func _on_tc_camera(on: bool) -> void:
 	print("[demo] camera toggle -> %s" % ("on" if on else "off"))
-	if on:
-		# Gate on the device actually having an RGB camera (IsHMDFeatureSupported). The Air 2 Ultra
-		# has none — opening it there froze the app — so refuse and flip the toggle back off.
-		if _system and _system.has_method(&"is_camera_supported") and not _system.is_camera_supported():
-			push_warning("[demo] this device has no RGB camera (e.g. Air 2 Ultra) — camera unavailable")
-			_camera_enabled = false
-			_set_controller_toggle("camera", false)
-			return
-		_cam_failed = false
-		_camera_enabled = true
-		# No 3DoF switch: 6DoF and the RGB camera coexist (verified on-device — see _ready).
-		# The lazy setup in _process creates the feed on the next tracked frame.
-	else:
-		_camera_enabled = false
-		if _cam_feed:
-			if _cam_feed.is_active():
-				_cam_feed.set_active(false)
-			CameraServer.remove_feed(_cam_feed)
-			_cam_feed = null
-		if _cam_panel:
-			_cam_panel.visible = false
-		# Camera off -> streaming falls back to the AR-only view (drop the now-invalid feed).
-		if _stream_manager:
-			_stream_manager.set_feed(null)
+	if _camera.set_enabled(on) != on:
+		_set_controller_toggle("camera", false)
 
-## Phone-menu "平面検出" toggle → enable/disable plane detection at runtime. Needs a live 6DoF
-## session, so turning it on switches tracking to 6DoF. Gated on the plane C ABI being available;
-## planes then stream in via poll_planes (which may take a moment / need a live 6DoF session).
+## Phone-menu "平面検出" toggle → the XrealPlanes component (switches tracking to 6DoF while on).
 func _on_tc_plane(on: bool) -> void:
 	print("[demo] plane toggle -> %s" % ("on" if on else "off"))
-	if not _system:
+	if _planes.set_enabled(on) != on:
 		_set_controller_toggle("plane", false)
-		return
-	if on:
-		# Gate on the ABI being resolved (not on set_plane_detection_mode's return — the SDK discards
-		# that value too, and it reads false even when the mode takes; XREALPlaneSubsystem.cs). Enable
-		# optimistically and let poll_planes surface whatever the SDK detects.
-		if _system.has_method(&"is_plane_detection_available") and not _system.is_plane_detection_available():
-			push_warning("[demo] plane detection ABI unavailable on this device — toggle disabled")
-			_set_controller_toggle("plane", false)
-			return
-		if _system.has_method(&"switch_tracking_type"):
-			_system.switch_tracking_type(XREAL_TRACKING_6DOF)
-		if _system.has_method(&"set_plane_detection_mode"):
-			_system.set_plane_detection_mode(XREAL_PLANE_BOTH)
-		_plane_enabled = true
-	else:
-		_plane_enabled = false
-		if _system.has_method(&"set_plane_detection_mode"):
-			_system.set_plane_detection_mode(XREAL_PLANE_NONE)
-		_clear_plane_boxes()
-	if _xreal_ar:
-		_xreal_ar.set(&"planes", _plane_enabled)  # only let XrealAR poll the plane stream while on
 
-## Phone-menu "アンカー" toggle → enable/disable spatial-anchor mode (demo/anchor_manager.gd).
-## Pinch or the "配置" button then drop an anchor at the hand fingertip. Unavailable without the
-## anchor ABI: the toggle flips itself back off.
+## Phone-menu "アンカー" toggle → the XrealAnchors component. Pinch or the "配置" button then drop
+## an anchor at the hand fingertip.
 func _on_tc_anchor(on: bool) -> void:
 	print("[demo] anchor toggle -> %s" % ("on" if on else "off"))
-	if _anchor_manager == null:
-		_set_controller_toggle("anchor", false)
-		return
-	var enabled: bool = _anchor_manager.set_enabled(on)
-	if on and not enabled:
-		push_warning("[demo] spatial anchors unavailable on this device — toggle disabled")
+	if _anchors.set_enabled(on) != on:
 		_set_controller_toggle("anchor", false)
 
-## Phone-menu "画像" toggle → enable/disable image tracking (demo/image_manager.gd). Loads the
-## reference-image DB blob and overlays a quad on each tracked image. Unavailable without the image
-## ABI / DB blob: the toggle flips itself back off.
+## Phone-menu "画像" toggle → the XrealImageTracking component (its manifest_path is set to the
+## demo's reference.json in main.tscn).
 func _on_tc_image(on: bool) -> void:
 	print("[demo] image toggle -> %s" % ("on" if on else "off"))
-	if _image_manager == null:
-		_set_controller_toggle("image", false)
-		return
-	var enabled: bool = _image_manager.set_enabled(on)
-	if on and not enabled:
-		push_warning("[demo] image tracking unavailable (device / DB blob) — toggle disabled")
+	if _image_tracking.set_enabled(on) != on:
 		_set_controller_toggle("image", false)
 
-## Phone-menu "メッシュ" toggle → enable/disable depth meshing (demo/mesh_manager.gd). Overlays an
-## ArrayMesh of the scanned environment. Unavailable off the Air 2 Ultra: the toggle flips back off.
+## Phone-menu "メッシュ" toggle → the XrealMesh component (Air 2 Ultra only).
 func _on_tc_mesh(on: bool) -> void:
 	print("[demo] mesh toggle -> %s" % ("on" if on else "off"))
-	if _mesh_manager == null:
-		_set_controller_toggle("mesh", false)
-		return
-	var enabled: bool = _mesh_manager.set_enabled(on)
-	if on and not enabled:
-		push_warning("[demo] depth meshing unavailable (non-Air-2-Ultra / perception down) — toggle disabled")
+	if _mesh.set_enabled(on) != on:
 		_set_controller_toggle("mesh", false)
 
-## Phone-menu "Stream" toggle → start/stop first-person-view streaming (demo/stream_manager.gd).
-## The stream pairs with XREAL's StreamingReceiver via LAN discovery (FIND-SERVER) and streams the
-## head view to it over RTP. Pairing is async, so the manager reports the resulting state back through
-## its `active_changed` signal (wired in _ready) — which flips the phone toggle to match.
+## Phone-menu "Stream" toggle → the XrealStream component. Pairing is async, so the component
+## reports the resulting state back through its active_changed signal (wired in _ready) — which
+## flips the phone toggle to match.
 func _on_tc_stream(on: bool) -> void:
 	print("[demo] stream toggle -> %s" % ("on" if on else "off"))
-	if _stream_manager == null:
-		_set_controller_toggle("stream", false)
-		return
-	_stream_manager.set_enabled(on)
+	_stream.set_enabled(on)
 
 ## Phone-menu "配置" button → place a spatial anchor at the currently-tracked hand fingertip.
 func _on_tc_place() -> void:
-	if _anchor_manager:
-		_anchor_manager.place_at_fingertip()
+	_anchors.place_at_fingertip()
 
-## Phone-menu "画像切替" button → cycle the active image-tracking set (demo/image_manager.gd).
+## Phone-menu "画像切替" button → cycle the active image-tracking set.
 func _on_tc_image_cycle() -> void:
-	if _image_manager:
-		_image_manager.cycle_set()
+	_image_tracking.cycle_set()
 
-## Phone-menu "撮影" button → capture a photo from the RGB camera (demo/capture_manager.gd, One Series).
+## Phone-menu "撮影" button → capture a photo from the RGB camera (One Series).
 func _on_tc_capture() -> void:
-	if _capture_manager:
-		_capture_manager.capture_photo()
+	_photo_capture.capture_photo()
 
-## Phone-menu "合成撮影" button → capture a blended camera+AR (mixed-reality) photo (demo/blend_manager.gd).
+## Phone-menu "合成撮影" button → capture a blended camera+AR (mixed-reality) photo.
 func _on_tc_blend() -> void:
-	if _blend_manager:
-		_blend_manager.capture_blended()
+	_blend_capture.capture_blended()
 
 ## Phone-menu "Exit" → quit. The touch controller shows a Yes/No dialog first and only emits this on Yes.
 ## A phone-menu exit for glasses without physical keys (the Air 2 Ultra has only an EC-dimming button).
 func _on_tc_exit() -> void:
 	get_tree().quit()
-
-## XrealAR signal (plane_added / plane_updated): overlay/refresh the plane's box. Logs the running
-## live-plane count (derived from _plane_boxes) on first sight of a plane, for on-device verification.
-func _on_plane_changed(plane: Dictionary) -> void:
-	if not _plane_enabled:
-		return
-	var id: String = plane.get("id", "")
-	var is_new := not _plane_boxes.has(id)
-	_update_plane_box(plane)
-	if is_new:
-		print("[demo] plane added %s (total %d)" % [id, _plane_boxes.size()])
-
-## XrealAR signal (plane_removed): drop the plane's box.
-func _on_plane_removed(id: String) -> void:
-	if not _plane_enabled:
-		return
-	_remove_plane_box(id)
-	print("[demo] plane removed %s (total %d)" % [id, _plane_boxes.size()])
-
-## Create/update the translucent box overlaying one plane's bounds. The plane's `size` is its full
-## width/height in the plane-local X/Z; `center` offsets the bounds from the pose in that same local
-## frame. Coordinate convention (local X/Z, Y-up normal) is AR-Foundation-standard but unverified on
-## device — flip here if the boxes don't sit on the real surface.
-func _update_plane_box(plane: Dictionary) -> void:
-	var id: String = plane.get("id", "")
-	if id.is_empty():
-		return
-	_ensure_plane_visual()
-	var mi: MeshInstance3D = _plane_boxes.get(id)
-	if mi == null:
-		mi = MeshInstance3D.new()
-		mi.mesh = BoxMesh.new()
-		mi.material_override = _plane_mat
-		_plane_container.add_child(mi)
-		_plane_boxes[id] = mi
-	var sz: Vector2 = plane.get("size", Vector2.ZERO)
-	(mi.mesh as BoxMesh).size = Vector3(sz.x, PLANE_BOX_THICKNESS, sz.y)
-	var center: Vector2 = plane.get("center", Vector2.ZERO)
-	var t: Transform3D = plane.get("transform", Transform3D.IDENTITY)
-	mi.transform = t.translated_local(Vector3(center.x, 0.0, center.y))
-
-func _remove_plane_box(id: String) -> void:
-	var mi: MeshInstance3D = _plane_boxes.get(id)
-	if mi:
-		mi.queue_free()
-		_plane_boxes.erase(id)
-
-func _clear_plane_boxes() -> void:
-	for id in _plane_boxes:
-		(_plane_boxes[id] as MeshInstance3D).queue_free()
-	_plane_boxes.clear()
-
-## Lazily build the world-locked container (child of Main, so the boxes stay on the real surface as
-## the head moves — same reason the hand joints parent under Main) and the shared translucent material.
-func _ensure_plane_visual() -> void:
-	if _plane_container == null:
-		_plane_container = Node3D.new()
-		_plane_container.name = "PlaneVisualizer"
-		add_child(_plane_container)
-	if _plane_mat == null:
-		_plane_mat = StandardMaterial3D.new()
-		_plane_mat.albedo_color = Color(0.25, 0.7, 1.0, 0.35)
-		_plane_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-		_plane_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-		_plane_mat.cull_mode = BaseMaterial3D.CULL_DISABLED  # visible from both faces
 
 ## Push a toggle's on/off state onto the phone-menu controller (keeps the UI in sync when the app,
 ## not the user, changes it — e.g. a failed camera start or an unsupported plane mode).
@@ -603,18 +288,6 @@ func _process(_delta: float) -> void:
 			var image: bool = _system.is_image_tracking_available() if _system.has_method(&"is_image_tracking_available") else false
 			var mesh: bool = _system.is_meshing_supported() if _system.has_method(&"is_meshing_supported") else false
 			print("[demo] AR features: camera=%s plane=%s anchor=%s image=%s mesh=%s" % [cam, plane, anchor, image, mesh])
-	# Lazily set up the camera ONLY once head tracking is live — starting the capture before the
-	# glasses/tracking are up races (and in 6DoF would fight the SLAM camera). See _setup_camera_feed.
-	if _camera_enabled and not _cam_failed and _cam_feed == null and _tracker and _tracker.has_method(&"is_tracking") \
-			and _tracker.is_tracking():
-		_setup_camera_feed()
-		if _cam_failed:
-			# Start failed (wedged glasses camera, or unsupported as on Air 2 Ultra) — reflect the
-			# phone-menu camera toggle back to off so its state matches reality.
-			_camera_enabled = false
-			_set_controller_toggle("camera", false)
-	# Plane detection is now driven by the shared XrealAR node's plane_added/updated/removed signals
-	# (see _on_plane_changed / _on_plane_removed) — no per-frame poll here.
 	# Phase C path B: phone IMU (via NRController state) drives the 3D pointer. Godot's own IMU returns
 	# all-zero on this host, so we read accel (gravity → pitch/roll) + gyro (yaw) from the controller.
 	if _phone_pointer_enabled and _tracker and _tracker.has_method(&"is_tracking") and _tracker.is_tracking() and _system:
@@ -631,28 +304,3 @@ func _process(_delta: float) -> void:
 				_imu_poll_count += 1
 				if _imu_poll_count == 90:  # ~1.5 s in: capture the current aim as "forward"
 					_phone_pointer.recenter()
-	# Pump the XREAL camera feed. The session can come up a frame or two after _ready, so keep
-	# (re)activating until it takes — the feed must be active for a frame to be produced.
-	if _cam_feed:
-		_cam_feed.poll_frame()
-		# Wire the feed's Y/CbCr ImageTextures into the panel shader once the first frame made them,
-		# then reveal the panel (kept hidden until now so a not-yet-fed shader never shows as pink).
-		# They update in place afterwards, so this only needs to happen once.
-		if _cam_panel and not _cam_panel.visible:
-			var mat: ShaderMaterial = _cam_panel.material_override
-			if mat:
-				var yt = _cam_feed.get_y_texture()
-				var ct = _cam_feed.get_cbcr_texture()
-				if yt and ct:
-					mat.set_shader_parameter(&"y_texture", yt)
-					mat.set_shader_parameter(&"cbcr_texture", ct)
-					_cam_panel.visible = true
-
-func _exit_tree() -> void:
-	# Best-effort camera release on a *graceful* shutdown (MULTI-quit, window close, scene change) so
-	# the glasses RGB camera is handed back instead of staying wedged. deactivate_feed() -> the native
-	# rgb_camera_stop. NOTE: a hard render-thread crash (SIGSEGV) can't be intercepted — Android's
-	# libsigchain swallows signal handlers on ART threads (see src/native.rs) — so after a crash the
-	# camera stays held and must be re-plugged; this only covers clean exits.
-	if _cam_feed and _cam_feed.is_active():
-		_cam_feed.set_active(false)

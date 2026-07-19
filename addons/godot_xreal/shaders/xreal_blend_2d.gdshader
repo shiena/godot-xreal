@@ -1,5 +1,6 @@
 // Frame blending (mixed-reality composite) — the Godot analog of the SDK's FrameBlender: draws the
-// rendered AR scene (with alpha) over the XREAL RGB camera YCbCr feed. Used by demo/blend_manager.gd.
+// rendered AR scene (with alpha) over the XREAL RGB camera YCbCr feed. Used by the addon's
+// blend-capture and streaming feature components (features/xreal_blend_capture.gd / xreal_stream.gd).
 shader_type canvas_item;
 
 uniform sampler2D y_texture : filter_linear;    // camera luma (R8)
