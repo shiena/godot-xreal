@@ -32,25 +32,33 @@ func _ensure_viewport() -> void:
 	_rect.material = _mat
 	_viewport.add_child(_rect)
 
-## Capture the current camera view to a JPG in the user data dir. Returns the path ("" on failure).
-func capture_photo() -> String:
+## The live camera feed's Y/CbCr textures as [yt, ct], or an empty array when the camera isn't
+## ready (off-device / unsupported device / feed off / no frame yet — each case warns).
+func _feed_textures() -> Array:
 	if _system == null:
-		return ""
+		return []
 	if _system.has_method(&"is_camera_supported") and not _system.is_camera_supported():
 		push_warning("[xreal-capture] this device has no RGB camera (One Series only)")
-		return ""
+		return []
 	var feed := XrealShared.find_camera_feed(get_tree())
 	if feed == null or not feed.has_method(&"get_y_texture"):
 		push_warning("[xreal-capture] camera feed not ready (enable the camera first)")
-		return ""
+		return []
 	var yt = feed.get_y_texture()
 	var ct = feed.get_cbcr_texture()
 	if yt == null or ct == null:
 		push_warning("[xreal-capture] no camera frame yet")
+		return []
+	return [yt, ct]
+
+## Capture the current camera view to a JPG in the user data dir. Returns the path ("" on failure).
+func capture_photo() -> String:
+	var tex := _feed_textures()
+	if tex.is_empty():
 		return ""
 	_ensure_viewport()
-	_mat.set_shader_parameter(&"y_texture", yt)
-	_mat.set_shader_parameter(&"cbcr_texture", ct)
+	_mat.set_shader_parameter(&"y_texture", tex[0])
+	_mat.set_shader_parameter(&"cbcr_texture", tex[1])
 	# Let the offscreen viewport render this frame with the textures before reading it back.
 	await RenderingServer.frame_post_draw
 	var img := _viewport.get_texture().get_image()

@@ -57,21 +57,29 @@ func _apply_rgb_geometry() -> void:
 	_rgb_offset = XrealShared.apply_rgb_camera_geometry(_system, _ar_cam)
 	_rgb_geom_done = true
 
-## Capture the blended (camera + AR) composite to a JPG. Returns the path ("" on failure).
-func capture_blended() -> String:
+## The live camera feed's Y/CbCr textures as [yt, ct], or an empty array when the camera isn't
+## ready (off-device / unsupported device / feed off / no frame yet — each case warns).
+func _feed_textures() -> Array:
 	if _system == null:
-		return ""
+		return []
 	if _system.has_method(&"is_camera_supported") and not _system.is_camera_supported():
 		push_warning("[xreal-blend] this device has no RGB camera (One Series only)")
-		return ""
+		return []
 	var feed := XrealShared.find_camera_feed(get_tree())
 	if feed == null or not feed.has_method(&"get_y_texture"):
 		push_warning("[xreal-blend] camera feed not ready (enable the camera first)")
-		return ""
+		return []
 	var yt = feed.get_y_texture()
 	var ct = feed.get_cbcr_texture()
 	if yt == null or ct == null:
 		push_warning("[xreal-blend] no camera frame yet")
+		return []
+	return [yt, ct]
+
+## Capture the blended (camera + AR) composite to a JPG. Returns the path ("" on failure).
+func capture_blended() -> String:
+	var tex := _feed_textures()
+	if tex.is_empty():
 		return ""
 	_ensure()
 	_apply_rgb_geometry()
@@ -80,8 +88,8 @@ func capture_blended() -> String:
 		# Sit the AR camera at the RGB camera's pose (head + its small forward offset), not just the
 		# head, so the holograms line up with the camera image (parallax).
 		_ar_cam.global_transform = tracker.global_transform.translated_local(_rgb_offset)
-	_comp_mat.set_shader_parameter(&"y_texture", yt)
-	_comp_mat.set_shader_parameter(&"cbcr_texture", ct)
+	_comp_mat.set_shader_parameter(&"y_texture", tex[0])
+	_comp_mat.set_shader_parameter(&"cbcr_texture", tex[1])
 	_comp_mat.set_shader_parameter(&"ar_texture", _ar_vp.get_texture())
 	# Let both viewports render this frame before reading the composite back.
 	await RenderingServer.frame_post_draw
