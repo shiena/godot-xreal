@@ -1,8 +1,10 @@
-//! [`XrealSystem`] — a small read-only handle onto the XREAL SDK for GDScript.
+//! [`XrealSystem`] — the SDK façade onto the XREAL plugin for GDScript.
 //!
-//! Instantiate it (`XrealSystem.new()`) to query device/session info. It reads from the
-//! process-global [`crate::session`] (shared with the head-tracker node) and reports
-//! `is_available() == false` on desktop/editor or when the session failed to start.
+//! Instantiate it (`XrealSystem.new()`) to query device/session info, switch the tracking
+//! mode, and drive the AR subsystems (plane detection, spatial anchors, image tracking, depth
+//! meshing), render metrics, capture and FPV streaming. It reads from the process-global
+//! [`crate::session`] (shared with the head-tracker node) and reports `is_available() == false`
+//! on desktop/editor or when the session failed to start.
 
 use godot::builtin::{VarArray, VarDictionary};
 use godot::classes::{INode, IRefCounted};

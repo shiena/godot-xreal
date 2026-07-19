@@ -6,13 +6,24 @@ extends EditorPlugin
 ## The runtime classes are provided by the `godot_xreal` GDExtension and are always
 ## available once the extension is loaded (regardless of this plugin's enabled state):
 ##
-##   - XrealHeadTracker (Node3D) — drives its rotation from the native 3DoF head pose.
+##   - XrealHeadTracker (Node3D) — drives its transform from the native 6DoF head pose
+##     (rotation + position; 3DoF/0DoF selectable via the xreal/tracking_type setting).
 ##     Parent a Camera3D under it (see addons/godot_xreal/xreal_rig.tscn).
-##   - XrealSystem (RefCounted) — read-only SDK info (availability, session, version,
-##     device type).
+##   - XrealSystem (RefCounted) — façade over the native plugin: query availability /
+##     version / tracking state, switch the tracking mode, and drive the AR subsystems,
+##     render metrics, capture and FPV streaming that the feature sub-scenes build on.
+##   - XrealAR (Node) — polls the AR change streams each frame and re-emits them as
+##     plane / spatial-anchor / tracked-image / glasses-event signals.
+##   - XrealHandTracker (Node) — publishes XREAL hand tracking to XRServer as two
+##     XRHandTrackers (Air 2 Ultra only).
+##   - XrealCameraFeed (CameraFeed) — publishes the RGB camera frames.
 ##
-## This EditorPlugin exists so the addon can be toggled from
-## Project > Project Settings > Plugins and to host future editor integration.
+## Drop-in feature sub-scenes (camera, plane detection, spatial anchors, image tracking,
+## depth mesh, hand tracking, photo/blend capture, FPV streaming) live under
+## addons/godot_xreal/features/.
+##
+## This EditorPlugin exists so the addon can be toggled from Project > Project Settings >
+## Plugins and to host the editor docks (SDK import + image-tracking DB builder).
 
 const ExportPluginScript := preload("res://addons/godot_xreal/export_plugin.gd")
 const ImageDbDockScript := preload("res://addons/godot_xreal/editor/image_db_dock.gd")

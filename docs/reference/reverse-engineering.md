@@ -13,7 +13,7 @@ the C# `[DllImport]` declarations and binary symbol tables.
 
 | Library | Role | Use from Godot |
 |---|---|---|
-| `libXREALNativeSessionManager.so` | Clean `XREAL*` perception C API (pose, device info, IMU, camera) | **Primary** — head pose for 3DoF |
+| `libXREALNativeSessionManager.so` | Clean `XREAL*` perception C API (pose, device info, IMU, camera) | **Primary** — 6DoF head pose |
 | `libXREALXRPlugin.so` | Unity XR provider **+** flat C compositor/session API (274 exports) | Session, recenter, display layers |
 | `libVulkanSupport.so` | Vulkan helper | Linked transitively by the plugin |
 | `libnr_api.so` (+ `libnr_plugin_6dof.so`) | Lower NRSDK; only `NRAPICreate`/`NRGetProcAddr` public (obfuscated proc table) | Avoid — superseded by the two above |
@@ -21,7 +21,7 @@ the C# `[DllImport]` declarations and binary symbol tables.
 `libXREALXRPlugin.so` NEEDED list is system-only (`libandroid/libc/libdl/liblog/libm`); it
 resolves the NRSDK at runtime. So we never have to touch the obfuscated `NRGetProcAddr` table.
 
-## Symbols used today (3DoF MVP)
+## Core symbols (head pose + session)
 
 From `libXREALNativeSessionManager.so` (`llvm-nm -D --defined-only`):
 
@@ -83,9 +83,9 @@ const char* GetPluginVersion(void);
 until the three pointer parameters are identified from the Unity C# side or a call-site.
 
 Unity One/One Pro reference logs initialize `trackingType=0` and later call
-`NativePerception SwitchTrackingType: 0`, which maps to `TrackingType.MODE_6DOF`. Even if Godot
-only consumes rotation for the current 3DoF milestone, this is the path that creates the native
-6DoF-lite head tracker on the tested device.
+`NativePerception SwitchTrackingType: 0`, which maps to `TrackingType.MODE_6DOF`. This is the
+path that creates the native 6DoF head tracker on the tested device (Godot consumes both its
+rotation and position).
 
 ### ⚠️ `libXREALXRPlugin.so` is a Unity native plugin (device-confirmed)
 

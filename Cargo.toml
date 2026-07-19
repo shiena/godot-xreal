@@ -5,7 +5,7 @@ edition = "2021"
 authors = ["KOGA Mitsuhiro <shiena.jp@gmail.com>"]
 license = "MIT"
 repository = "https://github.com/shiena/godot-xreal"
-description = "Godot 4 GDExtension that drives XREAL glasses (3DoF head tracking) via the XREAL native C API, ported from the Unity com.xreal.xr SDK."
+description = "Godot 4 GDExtension that drives XREAL glasses — 6DoF head tracking plus camera, plane/anchor/image tracking, depth mesh, hand tracking, photo/blend capture and FPV streaming — via the XREAL native C API, ported from the Unity com.xreal.xr SDK."
 
 [lib]
 crate-type = ["cdylib"]

@@ -1224,7 +1224,7 @@ impl NrRenderingApi {
 unsafe impl Send for XrealNative {}
 
 impl XrealNative {
-    /// `dlopen` the XREAL libraries and resolve the symbols needed for 3DoF.
+    /// `dlopen` the XREAL libraries and resolve the symbols the extension needs.
     ///
     /// Returns `Err` (without panicking) when the libraries are missing — the expected
     /// case on desktop/editor builds.
@@ -2104,7 +2104,7 @@ impl XrealNative {
         )
     }
 
-    /// Reset the 3DoF forward direction (no-op if the plugin/symbol is unavailable).
+    /// Reset the forward direction (no-op if the plugin/symbol is unavailable).
     pub fn recenter_glasses(&self) {
         if let Some(f) = self.recenter_glasses {
             unsafe { f() }

@@ -1,10 +1,10 @@
-//! [`XrealHeadTracker`] — the 3DoF MVP node.
+//! [`XrealHeadTracker`] — the head-tracking node.
 //!
 //! Add it to a scene and parent a `Camera3D` under it. At runtime on XREAL
-//! hardware it drives its own rotation from the native head pose every frame, so
-//! the camera looks around with the wearer's head and the result is presented on
-//! the (mirrored) device screen. On desktop/editor the native libraries are
-//! absent, so the node stays at identity and logs a single warning.
+//! hardware it drives its own transform from the native 6DoF head pose (rotation +
+//! position) every frame, so the camera moves and looks around with the wearer's
+//! head, and the stereo rig presents the world to the glasses. On desktop/editor the
+//! native libraries are absent, so the node stays at identity and logs a single warning.
 
 use godot::classes::sub_viewport::UpdateMode;
 use godot::classes::{Camera3D, INode3D, Node3D, RenderingServer, SubViewport};
@@ -512,7 +512,7 @@ impl XrealHeadTracker {
         self.tracking
     }
 
-    /// Re-center the 3DoF view so the current head direction becomes "forward".
+    /// Re-center the view so the current head direction becomes "forward".
     #[func]
     fn recenter(&mut self) {
         // App-side recenter: the current head direction becomes "forward" (identity). The

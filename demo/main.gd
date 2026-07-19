@@ -22,9 +22,9 @@ extends Node3D
 ## pointer per frame. On XREAL hardware the camera looks around with the wearer's head; on
 ## desktop the rig stays at identity and the features are inert, so the scene is still runnable.
 
-# The GDExtension classes (XrealHeadTracker / XrealSystem) only exist if the native
-# extension loaded. We look everything up defensively so a missing/failed extension
-# shows a diagnostic instead of a blank scene.
+# The GDExtension classes (XrealHeadTracker / XrealSystem / XrealAR / XrealHandTracker /
+# XrealCameraFeed) only exist if the native extension loaded. We look everything up defensively
+# so a missing/failed extension shows a diagnostic instead of a blank scene.
 const RIG_SCENE := "res://addons/godot_xreal/xreal_rig.tscn"
 
 # XrealHeadTracker key/action constants, mirrored locally so this script parses even

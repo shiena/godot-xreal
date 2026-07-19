@@ -255,9 +255,9 @@ impl XrealSession {
         // Color space: Unity ColorSpace.Linear == 1; stereo/input default to 0.
         //
         // XREAL One/One Pro starts perception through the 6DoF path in the Unity
-        // reference app even when the MVP only consumes head rotation. Keep this
-        // aligned with Unity's InitUserDefinedSettings log before falling back to
-        // narrower tracking modes.
+        // reference app; we follow the same path so the head-tracker gets both
+        // rotation and position. Keep this aligned with Unity's InitUserDefinedSettings
+        // log before falling back to narrower tracking modes.
         let stereo_mode = stereo_rendering_mode();
         let tracking_mode = tracking_mode();
         godot::global::godot_print!(

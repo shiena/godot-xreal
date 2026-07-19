@@ -5,11 +5,14 @@
 //! `docs/reference/reverse-engineering.md`), so instead of porting the C# we `dlopen` the
 //! libraries directly and feed the head pose into Godot.
 //!
-//! The MVP milestone is **3DoF on screen**: [`node::XrealHeadTracker`] reads the
-//! native head rotation each frame and applies it to its own transform, so a
-//! child `Camera3D` looks around with the wearer's head. The stereo
-//! compositor/display path (`InitializeRendering` / `CreateProjectionRigLayer` /
-//! `CreateFrame`) is implemented — see `node` / `unity_plugin` and `docs/plans/port-plan.md`.
+//! [`node::XrealHeadTracker`] reads the native 6DoF head pose (rotation + position)
+//! each frame and applies it to its own transform, so a child `Camera3D` moves and
+//! looks around with the wearer's head; the stereo compositor/display path
+//! (`InitializeRendering` / `CreateProjectionRigLayer` / `CreateFrame`) renders it to
+//! the glasses. On top of head tracking the extension exposes the RGB camera, plane
+//! detection, spatial anchors, image tracking, depth meshing, hand tracking, photo /
+//! blended capture and FPV streaming — see `node` / `system` / `unity_plugin` and
+//! `docs/plans/port-plan.md`.
 
 use godot::prelude::*;
 

@@ -15,7 +15,7 @@ use godot::builtin::Quaternion;
 /// The internal method is `GetHeadPoseAtTime(unsigned long, float*)`, so the output
 /// is a flat `float` array. It maps to the NRSDK `NRPose`, whose documented layout is
 /// **rotation first** (`NRRotation{x,y,z,w}`) then **position** (`NRPosition{x,y,z}`)
-/// — the opposite order from Unity's `Pose`. For the 3DoF MVP only the rotation is used.
+/// — the opposite order from Unity's `Pose`.
 #[repr(C)]
 #[derive(Clone, Copy, Default, Debug)]
 pub struct NrPose {

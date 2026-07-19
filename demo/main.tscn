@@ -70,7 +70,7 @@ layout_mode = 2
 
 [node name="Title" type="Label" parent="UI/Panel/Margin/VBox" unique_id=463082749]
 layout_mode = 2
-text = "Godot XREAL — 3DoF demo"
+text = "Godot XREAL — feature demo"
 
 [node name="Status" type="Label" parent="UI/Panel/Margin/VBox" unique_id=1163076066]
 layout_mode = 2
@@ -78,7 +78,7 @@ text = "XREAL: querying..."
 
 [node name="Recenter" type="Button" parent="UI/Panel/Margin/VBox" unique_id=772321060]
 layout_mode = 2
-text = "Recenter (3DoF)"
+text = "Recenter"
 
 [connection signal="grip_changed" from="PhoneScreen" to="." method="_on_tc_grip"]
 [connection signal="hand_selected" from="PhoneScreen" to="." method="_on_tc_hand"]

@@ -10,9 +10,10 @@
 - Rust 側の型定義は [`src/ffi.rs`](../../src/ffi.rs)、dlopen/dlsym ラッパーは
   [`src/native.rs`](../../src/native.rs)。
 - GDScript から見えるクラスは `XrealHeadTracker`（`Node3D`）、`XrealSystem`（`RefCounted`）、
-  `XrealCameraFeed`（`CameraFeed`、[`camera-feed-plan.md`](../plans/camera-feed-plan.md)）。
-  ハンドトラッキングは Godot 標準の `XRHandTracker` として `XRServer` に登録される
-  （[`hand-tracking-plan.md`](../plans/hand-tracking-plan.md)）。
+  `XrealAR`（`Node` — AR 変化ストリームをシグナル化）、`XrealHandTracker`（`Node`）、
+  `XrealCameraFeed`（`CameraFeed`、[`camera-feed-plan.md`](../plans/camera-feed-plan.md)）の 5 つ。
+  ハンドトラッキングは `XrealHandTracker` をシーンに置くと Godot 標準の `XRHandTracker` として
+  `XRServer` に登録される（[`hand-tracking-plan.md`](../plans/hand-tracking-plan.md)）。
 
 対応表の「公開先」凡例:
 - **`XrealSystem.foo()`** / **`XrealHeadTracker.foo()`** — GDScript から直接呼べる `#[func]`。

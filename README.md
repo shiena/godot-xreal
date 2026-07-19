@@ -151,7 +151,7 @@ is missing.
 ./scripts/build.sh --all      # build + export + install + run on the glasses
 ```
 
-## Usage (MVP)
+## Usage
 
 1. Install the addon — a [prebuilt release](#install-prebuilt) or [built from source](#build-from-source) — and vendor the libraries.
 2. Instance `addons/godot_xreal/xreal_rig.tscn` (an `XrealHeadTracker` with a `Camera3D`
