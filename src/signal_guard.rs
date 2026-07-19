@@ -153,6 +153,84 @@ extern "C" {
 /// If the direct BL is out of ±128 MiB range, allocate a trampoline page via mmap
 /// with a hint near lib_base so that the BL to the trampoline is in range, and the
 /// trampoline does a long-range jump (LDR x17, +8; BR x17) to the actual wrapper.
+/// MAP_FIXED_NOREPLACE (Linux 4.17+): map only if the range is free, else fail with EEXIST instead
+/// of silently relocating. Older kernels ignore the flag and relocate — the caller re-checks the
+/// returned address to stay correct there too. Defined locally in case the libc version predates it.
+#[cfg(target_os = "android")]
+const MAP_FIXED_NOREPLACE: libc::c_int = 0x10_0000;
+
+/// Find and map one executable trampoline page within AArch64 BL range (±128 MiB) of `patch_addr`,
+/// by scanning /proc/self/maps for a free gap. Returns the page address (RWX) or None if no gap in
+/// range could be claimed. Kept a bit under 128 MiB (112) so the BL displacement has margin.
+#[cfg(target_os = "android")]
+fn alloc_trampoline_near(patch_addr: usize, page_size: usize) -> Option<usize> {
+    const WINDOW: usize = 0x0700_0000; // 112 MiB
+    let lo = patch_addr.saturating_sub(WINDOW).max(page_size);
+    let hi = patch_addr.saturating_add(WINDOW);
+
+    // Parse the currently-mapped [start,end) ranges (maps is sorted by start address).
+    let maps = std::fs::read_to_string("/proc/self/maps").ok()?;
+    let mut ranges: Vec<(usize, usize)> = Vec::new();
+    for line in maps.lines() {
+        let Some((s, e)) = line.split_whitespace().next().and_then(|r| r.split_once('-')) else {
+            continue;
+        };
+        if let (Ok(s), Ok(e)) = (usize::from_str_radix(s, 16), usize::from_str_radix(e, 16)) {
+            ranges.push((s, e));
+        }
+    }
+
+    // Walk the gaps between consecutive mappings that overlap [lo, hi); try to claim each.
+    let mut cursor = lo;
+    for &(s, e) in &ranges {
+        if e <= cursor {
+            continue;
+        }
+        if s > cursor {
+            let gap_end = s.min(hi);
+            if gap_end.saturating_sub(cursor) >= page_size {
+                if let Some(p) = try_map_fixed(cursor, page_size) {
+                    return Some(p);
+                }
+            }
+        }
+        cursor = cursor.max(e);
+        if cursor >= hi {
+            return None;
+        }
+    }
+    // Trailing gap after the last mapping below hi.
+    if hi.saturating_sub(cursor) >= page_size {
+        return try_map_fixed(cursor, page_size);
+    }
+    None
+}
+
+/// mmap one RWX page at exactly `addr` (page-aligned) if free. Returns the address on success, or
+/// None if the range was taken (unmaps a relocated result on older kernels that ignore NOREPLACE).
+#[cfg(target_os = "android")]
+fn try_map_fixed(addr: usize, page_size: usize) -> Option<usize> {
+    unsafe {
+        let p = libc::mmap(
+            addr as *mut libc::c_void,
+            page_size,
+            libc::PROT_READ | libc::PROT_WRITE | libc::PROT_EXEC,
+            libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | MAP_FIXED_NOREPLACE,
+            -1,
+            0,
+        );
+        if p == libc::MAP_FAILED {
+            return None; // EEXIST (range taken) or another error — caller tries the next gap
+        }
+        if p as usize != addr {
+            // Older kernel ignored MAP_FIXED_NOREPLACE and relocated — not in our chosen gap, drop it.
+            libc::munmap(p, page_size);
+            return None;
+        }
+        Some(addr)
+    }
+}
+
 #[cfg(target_os = "android")]
 pub fn patch_handle_action_callback(lib_base: usize) {
     let patch_addr = lib_base + 0x849bc; // ldr x0,[x0,#0x60] = load NativeGlasses*
@@ -165,41 +243,42 @@ pub fn patch_handle_action_callback(lib_base: usize) {
     let bl_target: usize = if word_offset.abs() <= (1i64 << 25) {
         wrapper_addr
     } else {
-        // Out of ±128 MiB: allocate a trampoline page near lib_base.
-        let hint = ((patch_addr & !0xFF_FFFF).wrapping_sub(0x400_0000)) as *mut libc::c_void;
-        unsafe {
-            let page = libc::mmap(
-                hint,
-                page_size,
-                libc::PROT_READ | libc::PROT_WRITE | libc::PROT_EXEC,
-                libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
-                -1,
-                0,
+        // Out of ±128 MiB of the wrapper: place a trampoline page WITHIN BL range of patch_addr and
+        // long-jump from there. The old code passed a single fixed hint to mmap without MAP_FIXED, so
+        // when that address was occupied the kernel relocated the page anywhere — often back out of
+        // range, and the patch was silently skipped ("bl_target still out of range → giving up"),
+        // leaving this run without the teardown null-guard. Instead, scan /proc/self/maps for a free
+        // gap in [patch_addr ± 112 MiB] and claim it with MAP_FIXED_NOREPLACE, checking the returned
+        // address so a race just moves us to the next gap.
+        let Some(page) = alloc_trampoline_near(patch_addr, page_size) else {
+            godot::global::godot_warn!(
+                "[xreal] code_patch: no trampoline slot within BL range of {patch_addr:#018x} — \
+                 HandleActionCallback null-guard NOT installed (teardown crash unguarded this run)"
             );
-            if page == libc::MAP_FAILED {
-                godot::global::godot_print!("[xreal] code_patch: mmap trampoline failed");
-                return;
-            }
+            return;
+        };
+        unsafe {
             // LDR X17, +8  (0x58000051) then BR X17 (0xD61F0220), then 8-byte literal
             let tram = page as *mut u32;
             *tram = 0x5800_0051u32; // LDR x17, #8
             *tram.add(1) = 0xD61F_0220u32; // BR  x17
             *(tram.add(2) as *mut u64) = wrapper_addr as u64;
-            let a = page as usize;
+            let a = page;
             core::arch::asm!("dc cvau,{a}","dsb ish","ic ivau,{a}","dsb ish","isb",a=in(reg)a);
-            libc::mprotect(page, page_size, libc::PROT_READ | libc::PROT_EXEC);
-            godot::global::godot_print!(
-                "[xreal] code_patch: trampoline at {page:?} → {wrapper_addr:#018x}"
-            );
-            page as usize
+            libc::mprotect(page as *mut libc::c_void, page_size, libc::PROT_READ | libc::PROT_EXEC);
         }
+        godot::global::godot_print!(
+            "[xreal] code_patch: trampoline at {page:#018x} → {wrapper_addr:#018x}"
+        );
+        page
     };
 
     let bl_boff = bl_target as i64 - patch_addr as i64;
     let bl_woff = bl_boff >> 2;
     if bl_woff.abs() > (1i64 << 25) {
-        godot::global::godot_print!(
-            "[xreal] code_patch: bl_target still out of range ({bl_boff:#x}), giving up"
+        godot::global::godot_warn!(
+            "[xreal] code_patch: bl_target still out of range ({bl_boff:#x}), giving up — \
+             HandleActionCallback null-guard NOT installed (teardown crash unguarded this run)"
         );
         return;
     }
