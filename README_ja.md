@@ -170,6 +170,42 @@ API:
 | `is_tracking() -> bool` | 直前フレームでネイティブのポーズが適用されたか |
 | `recenter()` | 正面方向をリセット（`RecenterGlasses`） |
 
+## 機能ごとのセットアップ
+
+ほとんどの機能はサブシーンを配置するだけで動きます（`addons/godot_xreal/features/` 参照）。追加の手順が
+要るのは次の2つで、いずれも XREAL 純正ツールを使います。詳細は XREAL の[開発者ドキュメント](https://docs.xreal.com/)を参照してください。
+
+### 画像トラッキング: 参照画像データベースの作成
+
+画像トラッキングは実行時にコンパイル済みの参照画像**データベース blob**（`.bin`）を読み込みます。Unity の
+`XREALImageLibraryBuildProcessor` に相当する処理を、vendoring した `trackableImageTools` CLI（SDK パッケージの
+`Tools~/` 由来。**Windows / macOS ホストのみ**。[vendoring 手順](#事前準備-xreal-ランタイムライブラリの-vendoring)で
+`addons/godot_xreal/tools/` に配置）で自分の画像から生成します。
+
+**推奨 —「XREAL Image DB」エディタ dock**（アドオン有効化時に左パネルに表示）:
+
+1. マニフェストを選択／そのまま使用（既定 `res://demo/image_tracking/reference.json`）。1つのマニフェストに
+   1つ以上の**セット**を持て、各セットが実行時にアクティブ化・巡回される1つのトラッキング DB になります。
+2. 各参照画像について **Add image** — ファイルを選び、**実物の印刷幅（メートル）** を入力（GUID は自動生成）。
+   **1セット最大5枚**（SDK の上限）。特徴点が少ない／自己相似が高い画像は**警告ではなく拒否**され、
+   クラッシュしやすい DB が作られないようにしています。
+3. **Build blob** — ツールを実行し、マニフェストの隣に `.bin` を書き出します。
+
+ターミナルからは `pwsh scripts/build_image_db.ps1`（既定 `demo/image_tracking/reference.json`）。
+
+参照画像とビルドした `.bin` は git 管理外、マニフェスト（`reference.json`）はコミット対象です。実行時は
+`xreal_image_tracking` 機能の `manifest_path` にマニフェストを指定すると、`XrealSystem.init_image_database`
+で全セットを登録します。
+
+### FPV 配信: 受信アプリ
+
+デモの **Stream** ボタンは一人称視点 — AR シーン、RGB カメラ ON 時はカメラ + AR の合成 — を H.264/RTP で
+配信します。受信側は XREAL の **StreamingReceiver**（PC アプリ）です。XREAL の
+[First Person View](https://docs.xreal.com/Tools/First%20Person%20View) ページからダウンロードし、**同一 LAN**
+の PC で起動してください。アプリが受信側を自動検出（LAN ブロードキャスト + ハンドシェイク）して配信を開始する
+ため、アドレス入力は不要です。カメラではなく自前のレンダーターゲットを配信するので RGB カメラは不要で、
+カメラ非搭載の Air 2 Ultra でも動作します。
+
 ## 構成
 
 ```

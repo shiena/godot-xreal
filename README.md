@@ -194,6 +194,43 @@ XrealHeadTracker (Node3D)   # rotation + position driven by the native head pose
 | | `get_diagnostics() -> String` | One-line perception-pipeline diagnostic. |
 | `XrealHandTracker` (Node) | (registers trackers) | Publishes XREAL hand tracking to `XRServer` as two `XRHandTracker`s (`/user/hand_tracker/{left,right}`), updated each frame. Add it to the scene; drive a hand skeleton with `XRHandModifier3D` or read the trackers directly. **Air 2 Ultra only.** |
 
+## Feature-specific setup
+
+Most features work as soon as you drop their sub-scene in (see `addons/godot_xreal/features/`). Two
+need an extra step, both using XREAL's own tools — see XREAL's [developer documentation](https://docs.xreal.com/)
+for background.
+
+### Image tracking: build the reference database
+
+Image tracking loads a compiled reference-image **database blob** (`.bin`) at runtime. Build it from
+your own images — the Godot analog of Unity's `XREALImageLibraryBuildProcessor` — with the vendored
+`trackableImageTools` CLI (from the SDK package's `Tools~/`; **Windows / macOS host only**, placed in
+`addons/godot_xreal/tools/` by the [vendoring step](#prerequisite-vendor-the-xreal-runtime-libraries)).
+
+**Recommended — the "XREAL Image DB" editor dock** (left panel, present once the addon is enabled):
+
+1. Keep or pick a manifest (default `res://demo/image_tracking/reference.json`). Each manifest holds one
+   or more **sets**; each set compiles to one tracking database the runtime activates and cycles through.
+2. **Add image** for every reference image — choose the file and enter its **physical printed width in
+   metres** (a GUID is generated). Max **5 images per set** (the SDK cap). Images with too few features /
+   high self-similarity are **rejected** (not just warned), so a crash-prone database is never built.
+3. **Build blob** — runs the tool and writes the `.bin` next to the manifest.
+
+Or from a terminal: `pwsh scripts/build_image_db.ps1` (defaults to `demo/image_tracking/reference.json`).
+
+The reference images and the built `.bin` are git-ignored; the manifest (`reference.json`) is committed.
+At runtime, set the `xreal_image_tracking` feature's `manifest_path` to the manifest — it registers every
+set via `XrealSystem.init_image_database`.
+
+### FPV streaming: the receiver app
+
+The demo's **Stream** button streams the first-person view — the AR scene, or the camera + AR blend when
+the RGB camera is on — as H.264 over RTP. The receiver is XREAL's **StreamingReceiver** desktop app:
+download it from XREAL's [First Person View](https://docs.xreal.com/Tools/First%20Person%20View) page and
+run it on a PC on the **same LAN**. The app finds the receiver automatically (LAN broadcast + handshake)
+and starts streaming — there is no address to enter. It streams our own render target rather than the
+camera, so no RGB camera is required (it works on the camera-less Air 2 Ultra too).
+
 ## Layout
 
 ```
