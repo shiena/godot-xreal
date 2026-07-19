@@ -134,12 +134,16 @@ static WAITING_FOR_SESSION_READY_LOGGED: AtomicBool = AtomicBool::new(false);
 /// `UnityPluginLoad` populates process-global Unity interface pointers inside
 /// libXREALXRPlugin.so, so calling it once per process is enough.
 static UNITY_PLUGIN_LOAD_DONE: AtomicBool = AtomicBool::new(false);
-/// Master switch for glasses hardware-event delivery. **Off**: `SetGlassesEventCallback`'s
-/// first call runs an InputManager singleton init that clobbers the `lib_base + 0xdb400`
-/// DisplayManager frame descriptor (writes `1.0f`/`0x3f800000`), and the SDK render thread then
-/// SIGSEGVs calling `0x3f800000` on the first frame. Ordering does not help — our display path
-/// never repopulates the clobbered offsets. Flip to `true` only once that conflict is resolved
-/// (see the registration site in `try_start`); the rest of the input plumbing stays wired.
+/// Master switch for glasses hardware-event delivery: when `true`, `SetGlassesEventCallback` is
+/// registered once per process (at the site below) so key / wear-sensor / brightness / volume / EC
+/// events flow into the queue that `XrealHeadTracker::process()` drains.
+///
+/// Kept as a kill switch from an earlier crash hunt: an input build deterministically SIGSEGV'd the
+/// render thread at `0x3f800000` (a `1.0f` bit pattern called as a function pointer) on the first
+/// frame, and this callback was the initial suspect. On-device bisection cleared it — the real
+/// trigger was an unrelated `XrealSystem::get_head_rotation` `#[func]` whose body referenced
+/// `head_pose()` (since removed; see its note in `system.rs`). With that gone the callback registers
+/// cleanly and full glasses input is device-verified on the One Pro, so this stays `true`.
 const ENABLE_GLASSES_EVENT_CALLBACK: bool = true;
 /// Ensures the one-shot glasses-event registration runs at most once per process (see
 /// [`ENABLE_GLASSES_EVENT_CALLBACK`]).
@@ -233,8 +237,6 @@ impl XrealSession {
 
         // Route glasses hardware events (keys, wear sensor, brightness/volume/EC…) into the
         // process-wide queue; XrealHeadTracker::process() drains it on the main thread.
-        //
-        // Gated off (ENABLE_GLASSES_EVENT_CALLBACK) while a startup crash is investigated.
         if ENABLE_GLASSES_EVENT_CALLBACK
             && !GLASSES_EVENT_CALLBACK_REGISTERED.load(Ordering::SeqCst)
             && native.set_glasses_event_callback(crate::glasses_events::on_glasses_event)

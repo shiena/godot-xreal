@@ -11,12 +11,11 @@ extends Node3D
 ## XrealShared.find_camera_feed() — no wiring needed. One Series only: devices without an RGB
 ## camera (e.g. Air 2 Ultra) refuse set_enabled(true).
 
-## The live XrealCameraFeed after each start/stop (null on stop).
 ## Emitted when an operation fails or the feature is unavailable, so the load site can react
 ## (show UI, log, flip a toggle). Carries the same human-readable text also pushed as a warning.
 signal error(message: String)
 
-
+## The live XrealCameraFeed after each start/stop (null on stop).
 signal feed_changed(feed: Object)
 ## The actual camera state: true once the capture started, false on stop OR on an async start
 ## failure (wedged camera) — wire this to any UI toggle so it reflects reality.

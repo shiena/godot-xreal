@@ -190,7 +190,6 @@ XrealHeadTracker (Node3D)   # rotation + position driven by the native head pose
 | | `switch_tracking_type(type) -> bool` | Switch tracking mode (`TRACKING_6DOF/3DOF/0DOF/0DOF_STAB` constants). |
 | | `set_display_bypass_psensor(bypass) -> int` | Keep the display on while the glasses are not worn (SDK status). |
 | | `get_hmd_time_nanos() -> int` | Native HMD clock (ns, `0` when down). |
-| | `get_head_rotation() -> Quaternion` | Latest head rotation without a tracker node. |
 | | `get_present_fps() / get_dropped_frame_count() / get_early_frame_count() / …` | Live compositor render metrics (`NRMetrics*`). |
 | | `get_diagnostics() -> String` | One-line perception-pipeline diagnostic. |
 | `XrealHandTracker` (Node) | (registers trackers) | Publishes XREAL hand tracking to `XRServer` as two `XRHandTracker`s (`/user/hand_tracker/{left,right}`), updated each frame. Add it to the scene; drive a hand skeleton with `XRHandModifier3D` or read the trackers directly. **Air 2 Ultra only.** |

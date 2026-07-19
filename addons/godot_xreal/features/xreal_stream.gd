@@ -17,13 +17,12 @@ extends Node
 ## The head rig is discovered per frame (XrealShared.find_head_tracker); the live camera feed per
 ## frame too (find_camera_feed), so camera on/off mid-stream just switches the streamed view.
 
-## Emitted whenever streaming actually starts/stops (incl. async pairing success/failure), so a UI
-## toggle can reflect the real state.
 ## Emitted when an operation fails or the feature is unavailable, so the load site can react
 ## (show UI, log, flip a toggle). Carries the same human-readable text also pushed as a warning.
 signal error(message: String)
 
-
+## Emitted whenever streaming actually starts/stops (incl. async pairing success/failure), so a UI
+## toggle can reflect the real state.
 signal active_changed(active: bool)
 
 ## Include the microphone in the stream (captured natively by the encoder; needs RECORD_AUDIO).
