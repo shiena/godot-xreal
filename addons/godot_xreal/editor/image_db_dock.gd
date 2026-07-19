@@ -10,6 +10,18 @@ extends VBoxContainer
 ## (scripts/vendor_xreal_libs.* → addons/godot_xreal/tools/).
 
 const DEFAULT_MANIFEST := "res://demo/image_tracking/reference.json"
+## Max reference images per set (= per tracking database). The XREAL SDK caps a library at 5
+## unique reference images; adding more fails to build / can crash the runtime loader.
+const MAX_IMAGES_PER_SET := 5
+## trackableImageTools quality gate (per image: Detection / Tracking / Total, each 0-100). The
+## criterion is the SDK's own low-quality rule (Unity's XREALImageLibraryBuildProcessor uses
+## detection<20 || tracking<20 || total<50 = "insufficient feature points / high self-similarity"),
+## but where Unity only *warns*, we REJECT: the blob is deleted and the build fails, so a
+## poorly-tracking / crash-prone database is never registered. (Device-observed: a low-scoring
+## image crashed this device's Nebula image-DB loader.)
+const SCORE_MIN_DET := 20.0
+const SCORE_MIN_TRACK := 20.0
+const SCORE_MIN_TOTAL := 50.0
 
 var _manifest_edit: LineEdit
 var _set_selector: OptionButton
@@ -171,6 +183,11 @@ func _refresh_list() -> void:
 	for c in _list.get_children():
 		c.queue_free()
 	var images: Array = _cur_set(data).get("images", []) if not sets.is_empty() else []
+	if not sets.is_empty():
+		var count := Label.new()
+		count.text = "Images: %d / %d" % [images.size(), MAX_IMAGES_PER_SET]
+		count.modulate = Color(1, 0.7, 0.4) if images.size() >= MAX_IMAGES_PER_SET else Color(1, 1, 1, 0.6)
+		_list.add_child(count)
 	for i in images.size():
 		_list.add_child(_make_row(i, images[i]))
 	if images.is_empty():
@@ -308,6 +325,11 @@ func _rename_current_set() -> void:
 # --- add image -----------------------------------------------------------------------------------
 
 func _on_add_pressed() -> void:
+	# Enforce the SDK's per-library cap before picking a file.
+	var data := _load_manifest()
+	if not data["sets"].is_empty() and _cur_set(data).get("images", []).size() >= MAX_IMAGES_PER_SET:
+		_set_status("[color=orange]This set already has %d images (the SDK max). Remove one or use another set.[/color]" % MAX_IMAGES_PER_SET)
+		return
 	_file_dialog.popup_file_dialog()
 
 func _on_file_selected(res_path: String) -> void:
@@ -383,19 +405,37 @@ func _on_build_pressed() -> void:
 	var code := OS.execute(tool_path, ["--images_config_file", list_path, "--save_path", blob_abs], output, true)
 	DirAccess.remove_absolute(list_path)
 	var log := "\n".join(output)
-	var scores := ""
+	# Per-image scores: one "Detection score:D, Tracking score:T, Total Score:X" line per image
+	# (config/image order). Parse all three, like Unity's XREALImageLibraryBuildProcessor.
+	var scores: Array = []  # [{det, track, total}]
 	for line in log.split("\n"):
-		if line.contains("Total Score"):
-			scores += line.strip_edges() + "\n"
-	var ok := code == 0 and FileAccess.file_exists(ProjectSettings.localize_path(blob_abs))
-	if not ok:
-		# Fall back to checking the absolute path (blob_abs is outside res:// only if manifest is).
-		ok = code == 0 and FileAccess.file_exists(blob_abs)
-	if ok:
-		EditorInterface.get_resource_filesystem().scan()
-		_set_status("[color=green]Built: %s (set '%s' / %d image(s))[/color]\n%s" % [cur.get("blob"), cur.get("name", "?"), images.size(), scores])
-	else:
+		if line.contains("Total Score:"):
+			scores.append({
+				"det": line.get_slice("Detection score:", 1).to_float(),
+				"track": line.get_slice("Tracking score:", 1).to_float(),
+				"total": line.get_slice("Total Score:", 1).to_float(),
+			})
+	var built := code == 0 and (FileAccess.file_exists(ProjectSettings.localize_path(blob_abs)) or FileAccess.file_exists(blob_abs))
+	# Classify: reject (hard error) any image failing the SDK's low-quality rule; no warn-only tier.
+	var summary := ""
+	var any_reject := false
+	for i in scores.size():
+		var s: Dictionary = scores[i]
+		var nm := str(images[i].get("image", "?")) if i < images.size() else "?"
+		var reject: bool = s.det < SCORE_MIN_DET or s.track < SCORE_MIN_TRACK or s.total < SCORE_MIN_TOTAL
+		any_reject = any_reject or reject
+		summary += "  %s: total %.1f (det %.1f / track %.1f)%s\n" % [nm, s.total, s.det, s.track, " ✗ too low" if reject else ""]
+	var head := "Built: %s (set '%s' / %d image(s))" % [cur.get("blob"), cur.get("name", "?"), images.size()]
+	if not built:
 		_set_status("[color=red]Build failed (exit %d)[/color]\n%s" % [code, log.left(600)])
+	elif any_reject:
+		var p := ProjectSettings.localize_path(blob_abs)
+		DirAccess.remove_absolute(p if FileAccess.file_exists(p) else blob_abs)
+		EditorInterface.get_resource_filesystem().scan()
+		_set_status("[color=red]Rejected: an image is too featureless (detection<%d, tracking<%d, or total<%d) — poor tracking / crashes this device's image-DB loader. Blob deleted; replace the low-scoring image.[/color]\n%s" % [int(SCORE_MIN_DET), int(SCORE_MIN_TRACK), int(SCORE_MIN_TOTAL), summary])
+	else:
+		EditorInterface.get_resource_filesystem().scan()
+		_set_status("[color=green]%s[/color]\n%s" % [head, summary])
 
 func _set_status(bbcode: String) -> void:
 	if _status:
