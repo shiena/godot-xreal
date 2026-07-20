@@ -2,12 +2,16 @@ extends Control
 ## On-screen touch controller for the phone screen — the Godot analog of the XREAL SDK's
 ## `XREALVirtualController` prefab (a customizable phone-side controller).
 ##
-## It draws a touchpad + buttons and turns finger input into signals, with phone-vibration
-## haptics. It lives on the phone's root viewport only, so it never reaches the glasses eye
-## SubViewports — the glasses show the 3D world while the phone shows this controller.
+## Built from standard Control nodes (Button / containers), created in _ready from the
+## `_buttons` / `_toggles` / `_tabs` data tables below (the prefab-editing equivalent: edit the
+## lists to customize). Multitouch needs no custom routing: since Godot 4.7 each BaseButton
+## tracks its own touch index and the Viewport routes each touch's drags to the Control that
+## claimed it, so holding TRIGGER while dragging the touchpad just works. Only the touchpad is
+## a custom widget (the `Touchpad` class at the bottom) — there is no built-in analog-pad Control.
 ##
-## Pure GDScript / touch input — no native interop. Customize the layout by editing the
-## `_buttons` list and the rects computed in `_layout()` (the prefab-editing equivalent).
+## It lives on the phone's root viewport only, so it never reaches the glasses eye
+## SubViewports — the glasses show the 3D world while the phone shows this controller.
+## Portrait-only layout (the project locks the handheld orientation to portrait).
 
 ## Emitted when the trigger button goes down (true) / up (false).
 signal trigger_changed(pressed: bool)
@@ -44,13 +48,16 @@ signal capture_pressed()
 ## Momentary "合成撮影" button — capture a blended camera+AR (mixed-reality) photo.
 signal blend_pressed()
 ## The user confirmed "Yes" on the Exit dialog — the app should quit. (The "Exit" button first shows a
-## drawn Yes/No confirmation; this fires only on Yes.) A phone-menu exit for glasses without physical
+## Yes/No confirmation overlay; this fires only on Yes.) A phone-menu exit for glasses without physical
 ## keys (the Air 2 Ultra has only an EC-dimming button).
 signal exit_confirmed()
 
 ## Backdrop fill. Opaque by default so the phone shows only the controller (the glasses-bound
 ## 3D preview behind it is hidden); set a translucent alpha to let the 3D show through instead.
-@export var background_color := Color(0.05, 0.06, 0.09, 1.0)
+@export var background_color := Color(0.05, 0.06, 0.09, 1.0):
+	set(value):
+		background_color = value
+		queue_redraw()
 
 # Momentary buttons (name -> label). Add/remove/rename here to customize the controller.
 const _buttons := {
@@ -100,74 +107,298 @@ const _tabs := [
 # next to each other, in this order, in the tab's `items`.
 const _paired_rows := [["hand_l", "hand_r"], ["anchor", "place"], ["image", "image_cycle"]]
 
-# Layout, filled by _layout() from the current size.
-var _pad_rect: Rect2
-var _button_rects := {}        # only the active tab's items
-var _tab_rects: Array = []     # tab index -> Rect2 (the tab-bar cells)
-
-# Live state.
+var _theme: Theme
+var _controls := {}                    # button/toggle name -> its Button node
+var _pages: Array[VBoxContainer] = []  # one per tab, only the active one visible
+var _tab_buttons: Array[Button] = []   # the tab-bar radio Buttons
+var _pair_boxes: Array[HBoxContainer] = []
 var _active_tab := 0
-var _finger_widget := {}      # touch index -> widget name ("touchpad" / "tab:N" / button name)
-var _pressed := {}            # widget name -> bool (momentary press highlight)
-var _toggle_on := {}          # toggle name -> bool (persistent on/off)
-var _disabled := {}           # button/toggle name -> true (unsupported: drawn greyed, not tappable)
-var _label_override := {}     # button name -> label text (overrides the static _buttons label)
-var _pad_value := Vector2.ZERO
-# Exit confirmation: while true, a drawn Yes/No dialog covers the controller and only its two buttons
-# are tappable (see _draw / _input). Their hit-rects are recomputed each _draw.
-var _confirm_exit := false
-var _yes_rect := Rect2()
-var _no_rect := Rect2()
-
-## The button names shown on the active tab.
-func _active_items() -> Array:
-	return _tabs[_active_tab]["items"]
+# trigger/grip currently held down. Needed because hiding a pressed Button (tab switch) resets its
+# state WITHOUT emitting button_up — _show_page releases held ones explicitly so the consumer never
+# sees a stuck-held trigger.
+var _held := {}
+var _margin: MarginContainer
+var _column: VBoxContainer
+var _pad: Touchpad
+var _tab_row: HBoxContainer
+var _overlay: Control                  # modal Exit confirmation (full-rect, swallows all touches)
+var _dialog: PanelContainer
+var _yes_button: Button
+var _no_button: Button
 
 func _ready() -> void:
-	# The app renders portrait natively (project.godot display/window/handheld/orientation), so the
-	# full-rect control is already tall — `_layout` picks the portrait arrangement from the aspect.
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	# Node-level _input handles the multitouch; don't intercept GUI focus/mouse from other UI.
-	mouse_filter = Control.MOUSE_FILTER_IGNORE
-	resized.connect(_layout)
-	_layout()
+	# The root is the opaque backdrop: STOP so touches that miss every widget are consumed here.
+	# The $UI debug CanvasLayer (layer 1) is processed before this layer 0, so it is unaffected.
+	mouse_filter = Control.MOUSE_FILTER_STOP
+	_theme = _build_theme()
+	theme = _theme
+	_build_ui()
+	_build_exit_overlay()
+	resized.connect(_apply_metrics)
+	_apply_metrics()
+	_show_page(0)
 
-func _layout() -> void:
-	var s := size
-	var items := _active_items()
-	var rows := _row_count(items)
-	_button_rects.clear()
-	_tab_rects.clear()
-	if s.y > s.x:
-		# Portrait: touchpad on top, tab bar, then the active tab's buttons stacked below.
-		var pad := s.x * 0.86
-		_pad_rect = Rect2((s.x - pad) * 0.5, s.y * 0.03, pad, pad)
-		var col_x := (s.x - pad) * 0.5
-		var tab_top := _pad_rect.end.y + s.y * 0.02
-		var tab_h := s.y * 0.055
-		_layout_tab_bar(col_x, tab_top, pad, tab_h)
-		var gap := s.y * 0.016
-		var top := tab_top + tab_h + s.y * 0.02
-		var bottom := s.y * 0.98
-		# Cap the height so a tab with few buttons keeps normal-sized (top-aligned) buttons instead of
-		# one giant one filling the whole area.
-		var bh := minf((bottom - top - gap * (rows - 1)) / rows, s.y * 0.09)
-		_layout_items(items, col_x, top, pad, bh, gap)
+## Backdrop only — everything else is real Control nodes drawn by themselves.
+func _draw() -> void:
+	draw_rect(Rect2(Vector2.ZERO, size), background_color)
+
+# ---------------------------------------------------------------- UI construction ---
+
+## Build the node tree (portrait): Margin > Column [ Touchpad / tab row / one page per tab ].
+func _build_ui() -> void:
+	_margin = MarginContainer.new()
+	_margin.name = "Margin"
+	_margin.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_margin.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(_margin)
+	_column = VBoxContainer.new()
+	_column.name = "Column"
+	_column.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_margin.add_child(_column)
+
+	_pad = Touchpad.new()
+	_pad.name = "Pad"
+	_pad.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	_pad.pad_pressed.connect(_vibrate.bind(20))
+	_pad.moved.connect(touchpad_moved.emit)
+	_pad.released.connect(touchpad_released.emit)
+	_column.add_child(_pad)
+
+	# Tab bar: a row of equal-width radio Buttons (a shared ButtonGroup). TabBar is not used —
+	# it cannot stretch its tabs evenly, which the 1/3-width touch targets need.
+	_tab_row = HBoxContainer.new()
+	_tab_row.name = "TabRow"
+	_tab_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_column.add_child(_tab_row)
+	var group := ButtonGroup.new()
+	for i in _tabs.size():
+		var tab := Button.new()
+		tab.name = "Tab%d" % i
+		tab.theme_type_variation = &"TabButton"
+		tab.toggle_mode = true
+		tab.button_group = group
+		tab.action_mode = BaseButton.ACTION_MODE_BUTTON_PRESS
+		tab.focus_mode = Control.FOCUS_NONE
+		tab.text = _tabs[i]["label"]
+		tab.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		tab.toggled.connect(_on_tab_toggled.bind(i))
+		_tab_row.add_child(tab)
+		_tab_buttons.append(tab)
+	_tab_buttons[0].set_pressed_no_signal(true)
+
+	# One page (button column) per tab; `_paired_rows` pairs share one 2-column row.
+	for tab_def in _tabs:
+		var page := VBoxContainer.new()
+		page.name = "Page%s" % tab_def["label"]
+		page.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		var items: Array = tab_def["items"]
+		var i := 0
+		while i < items.size():
+			if _pair_at(items, i):
+				var row := HBoxContainer.new()
+				row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+				for pair_name in [items[i], items[i + 1]]:
+					var paired := _make_button(pair_name)
+					paired.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+					row.add_child(paired)
+				_pair_boxes.append(row)
+				page.add_child(row)
+				i += 2
+			else:
+				page.add_child(_make_button(items[i]))
+				i += 1
+		_column.add_child(page)
+		_pages.append(page)
+
+## One control Button (momentary or toggle) wired to its signal. Kept in `_controls` by name.
+func _make_button(control_name: String) -> Button:
+	var btn := Button.new()
+	btn.name = control_name
+	btn.focus_mode = Control.FOCUS_NONE
+	btn.clip_text = true
+	btn.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	btn.button_down.connect(_vibrate.bind(20))
+	_controls[control_name] = btn
+	if _toggles.has(control_name):
+		btn.theme_type_variation = &"ToggleButton"
+		btn.toggle_mode = true
+		# Flip on finger-down (the drawn version's behavior), not on release.
+		# NB: this relies on input_devices/pointing/emulate_mouse_from_touch=false (project.godot).
+		# With it on (the default), Godot 4.7.1's BaseButton processes BOTH the real touch and the
+		# synthesized mouse event for one tap, so a PRESS-mode toggle flips twice (on->off) per tap.
+		# (master fixed it with an early `device == EMULATION` return in BaseButton::gui_input.)
+		btn.action_mode = BaseButton.ACTION_MODE_BUTTON_PRESS
+		btn.toggled.connect(_on_toggled.bind(control_name))
+		_update_toggle_label(control_name)
 	else:
-		# Landscape: touchpad left; tab bar + the active tab's buttons stacked on the right.
-		var pad := minf(s.x * 0.42, s.y * 0.72)
-		_pad_rect = Rect2(s.x * 0.05, (s.y - pad) * 0.5, pad, pad)
-		var bw := s.x * 0.42
-		var bx := s.x - bw - s.x * 0.05
-		var tab_h := s.y * 0.1
-		var tab_top := s.y * 0.05
-		_layout_tab_bar(bx, tab_top, bw, tab_h)
-		var gap := s.y * 0.035
-		var top := tab_top + tab_h + s.y * 0.03
-		var bottom := s.y * 0.95
-		var bh := minf(s.y * 0.16, (bottom - top - gap * (rows - 1)) / rows)
-		_layout_items(items, bx, top, bw, bh, gap)
-	queue_redraw()
+		btn.theme_type_variation = &"MomentaryButton"
+		btn.text = _buttons[control_name]
+		btn.button_down.connect(_on_momentary_down.bind(control_name))
+		if control_name == "trigger" or control_name == "grip":
+			btn.button_up.connect(_on_hold_up.bind(control_name))
+	return btn
+
+## Modal Exit confirmation: a full-rect STOP overlay (all touches land here while visible, so the
+## controller behind it is inoperable) with a centered Yes/No panel of real Buttons.
+func _build_exit_overlay() -> void:
+	_overlay = Control.new()
+	_overlay.name = "ExitOverlay"
+	_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_overlay.mouse_filter = Control.MOUSE_FILTER_STOP
+	_overlay.visible = false
+	add_child(_overlay)
+	var dim := ColorRect.new()
+	dim.color = Color(0, 0, 0, 0.65)
+	dim.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	dim.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_overlay.add_child(dim)
+	var center := CenterContainer.new()
+	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	center.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_overlay.add_child(center)
+	_dialog = PanelContainer.new()
+	_dialog.theme_type_variation = &"DialogPanel"
+	_dialog.mouse_filter = Control.MOUSE_FILTER_STOP
+	center.add_child(_dialog)
+	var inner := MarginContainer.new()
+	inner.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_dialog.add_child(inner)
+	var vbox := VBoxContainer.new()
+	vbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	inner.add_child(vbox)
+	var label := Label.new()
+	label.text = "Exit the app?"
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	label.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	vbox.add_child(label)
+	var row := HBoxContainer.new()
+	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.alignment = BoxContainer.ALIGNMENT_CENTER
+	vbox.add_child(row)
+	_no_button = _make_dialog_button("No", &"MomentaryButton")
+	_no_button.button_down.connect(func() -> void:
+		_overlay.hide()
+		_vibrate(15))
+	row.add_child(_no_button)
+	_yes_button = _make_dialog_button("Yes", &"DangerButton")
+	_yes_button.button_down.connect(func() -> void:
+		_overlay.hide()
+		_vibrate(20)
+		exit_confirmed.emit())
+	row.add_child(_yes_button)
+
+func _make_dialog_button(text: String, variation: StringName) -> Button:
+	var btn := Button.new()
+	btn.text = text
+	btn.theme_type_variation = variation
+	btn.focus_mode = Control.FOCUS_NONE
+	btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	return btn
+
+# ---------------------------------------------------------------- theme / metrics ---
+
+func _flat(fill: Color, border: Color, border_width: int) -> StyleBoxFlat:
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = fill
+	sb.border_color = border
+	sb.set_border_width_all(border_width)
+	return sb
+
+## The controller's look (the drawn version's colors), as Button theme variations:
+## "MomentaryButton" (gray, flash while down), "ToggleButton" (gray OFF / green ON),
+## "TabButton" (dim / active blue), "DangerButton" (the red Yes) + "DialogPanel".
+func _build_theme() -> Theme:
+	var t := Theme.new()
+	var disabled_style := _flat(Color(0.15, 0.15, 0.17, 0.5), Color(1, 1, 1, 0.12), 2)
+	for variation in [&"MomentaryButton", &"ToggleButton", &"TabButton", &"DangerButton"]:
+		t.set_type_variation(variation, &"Button")
+		t.set_stylebox(&"focus", variation, StyleBoxEmpty.new())
+		t.set_stylebox(&"disabled", variation, disabled_style)
+		for color_name in [&"font_color", &"font_hover_color", &"font_pressed_color",
+				&"font_hover_pressed_color", &"font_focus_color"]:
+			t.set_color(color_name, variation, Color.WHITE)
+		t.set_color(&"font_disabled_color", variation, Color(1, 1, 1, 0.3))
+	var momentary := _flat(Color(0.5, 0.5, 0.5, 0.16), Color(1, 1, 1, 0.85), 3)
+	var momentary_down := _flat(Color(0.9, 0.9, 0.9, 0.28), Color(1, 1, 1, 0.85), 3)
+	t.set_stylebox(&"normal", &"MomentaryButton", momentary)
+	t.set_stylebox(&"hover", &"MomentaryButton", momentary)
+	t.set_stylebox(&"pressed", &"MomentaryButton", momentary_down)
+	t.set_stylebox(&"hover_pressed", &"MomentaryButton", momentary_down)
+	var toggle_off := _flat(Color(0.5, 0.5, 0.5, 0.16), Color(1, 1, 1, 0.6), 3)
+	var toggle_on := _flat(Color(0.2, 0.7, 0.4, 0.45), Color(0.5, 1.0, 0.7, 0.95), 3)
+	# hover_pressed slightly brighter: the drawn version's press flash while the finger is down.
+	var toggle_on_down := _flat(Color(0.2, 0.7, 0.4, 0.6), Color(0.5, 1.0, 0.7, 0.95), 3)
+	t.set_stylebox(&"normal", &"ToggleButton", toggle_off)
+	t.set_stylebox(&"hover", &"ToggleButton", toggle_off)
+	t.set_stylebox(&"pressed", &"ToggleButton", toggle_on)
+	t.set_stylebox(&"hover_pressed", &"ToggleButton", toggle_on_down)
+	var tab_idle := _flat(Color(0.4, 0.4, 0.45, 0.18), Color(1, 1, 1, 0.35), 3)
+	var tab_active := _flat(Color(0.3, 0.55, 0.9, 0.5), Color(0.6, 0.8, 1.0, 0.95), 3)
+	t.set_stylebox(&"normal", &"TabButton", tab_idle)
+	t.set_stylebox(&"hover", &"TabButton", tab_idle)
+	t.set_stylebox(&"pressed", &"TabButton", tab_active)
+	t.set_stylebox(&"hover_pressed", &"TabButton", tab_active)
+	t.set_color(&"font_color", &"TabButton", Color(1, 1, 1, 0.6))
+	t.set_color(&"font_hover_color", &"TabButton", Color(1, 1, 1, 0.6))
+	var danger := _flat(Color(0.7, 0.25, 0.25, 0.45), Color(1, 0.6, 0.6, 0.95), 2)
+	var danger_down := _flat(Color(0.7, 0.25, 0.25, 0.6), Color(1, 0.6, 0.6, 0.95), 2)
+	t.set_stylebox(&"normal", &"DangerButton", danger)
+	t.set_stylebox(&"hover", &"DangerButton", danger)
+	t.set_stylebox(&"pressed", &"DangerButton", danger_down)
+	t.set_stylebox(&"hover_pressed", &"DangerButton", danger_down)
+	t.set_type_variation(&"DialogPanel", &"PanelContainer")
+	t.set_stylebox(&"panel", &"DialogPanel", _flat(Color(0.1, 0.12, 0.16, 0.98), Color(0.6, 0.8, 1.0, 0.9), 3))
+	t.set_color(&"font_color", &"Label", Color.WHITE)
+	return t
+
+## All screen-proportional metrics in one place, re-applied on every resize: font sizes (via the
+## Theme, so one call restyles every Button), the square touchpad, margins/gaps, and the row
+## height clamp so the tallest tab still fits (no stretch settings — the app runs at native
+## resolution, so everything scales off the control's size like the drawn version did).
+func _apply_metrics() -> void:
+	var s := size
+	if s.x <= 0.0 or s.y <= 0.0:
+		return
+	var base := int(maxf(24.0, minf(s.x, s.y) * 0.045))
+	_theme.set_font_size(&"font_size", &"Button", base)
+	_theme.set_font_size(&"font_size", &"TabButton", int(maxf(20.0, base * 0.9)))
+	_theme.set_font_size(&"font_size", &"Label", base)
+	var pad := s.x * 0.86
+	_pad.custom_minimum_size = Vector2(pad, pad)
+	_pad.label_font_size = base
+	_margin.add_theme_constant_override(&"margin_left", int((s.x - pad) * 0.5))
+	_margin.add_theme_constant_override(&"margin_right", int((s.x - pad) * 0.5))
+	_margin.add_theme_constant_override(&"margin_top", int(s.y * 0.03))
+	_margin.add_theme_constant_override(&"margin_bottom", int(s.y * 0.02))
+	_column.add_theme_constant_override(&"separation", int(s.y * 0.02))
+	var gap := int(s.y * 0.016)
+	for page in _pages:
+		page.add_theme_constant_override(&"separation", gap)
+	for row in _pair_boxes:
+		row.add_theme_constant_override(&"separation", int(pad * 0.03))
+	var tab_h := s.y * 0.055
+	for tab in _tab_buttons:
+		tab.custom_minimum_size = Vector2(0, tab_h)
+	# Row height: fit the tallest page into the space under the tab bar, capped at 9% of the
+	# screen so a sparse tab keeps normal-sized buttons instead of giant ones (the drawn
+	# version's clamp — needed on tall 20:9 phones where 5 fixed-height rows would overflow).
+	var rows := 0
+	for tab_def in _tabs:
+		rows = maxi(rows, _row_count(tab_def["items"]))
+	var avail := s.y * 0.98 - (s.y * 0.03 + pad + s.y * 0.02 + tab_h + s.y * 0.02)
+	var bh := maxf(minf((avail - gap * (rows - 1)) / rows, s.y * 0.09), 0.0)
+	for control_name in _controls:
+		(_controls[control_name] as Button).custom_minimum_size = Vector2(0, bh)
+	var dw := s.x * 0.82
+	var dh := minf(s.y * 0.24, s.x * 0.55)
+	_dialog.custom_minimum_size = Vector2(dw, dh)
+	for btn in [_no_button, _yes_button]:
+		btn.custom_minimum_size = Vector2(dw * 0.4, dh * 0.3)
+
+# ---------------------------------------------------------------- behavior ---
 
 ## Whether items[i] and items[i+1] form a `_paired_rows` pair (so they share one 2-column row).
 func _pair_at(items: Array, i: int) -> bool:
@@ -187,113 +418,61 @@ func _row_count(items: Array) -> int:
 		rows += 1
 	return rows
 
-## Fill `_button_rects` for `items` stacked at column [x, x+w] from `top`, row height `bh`, gap `gap`.
-## A `_paired_rows` pair shares one row split into two columns (left name in the left column) so the
-## positions match their meaning (e.g. 左手/右手, or Anchor mode + Place).
-func _layout_items(items: Array, x: float, top: float, w: float, bh: float, gap: float) -> void:
-	var by := top
-	var i := 0
-	while i < items.size():
-		if _pair_at(items, i):
-			var g := w * 0.03
-			var hw := (w - g) * 0.5
-			_button_rects[items[i]] = Rect2(x, by, hw, bh)
-			_button_rects[items[i + 1]] = Rect2(x + hw + g, by, hw, bh)
-			i += 2
-		else:
-			_button_rects[items[i]] = Rect2(x, by, w, bh)
-			i += 1
-		by += bh + gap
-
-## Lay out the tab-bar cells across [x, x+w] at (y, height).
-func _layout_tab_bar(x: float, y: float, w: float, h: float) -> void:
-	var count := _tabs.size()
-	var cw := w / count
-	for i in count:
-		_tab_rects.append(Rect2(x + i * cw, y, cw, h))
-
-func _widget_at(pos: Vector2) -> String:
-	if _pad_rect.has_point(pos):
-		return "touchpad"
-	for i in _tab_rects.size():
-		if (_tab_rects[i] as Rect2).has_point(pos):
-			return "tab:%d" % i
-	for name in _button_rects:
-		if _disabled.has(name):
-			continue  # a disabled button is not tappable — treat as not there
-		if (_button_rects[name] as Rect2).has_point(pos):
-			return name
-	return ""
-
-func _input(event: InputEvent) -> void:
-	# While the Exit dialog is up it is modal: only its Yes/No buttons respond; all other touches (and
-	# drags) are swallowed so the controller behind it can't be operated.
-	if _confirm_exit:
-		if event is InputEventScreenTouch and event.pressed:
-			if _yes_rect.has_point(event.position):
-				_confirm_exit = false
-				_vibrate(20)
-				exit_confirmed.emit()
-			elif _no_rect.has_point(event.position):
-				_confirm_exit = false
-				_vibrate(15)
-			queue_redraw()
-		if event is InputEventScreenTouch or event is InputEventScreenDrag:
-			get_viewport().set_input_as_handled()
+## Tab selection changed. Driven by `toggled`, NOT `button_down`: a PRESS-mode toggle clears
+## touch_index when it flips (base_button.cpp), so the touch release no longer matches and
+## `pressed_down_with_focus` is never reset — meaning `button_down` fires only on a tab's FIRST
+## press. `toggled` fires on every selection change (it's what already moved the tab highlight),
+## so the page follows the highlight instead of sticking after the first switch.
+func _on_tab_toggled(on: bool, idx: int) -> void:
+	# The deselected tab also emits toggled(false); act only on the newly-selected one.
+	if not on or idx == _active_tab:
 		return
-	if event is InputEventScreenTouch:
-		if event.pressed:
-			var w := _widget_at(event.position)
-			if w != "":
-				_finger_widget[event.index] = w
-				_press(w, event.position)
-				get_viewport().set_input_as_handled()
-		elif _finger_widget.has(event.index):
-			_release(_finger_widget[event.index])
-			_finger_widget.erase(event.index)
-			get_viewport().set_input_as_handled()
-	elif event is InputEventScreenDrag:
-		if _finger_widget.get(event.index, "") == "touchpad":
-			_update_pad(event.position)
-			get_viewport().set_input_as_handled()
+	_vibrate(15)
+	_show_page(idx)
 
-func _press(widget: String, pos: Vector2) -> void:
-	if widget.begins_with("tab:"):
-		var idx := int(widget.substr(4))
-		if idx != _active_tab:
-			_active_tab = idx
-			_vibrate(15)
-			_layout()  # recompute the button rects for the newly-active tab
-		return
-	_pressed[widget] = true
-	_vibrate(20)
-	if _toggles.has(widget):
-		# Toggle: flip persistent state on press, fire the matching signal.
-		var on := not bool(_toggle_on.get(widget, false))
-		_toggle_on[widget] = on
-		match widget:
-			"camera":
-				camera_toggled.emit(on)
-			"plane":
-				plane_toggled.emit(on)
-			"anchor":
-				anchor_toggled.emit(on)
-			"image":
-				image_toggled.emit(on)
-			"mesh":
-				mesh_toggled.emit(on)
-			"record":
-				record_toggled.emit(on)
-			"stream":
-				stream_toggled.emit(on)
-		queue_redraw()
-		return
-	match widget:
-		"touchpad":
-			_update_pad(pos)
+## Show one tab's page (BoxContainer skips hidden children, so visibility is the whole switch).
+func _show_page(idx: int) -> void:
+	# Hiding a pressed Button resets its state without emitting button_up — release held
+	# trigger/grip explicitly first so the consumer never sees them stuck held.
+	_release_held()
+	_active_tab = idx
+	for i in _pages.size():
+		_pages[i].visible = i == idx
+
+## Synthesize the release signals for a held trigger/grip (see _show_page).
+func _release_held() -> void:
+	if _held.get("trigger", false):
+		_held["trigger"] = false
+		trigger_changed.emit(false)
+	if _held.get("grip", false):
+		_held["grip"] = false
+		grip_changed.emit(false)
+
+func _on_toggled(on: bool, control_name: String) -> void:
+	_update_toggle_label(control_name)
+	match control_name:
+		"camera":
+			camera_toggled.emit(on)
+		"plane":
+			plane_toggled.emit(on)
+		"anchor":
+			anchor_toggled.emit(on)
+		"image":
+			image_toggled.emit(on)
+		"mesh":
+			mesh_toggled.emit(on)
+		"record":
+			record_toggled.emit(on)
+		"stream":
+			stream_toggled.emit(on)
+
+func _on_momentary_down(control_name: String) -> void:
+	match control_name:
 		"trigger":
+			_held["trigger"] = true
 			trigger_changed.emit(true)
 		"grip":
+			_held["grip"] = true
 			grip_changed.emit(true)
 		"menu":
 			menu_pressed.emit()
@@ -310,163 +489,130 @@ func _press(widget: String, pos: Vector2) -> void:
 		"blend":
 			blend_pressed.emit()
 		"exit":
-			_confirm_exit = true  # show the Yes/No dialog; actual quit fires on Yes (see _input/_draw)
-	queue_redraw()
+			_overlay.show()  # actual quit fires on the overlay's Yes
 
-func _release(widget: String) -> void:
-	_pressed.erase(widget)
-	match widget:
-		"touchpad":
-			_pad_value = Vector2.ZERO
-			touchpad_released.emit()
-		"trigger":
-			trigger_changed.emit(false)
-		"grip":
-			grip_changed.emit(false)
-	queue_redraw()
+func _on_hold_up(control_name: String) -> void:
+	if not _held.get(control_name, false):
+		return  # already released synthetically (tab switch)
+	_held[control_name] = false
+	if control_name == "trigger":
+		trigger_changed.emit(false)
+	else:
+		grip_changed.emit(false)
 
-func _update_pad(pos: Vector2) -> void:
-	# Normalize to [-1, 1] within the pad, +y up (screen y is down), clamped to the circle.
-	var n := (pos - _pad_rect.position) / _pad_rect.size * 2.0 - Vector2.ONE
-	n.y = -n.y
-	if n.length() > 1.0:
-		n = n.normalized()
-	_pad_value = n
-	touchpad_moved.emit(n)
-	queue_redraw()
+## A toggle's label carries its state ("Camera: ON" / "Camera: OFF", "Camera: —" while disabled).
+func _update_toggle_label(control_name: String) -> void:
+	var btn: Button = _controls[control_name]
+	if btn.disabled:
+		btn.text = "%s: —" % _toggles[control_name]
+	else:
+		btn.text = "%s: %s" % [_toggles[control_name], "ON" if btn.button_pressed else "OFF"]
 
 func _vibrate(ms: int) -> void:
 	if OS.has_feature("android"):
 		Input.vibrate_handheld(ms)
 
-func _draw() -> void:
-	var font := get_theme_default_font()
-	var font_size := int(maxf(24.0, minf(size.x, size.y) * 0.045))
-
-	# Backdrop: opaque by default, so the phone shows only the controller and the 3D preview
-	# behind it is hidden (set a translucent background_color to let the 3D show through).
-	draw_rect(Rect2(Vector2.ZERO, size), background_color)
-
-	# Touchpad: filled panel + border, center crosshair, and the live thumb dot.
-	var pad_on := _pressed.has("touchpad")
-	draw_rect(_pad_rect, Color(0.25, 0.55, 0.9, 0.18 if pad_on else 0.10))
-	draw_rect(_pad_rect, Color(0.5, 0.75, 1.0, 0.9), false, 3.0)
-	var center := _pad_rect.position + _pad_rect.size * 0.5
-	draw_line(center - Vector2(12, 0), center + Vector2(12, 0), Color(1, 1, 1, 0.25), 2.0)
-	draw_line(center - Vector2(0, 12), center + Vector2(0, 12), Color(1, 1, 1, 0.25), 2.0)
-	var dot := center + Vector2(_pad_value.x, -_pad_value.y) * _pad_rect.size * 0.5 * 0.92
-	draw_circle(dot, _pad_rect.size.x * 0.09, Color(0.4, 0.85, 1.0, 0.95))
-	_draw_label(font, font_size, _pad_rect, "TOUCHPAD", Color(1, 1, 1, 0.5),
-		_pad_rect.position.y + _pad_rect.size.y - font_size * 1.2)
-
-	# Tab bar: the active tab is highlighted; the others read as dim.
-	var tab_font_size := int(maxf(20.0, font_size * 0.9))
-	for i in _tab_rects.size():
-		var tr: Rect2 = _tab_rects[i]
-		var active := i == _active_tab
-		draw_rect(tr, Color(0.3, 0.55, 0.9, 0.5) if active else Color(0.4, 0.4, 0.45, 0.18))
-		draw_rect(tr, Color(0.6, 0.8, 1.0, 0.95) if active else Color(1, 1, 1, 0.35), false, 3.0)
-		_draw_label(font, tab_font_size, tr, _tabs[i]["label"],
-			Color.WHITE if active else Color(1, 1, 1, 0.6),
-			tr.position.y + (tr.size.y + tab_font_size) * 0.5 - tab_font_size * 0.3)
-
-	# The active tab's buttons: momentary vs toggle drawn differently.
-	for name in _active_items():
-		var r: Rect2 = _button_rects[name]
-		if _disabled.has(name):
-			# Unsupported on this device: flat dark fill, faint border, dim label — reads as inert.
-			draw_rect(r, Color(0.15, 0.15, 0.17, 0.5))
-			draw_rect(r, Color(1, 1, 1, 0.12), false, 2.0)
-			var label := "%s: —" % _toggles[name] if _toggles.has(name) else _button_label(name)
-			_draw_label(font, font_size, r, label, Color(1, 1, 1, 0.3),
-				r.position.y + (r.size.y + font_size) * 0.5 - font_size * 0.3)
-			continue
-		if _toggles.has(name):
-			# Toggle: green while on, gray while off; a lighter flash while the finger is down.
-			var on := bool(_toggle_on.get(name, false))
-			var fill := Color(0.2, 0.7, 0.4, 0.45) if on else Color(0.5, 0.5, 0.5, 0.16)
-			if _pressed.has(name):
-				fill.a += 0.15
-			draw_rect(r, fill)
-			draw_rect(r, Color(0.5, 1.0, 0.7, 0.95) if on else Color(1, 1, 1, 0.6), false, 3.0)
-			_draw_label(font, font_size, r, "%s: %s" % [_toggles[name], "ON" if on else "OFF"],
-				Color.WHITE, r.position.y + (r.size.y + font_size) * 0.5 - font_size * 0.3)
-		else:
-			var on := _pressed.has(name)
-			draw_rect(r, Color(0.9, 0.9, 0.9, 0.28) if on else Color(0.5, 0.5, 0.5, 0.16))
-			draw_rect(r, Color(1, 1, 1, 0.85), false, 3.0)
-			_draw_label(font, font_size, r, _button_label(name), Color.WHITE,
-				r.position.y + (r.size.y + font_size) * 0.5 - font_size * 0.3)
-
-	# Modal "Exit the app?" confirmation, drawn on top of everything (its Yes/No are the only tappable
-	# widgets while up — see _input). Recompute the button hit-rects here each frame.
-	if _confirm_exit:
-		draw_rect(Rect2(Vector2.ZERO, size), Color(0, 0, 0, 0.65))  # dim the controller behind it
-		var dw := size.x * 0.82
-		var dh := minf(size.y * 0.24, size.x * 0.55)
-		var dx := (size.x - dw) * 0.5
-		var dy := (size.y - dh) * 0.5
-		var dlg := Rect2(dx, dy, dw, dh)
-		draw_rect(dlg, Color(0.1, 0.12, 0.16, 0.98))
-		draw_rect(dlg, Color(0.6, 0.8, 1.0, 0.9), false, 3.0)
-		_draw_label(font, font_size, dlg, "Exit the app?", Color.WHITE, dy + dh * 0.34)
-		var bw := dw * 0.4
-		var bh := dh * 0.3
-		var by := dy + dh - bh - dh * 0.1
-		_no_rect = Rect2(dx + dw * 0.06, by, bw, bh)
-		_yes_rect = Rect2(dx + dw - bw - dw * 0.06, by, bw, bh)
-		draw_rect(_no_rect, Color(0.4, 0.4, 0.45, 0.35))
-		draw_rect(_no_rect, Color(1, 1, 1, 0.7), false, 2.0)
-		draw_rect(_yes_rect, Color(0.7, 0.25, 0.25, 0.45))
-		draw_rect(_yes_rect, Color(1, 0.6, 0.6, 0.95), false, 2.0)
-		_draw_label(font, font_size, _no_rect, "No", Color.WHITE,
-			_no_rect.position.y + (_no_rect.size.y + font_size) * 0.5 - font_size * 0.3)
-		_draw_label(font, font_size, _yes_rect, "Yes", Color.WHITE,
-			_yes_rect.position.y + (_yes_rect.size.y + font_size) * 0.5 - font_size * 0.3)
-
-func _draw_label(font: Font, font_size: int, r: Rect2, text: String, color: Color, y: float) -> void:
-	# Trim with an ellipsis if the label is wider than the button (draw_string only aligns, it does
-	# not clip), so a long image-set name on the narrow "Cycle" button can't spill over its neighbour.
-	var t := _fit_text(font, font_size, text, r.size.x - font_size * 0.6)
-	draw_string(font, Vector2(r.position.x, y), t, HORIZONTAL_ALIGNMENT_CENTER,
-		r.size.x, font_size, color)
-
-## Shorten `text` with a trailing "…" until it fits `max_width` at `font_size` (returns it unchanged
-## when it already fits).
-func _fit_text(font: Font, font_size: int, text: String, max_width: float) -> String:
-	if font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x <= max_width:
-		return text
-	var t := text
-	while t.length() > 1 and font.get_string_size(t + "…", HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x > max_width:
-		t = t.substr(0, t.length() - 1)
-	return t.strip_edges() + "…"
+# ---------------------------------------------------------------- public API ---
 
 ## Programmatically set a toggle's on/off state without emitting its signal — keeps the UI in
 ## sync when the app changes it (e.g. reflecting a camera start that failed, or a plane mode the
 ## device rejected). No-op for unknown names.
 func set_toggle(name: String, on: bool) -> void:
 	if _toggles.has(name):
-		_toggle_on[name] = on
-		queue_redraw()
+		(_controls[name] as Button).set_pressed_no_signal(on)
+		_update_toggle_label(name)
 
-## The displayed label for a momentary button: a runtime override if set, else the static one.
-func _button_label(name: String) -> String:
-	return str(_label_override.get(name, _buttons.get(name, name)))
+## Enable/disable a button or toggle by name. A disabled Button is drawn greyed and inert (taps do
+## nothing) — used to reflect a capability the device lacks (no RGB camera, no plane detection, …).
+func set_disabled(name: String, disabled: bool) -> void:
+	if not _controls.has(name):
+		return
+	(_controls[name] as Button).disabled = disabled
+	if _toggles.has(name):
+		_update_toggle_label(name)
 
 ## Override a momentary button's label (e.g. show the active image set on the "Cycle Image" button).
 ## Pass "" to clear the override and restore the static label.
 func set_button_label(name: String, text: String) -> void:
-	if text.is_empty():
-		_label_override.erase(name)
-	else:
-		_label_override[name] = text
-	queue_redraw()
+	if _buttons.has(name) and _controls.has(name):
+		(_controls[name] as Button).text = _buttons[name] if text.is_empty() else text
 
-## Enable/disable a button or toggle by name. A disabled control is drawn greyed and inert (taps do
-## nothing) — used to reflect a capability the device lacks (no RGB camera, no plane detection, …).
-func set_disabled(name: String, disabled: bool) -> void:
-	if disabled:
-		_disabled[name] = true
-	else:
-		_disabled.erase(name)
-	queue_redraw()
+# ---------------------------------------------------------------- touchpad widget ---
+
+## The analog touchpad — the one widget with no built-in Control equivalent. Claims one touch on
+## press and follows that finger's drags (the Viewport keeps routing them here even outside the
+## rect), emitting the normalized [-1, 1] position (+y up, clamped to the circle). One finger
+## only: while claimed, other touches are ignored. Also handles a real mouse for desktop test
+## runs (touch-emulated mouse events are ignored to avoid double handling on device).
+class Touchpad extends Control:
+	## The claiming touch went down (haptics hook).
+	signal pad_pressed()
+	## Normalized pad position while the finger drags.
+	signal moved(value: Vector2)
+	## The claiming touch lifted; the value snapped back to zero.
+	signal released()
+
+	## Caption font size, driven by the owner's _apply_metrics.
+	var label_font_size := 24:
+		set(value):
+			label_font_size = value
+			queue_redraw()
+	var _touch := -1               # claiming touch index (-1 none, -2 mouse)
+	var _value := Vector2.ZERO
+
+	func _gui_input(event: InputEvent) -> void:
+		if event is InputEventScreenTouch:
+			if event.pressed and _touch == -1:
+				_touch = event.index
+				pad_pressed.emit()
+				_update_value(event.position)
+				accept_event()
+			elif not event.pressed and event.index == _touch:
+				_release_value()
+				accept_event()
+		elif event is InputEventScreenDrag:
+			if event.index == _touch:
+				_update_value(event.position)
+				accept_event()
+		elif event is InputEventMouseButton and event.device != InputEvent.DEVICE_ID_EMULATION:
+			if event.button_index != MOUSE_BUTTON_LEFT:
+				return
+			if event.pressed and _touch == -1:
+				_touch = -2
+				pad_pressed.emit()
+				_update_value(event.position)
+				accept_event()
+			elif not event.pressed and _touch == -2:
+				_release_value()
+				accept_event()
+		elif event is InputEventMouseMotion and event.device != InputEvent.DEVICE_ID_EMULATION:
+			if _touch == -2:
+				_update_value(event.position)
+				accept_event()
+
+	func _update_value(pos: Vector2) -> void:
+		var n := pos / size * 2.0 - Vector2.ONE
+		n.y = -n.y
+		if n.length() > 1.0:
+			n = n.normalized()
+		_value = n
+		moved.emit(n)
+		queue_redraw()
+
+	func _release_value() -> void:
+		_touch = -1
+		_value = Vector2.ZERO
+		released.emit()
+		queue_redraw()
+
+	func _draw() -> void:
+		var active := _touch != -1
+		draw_rect(Rect2(Vector2.ZERO, size), Color(0.25, 0.55, 0.9, 0.18 if active else 0.10))
+		draw_rect(Rect2(Vector2.ZERO, size), Color(0.5, 0.75, 1.0, 0.9), false, 3.0)
+		var center := size * 0.5
+		draw_line(center - Vector2(12, 0), center + Vector2(12, 0), Color(1, 1, 1, 0.25), 2.0)
+		draw_line(center - Vector2(0, 12), center + Vector2(0, 12), Color(1, 1, 1, 0.25), 2.0)
+		var dot := center + Vector2(_value.x, -_value.y) * size * 0.5 * 0.92
+		draw_circle(dot, size.x * 0.09, Color(0.4, 0.85, 1.0, 0.95))
+		draw_string(get_theme_default_font(), Vector2(0, size.y - label_font_size * 1.2),
+			"TOUCHPAD", HORIZONTAL_ALIGNMENT_CENTER, size.x, label_font_size, Color(1, 1, 1, 0.5))
