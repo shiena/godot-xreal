@@ -12,6 +12,7 @@
 [ext_resource type="PackedScene" uid="uid://xrphotoscn001" path="res://addons/godot_xreal/features/xreal_photo_capture.tscn" id="10_photo"]
 [ext_resource type="PackedScene" uid="uid://xrblendscn001" path="res://addons/godot_xreal/features/xreal_blend_capture.tscn" id="11_blend"]
 [ext_resource type="PackedScene" uid="uid://xrstreamscn01" path="res://addons/godot_xreal/features/xreal_stream.tscn" id="12_stream"]
+[ext_resource type="PackedScene" uid="uid://xrvidrecscn01" path="res://addons/godot_xreal/features/xreal_video_recorder.tscn" id="14_recorder"]
 [ext_resource type="Shader" uid="uid://xrimgmarker01" path="res://demo/xreal_image_marker.gdshader" id="13_marker"]
 
 ; Front/back-coloured tracked-image marker (green front / red back via FRONT_FACING) so the
@@ -48,6 +49,8 @@ marker_material = SubResource("ShaderMaterial_marker")
 [node name="XrealBlendCapture" parent="." instance=ExtResource("11_blend")]
 
 [node name="XrealStream" parent="." instance=ExtResource("12_stream")]
+
+[node name="XrealVideoRecorder" parent="." instance=ExtResource("14_recorder")]
 
 [node name="UI" type="CanvasLayer" parent="." unique_id=1039389148]
 
@@ -91,6 +94,7 @@ text = "Recenter"
 [connection signal="anchor_toggled" from="PhoneScreen" to="." method="_on_tc_anchor"]
 [connection signal="image_toggled" from="PhoneScreen" to="." method="_on_tc_image"]
 [connection signal="mesh_toggled" from="PhoneScreen" to="." method="_on_tc_mesh"]
+[connection signal="record_toggled" from="PhoneScreen" to="." method="_on_tc_record"]
 [connection signal="stream_toggled" from="PhoneScreen" to="." method="_on_tc_stream"]
 [connection signal="place_pressed" from="PhoneScreen" to="." method="_on_tc_place"]
 [connection signal="image_cycle_pressed" from="PhoneScreen" to="." method="_on_tc_image_cycle"]

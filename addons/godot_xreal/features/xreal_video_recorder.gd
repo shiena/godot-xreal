@@ -68,7 +68,10 @@ func set_enabled(on: bool) -> void:
 		active_changed.emit(false)
 		return
 	_ensure_viewport()
-	_path = OS.get_user_data_dir().path_join("record_%d.mp4" % Time.get_ticks_msec())
+	# Local date-time in the name (record_YYYYMMDD_HHMMSS.mp4) so the file reads naturally in the
+	# gallery ("2026-07-20T14:25:30" -> "20260720_142530").
+	var stamp := Time.get_datetime_string_from_system().replace("-", "").replace(":", "").replace("T", "_")
+	_path = OS.get_user_data_dir().path_join("record_%s.mp4" % stamp)
 	# A local file path (no rtp:// / rtmp:// scheme) makes the encoder write an mp4. No audio.
 	if not _system.stream_start(_path, record_width, record_height, record_bitrate, record_fps, false, false, false):
 		_fail("[xreal-record] recorder start failed")

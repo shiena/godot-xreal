@@ -31,6 +31,8 @@ signal anchor_toggled(on: bool)
 signal image_toggled(on: bool)
 ## Depth-mesh mode toggle flipped (true = on).
 signal mesh_toggled(on: bool)
+## FPV mp4-recording toggle flipped (true = on). Camera ON records the camera+AR blend; OFF the AR view.
+signal record_toggled(on: bool)
 ## First-person-view streaming toggle flipped (true = on).
 signal stream_toggled(on: bool)
 ## Momentary "配置" button — place a spatial anchor at the hand fingertip now.
@@ -73,6 +75,7 @@ const _toggles := {
 	"anchor": "Anchor",
 	"image": "Image",
 	"mesh": "Mesh",
+	"record": "Record",
 	"stream": "Stream",
 }
 
@@ -82,12 +85,12 @@ const _toggles := {
 #   Control — the virtual controller (3DoF): ALL glasses (One Series / Air·Air 2·Air 2 Pro / Air 2 Ultra).
 #   Camera  — the RGB camera: XREAL One Series only (Air/Air 2/Air 2 Pro and Air 2 Ultra have no RGB cam).
 #   AR      — perception (plane / spatial anchor / image tracking / depth mesh): Air 2 Ultra only.
-# Streaming (FPV) lives in the Camera tab because it can cast the camera+AR blend when the camera is on,
-# but it does NOT require the camera: it streams our own SubViewport (the AR-only view with no camera),
-# so it works on the camera-less Air 2 Ultra too (see stream_manager.gd).
+# Streaming (FPV) and Record (mp4 -> gallery) live in the Camera tab because they cast/record the
+# camera+AR blend when the camera is on, but they do NOT require the camera: they feed on our own
+# SubViewport (the AR-only view with no camera), so they work on the camera-less Air 2 Ultra too.
 const _tabs := [
 	{"label": "Control", "items": ["trigger", "grip", "menu", "hand_l", "hand_r", "exit"]},
-	{"label": "Camera", "items": ["capture", "blend", "camera", "stream"]},
+	{"label": "Camera", "items": ["capture", "blend", "camera", "record", "stream"]},
 	{"label": "AR", "items": ["plane", "anchor", "place", "image", "image_cycle", "mesh"]},
 ]
 
@@ -279,6 +282,8 @@ func _press(widget: String, pos: Vector2) -> void:
 				image_toggled.emit(on)
 			"mesh":
 				mesh_toggled.emit(on)
+			"record":
+				record_toggled.emit(on)
 			"stream":
 				stream_toggled.emit(on)
 		queue_redraw()

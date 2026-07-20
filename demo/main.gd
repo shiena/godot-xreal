@@ -27,6 +27,11 @@ extends Node3D
 # so a missing/failed extension shows a diagnostic instead of a blank scene.
 const RIG_SCENE := "res://addons/godot_xreal/xreal_rig.tscn"
 
+# Demo-side gallery saver (pure GDScript MediaStore via JavaClassWrapper): the capture components
+# return the saved JPG's path; the demo forwards it into the phone gallery. Kept out of the addon
+# on purpose — whether an app publishes captures to the shared gallery is the app's decision.
+const GalleryHelper := preload("res://demo/gallery_helper.gd")
+
 # XrealHeadTracker key/action constants, mirrored locally so this script parses even
 # when the GDExtension is absent (desktop editor).
 const XREAL_KEY_MULTI := 1
@@ -71,6 +76,7 @@ var _no_glasses := false
 @onready var _photo_capture: Node = $XrealPhotoCapture
 @onready var _blend_capture: Node = $XrealBlendCapture
 @onready var _stream: Node = $XrealStream
+@onready var _recorder: Node = $XrealVideoRecorder
 
 func _ready() -> void:
 	XrealAndroidBridge.register()
@@ -98,10 +104,13 @@ func _ready() -> void:
 	# the phone-menu toggles through the components' active_changed signals.
 	_camera.active_changed.connect(func(active: bool) -> void: _set_controller_toggle("camera", active))
 	_stream.active_changed.connect(func(active: bool) -> void: _set_controller_toggle("stream", active))
+	_recorder.active_changed.connect(func(active: bool) -> void: _set_controller_toggle("record", active))
+	# A finished recording (the finalized mp4's path) goes into the phone gallery, like the photos.
+	_recorder.finished.connect(func(path: String) -> void: GalleryHelper.save_video(path))
 	# Surface each feature component's `error` signal at the load site (here: the debug Status label
 	# + logcat). A real app might disable a control or show a toast; the point is the failure is
 	# detectable, not just a buried warning.
-	for feature in [_camera, _planes, _anchors, _image_tracking, _mesh, _photo_capture, _blend_capture, _stream]:
+	for feature in [_camera, _planes, _anchors, _image_tracking, _mesh, _photo_capture, _blend_capture, _stream, _recorder]:
 		if feature and feature.has_signal(&"error"):
 			feature.error.connect(_on_feature_error)
 	# Label the "Cycle Image" button with the active image-tracking set as it changes.
@@ -219,9 +228,17 @@ func _on_tc_mesh(on: bool) -> void:
 	if _mesh.set_enabled(on) != on:
 		_set_controller_toggle("mesh", false)
 
+## Phone-menu "Record" toggle → the XrealVideoRecorder component (camera ON records the camera+AR
+## blend, OFF the AR view alone). The resulting state comes back through active_changed (a start is
+## refused while streaming — one shared HW encoder), and a stop delivers the finished mp4 through
+## `finished`, which _ready wires into the phone gallery.
+func _on_tc_record(on: bool) -> void:
+	print("[demo] record toggle -> %s" % ("on" if on else "off"))
+	_recorder.set_enabled(on)
+
 ## Phone-menu "Stream" toggle → the XrealStream component. Pairing is async, so the component
 ## reports the resulting state back through its active_changed signal (wired in _ready) — which
-## flips the phone toggle to match.
+## flips the phone toggle to match (incl. a start refused while recording — one shared HW encoder).
 func _on_tc_stream(on: bool) -> void:
 	print("[demo] stream toggle -> %s" % ("on" if on else "off"))
 	_stream.set_enabled(on)
@@ -234,13 +251,19 @@ func _on_tc_place() -> void:
 func _on_tc_image_cycle() -> void:
 	_image_tracking.cycle_set()
 
-## Phone-menu "撮影" button → capture a photo from the RGB camera (One Series).
+## Phone-menu "撮影" button → capture a photo from the RGB camera (One Series), then put it in
+## the phone gallery so it can be viewed (and deleted) right on the phone, no adb needed.
 func _on_tc_capture() -> void:
-	_photo_capture.capture_photo()
+	var path: String = await _photo_capture.capture_photo()
+	if path != "":
+		GalleryHelper.save_image(path)
 
-## Phone-menu "合成撮影" button → capture a blended camera+AR (mixed-reality) photo.
+## Phone-menu "合成撮影" button → capture a blended camera+AR (mixed-reality) photo, into the
+## phone gallery like the plain photo.
 func _on_tc_blend() -> void:
-	_blend_capture.capture_blended()
+	var path: String = await _blend_capture.capture_blended()
+	if path != "":
+		GalleryHelper.save_image(path)
 
 ## Phone-menu "Exit" → quit. The touch controller shows a Yes/No dialog first and only emits this on Yes.
 ## A phone-menu exit for glasses without physical keys (the Air 2 Ultra has only an EC-dimming button).
@@ -309,7 +332,8 @@ func _set_controller_toggle(name: String, on: bool) -> void:
 ## Grey out (make inert) the phone-menu controls whose capability the device lacks, once the session
 ## is up and the capabilities are known. Each control maps to a native capability query: camera / plane
 ## / anchor / image / mesh. Camera-dependent capture buttons (Photo / Blend Photo) follow the camera.
-## Streaming is always available (it casts the AR view even without a camera), so it is never disabled.
+## Streaming and recording are always available (they cast/record the AR view even without a
+## camera), so they are never disabled.
 func _apply_capabilities(cam: bool, plane: bool, anchor: bool, image: bool, mesh: bool) -> void:
 	var ps := get_node_or_null(^"PhoneScreen")
 	if ps == null or not ps.has_method(&"set_disabled"):

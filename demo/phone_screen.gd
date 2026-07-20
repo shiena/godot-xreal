@@ -27,6 +27,8 @@ signal anchor_toggled(on: bool)
 signal image_toggled(on: bool)
 ## Depth-mesh mode toggle flipped (true = on).
 signal mesh_toggled(on: bool)
+## FPV mp4-recording toggle flipped (true = on).
+signal record_toggled(on: bool)
 ## First-person-view streaming toggle flipped (true = on).
 signal stream_toggled(on: bool)
 ## Momentary "配置" button — place a spatial anchor at the hand fingertip.
@@ -53,6 +55,7 @@ func _ready() -> void:
 	c.anchor_toggled.connect(anchor_toggled.emit)
 	c.image_toggled.connect(image_toggled.emit)
 	c.mesh_toggled.connect(mesh_toggled.emit)
+	c.record_toggled.connect(record_toggled.emit)
 	c.stream_toggled.connect(stream_toggled.emit)
 	c.place_pressed.connect(place_pressed.emit)
 	c.image_cycle_pressed.connect(image_cycle_pressed.emit)

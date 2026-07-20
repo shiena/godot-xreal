@@ -103,7 +103,10 @@ func capture_blended() -> String:
 		_fail("[xreal-blend] readback failed")
 		return ""
 	img.flip_y()  # SubViewport read-back is bottom-up (GL origin) — flip to upright before saving
-	var path := OS.get_user_data_dir().path_join("blend_%d.jpg" % Time.get_ticks_msec())
+	# Local date-time in the name (blend_YYYYMMDD_HHMMSS.jpg) so the file reads naturally in the
+	# gallery ("2026-07-20T14:25:30" -> "20260720_142530").
+	var stamp := Time.get_datetime_string_from_system().replace("-", "").replace(":", "").replace("T", "_")
+	var path := OS.get_user_data_dir().path_join("blend_%s.jpg" % stamp)
 	var err := img.save_jpg(path)
 	if err != OK:
 		_fail("[xreal-blend] save_jpg failed (err %d)" % err)
