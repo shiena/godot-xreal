@@ -33,6 +33,9 @@ jobs:
       - name: Check formatting
         id: fmt
         run: |
+          # The default Actions shell is `bash -e` WITHOUT pipefail, so `cmd | tee`'s status is
+          # tee's (always 0) and a fmt diff could never flip has_diff — enable pipefail explicitly.
+          set -o pipefail
           if ! cargo fmt --check 2>&1 | tee fmt_output.txt; then
             echo "has_diff=true" >> $GITHUB_OUTPUT
           else
@@ -42,6 +45,7 @@ jobs:
       - name: Run clippy
         id: clippy
         run: |
+          set -o pipefail  # same tee-masks-the-exit-code trap as the fmt step above
           if ! cargo clippy --all-targets --all-features -- -D warnings 2>&1 | tee clippy_output.txt; then
             echo "has_errors=true" >> $GITHUB_OUTPUT
           else
