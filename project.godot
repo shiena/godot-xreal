@@ -27,6 +27,10 @@ window/handheld/orientation=1
 
 enabled=PackedStringArray("res://addons/godot_xreal/plugin.cfg")
 
+[input_devices]
+
+pointing/emulate_mouse_from_touch=false
+
 [rendering]
 
 renderer/rendering_method="gl_compatibility"
