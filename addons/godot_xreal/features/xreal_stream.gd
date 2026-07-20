@@ -93,6 +93,12 @@ func set_enabled(on: bool) -> void:
 	if not _system or not _system.has_method(&"stream_start") or _pairing == null:
 		active_changed.emit(false)
 		return
+	# One process-global HW encoder, shared with xreal_video_recorder: stream_start while it runs
+	# would not open a second encoder but feed our frames into the running recording.
+	if _system.has_method(&"is_stream_active") and _system.is_stream_active():
+		_fail("[xreal-stream] HW encoder busy (recording?) — stop it first")
+		active_changed.emit(false)
+		return
 	# NB: no RGB-camera gate here. We render our own head-POV AR into a SubViewport and hand that GL
 	# texture to the (device-agnostic) libmedia_codec encoder — the camera is never touched unless
 	# it happens to be on, in which case we opportunistically stream the camera+AR blend (_use_blend).
@@ -116,6 +122,12 @@ func set_enabled(on: bool) -> void:
 ## Pairing succeeded — stream to the receiver right away (it idles out if RTP doesn't follow the
 ## handshake).
 func _on_paired(server_ip: String) -> void:
+	# Pairing is async — a recording may have grabbed the process-global encoder meanwhile.
+	if _system.has_method(&"is_stream_active") and _system.is_stream_active():
+		_fail("[xreal-stream] HW encoder became busy during pairing (recording?) — not streaming")
+		_pairing.stop()
+		active_changed.emit(false)
+		return
 	var url := "rtp://%s:%d" % [server_ip, RTP_PORT]
 	_ensure_viewport()
 	_apply_fov()  # in case the receiver's UpdateCameraParam arrived before the viewport existed

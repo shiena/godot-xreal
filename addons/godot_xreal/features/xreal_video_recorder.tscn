@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3 uid="uid://xrvidrecscn01"]
+
+[ext_resource type="Script" uid="uid://xrvidrecgd001" path="res://addons/godot_xreal/features/xreal_video_recorder.gd" id="1_script"]
+
+[node name="XrealVideoRecorder" type="Node"]
+script = ExtResource("1_script")

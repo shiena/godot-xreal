@@ -72,6 +72,7 @@ reason and covers runtime failures too. The demo connects them in `demo/main.gd`
 | `xreal_photo_capture.tscn` | — | `capture_photo() -> String` (JPG path) — needs the camera component enabled | One Series |
 | `xreal_blend_capture.tscn` | — | `capture_blended() -> String` (camera+AR composite JPG) — needs camera + rig | One Series |
 | `xreal_stream.tscn` | — | `set_enabled(on)` (async — watch `active_changed(active)`), streams FPV/MRC to XREAL's StreamingReceiver over LAN; exports `with_mic`, `observer_mode`, size/bitrate/fps | any (camera-less devices stream AR-only) |
+| `xreal_video_recorder.tscn` | — | `set_enabled(on)` (watch `active_changed(active)`), records the FPV (camera+AR blend while the camera is on, AR alone otherwise) to an mp4 in the user data dir; `finished(path)` on stop; exports size/bitrate/fps. Shares the one HW encoder with `xreal_stream` — they refuse to run together | any (camera-less devices record AR-only) |
 
 ¹ World-locked components must sit under a **world-fixed** node (e.g. the scene root) — under
 the head rig their content would appear head-locked (stuck to the screen).
