@@ -29,21 +29,20 @@ use crate::ffi::{
 use crate::ffi::{
     FnControlSetI32, FnCreateFrame, FnCreateSession, FnGetCameraIntrinsic,
     FnGetCameraProjectionMatrix, FnGetDevicePoseFromHead, FnGetDeviceResolution, FnGetDeviceType,
-    FnGetFrameMetaData,
-    FnGetHeadPoseAtTime, FnGetHeadPoseDisplay, FnGetPluginVersion, FnGlassesEventCallback,
-    FnHmdTimeNanos, FnInitUserDefinedSettings, FnIsSessionStarted, FnLoadApi, FnNrBufferSpecCreate,
-    FnNrBufferSpecSetI32, FnNrBufferSpecSetSize, FnNrBufferSpecSetU32, FnNrBufferSpecSetU64,
-    FnNrBufferViewportGetSwapchain, FnNrFrameAcquireBuffers, FnNrFrameCompose, FnNrFrameCreate,
-    FnNrFrameGetBufferViewport, FnNrFrameGetViewportCount, FnNrFrameNoArgs, FnNrFrameSendMetaData,
-    FnNrFrameSetBufferViewport, FnNrFrameSetBufferViewport3, FnNrFrameSetColorTextures,
-    FnNrHandleDestroy, FnNrRenderingAcquireFrame, FnNrRenderingCreate, FnNrRenderingGetI32,
-    FnNrRenderingOneHandle, FnNrRenderingSetGraphicContext, FnNrRenderingSetI32,
-    FnNrRenderingSetU64, FnNrSwapchainCreate, FnNrSwapchainCreateAndroidSurface,
-    FnNrSwapchainGetRecommendBufferCount, FnNrSwapchainSetBuffers, FnNrViewportCreate,
-    FnNrViewportSetF32x2, FnNrViewportSetI32, FnNrViewportSetNearFar, FnNrViewportSetPtr,
-    FnNrViewportSetU32, FnNrViewportSetU64, FnQueryInt, FnSetGlassesEventCallback,
-    FnSetNativeErrorCallback, FnSwitchTrackingType, FnUnityPluginLoad, FnVoid, NrGraphicContext,
-    NrHandle, NrPose, UserDefinedSettings,
+    FnGetFrameMetaData, FnGetHeadPoseAtTime, FnGetHeadPoseDisplay, FnGetPluginVersion,
+    FnGlassesEventCallback, FnHmdTimeNanos, FnInitUserDefinedSettings, FnIsSessionStarted,
+    FnLoadApi, FnNrBufferSpecCreate, FnNrBufferSpecSetI32, FnNrBufferSpecSetSize,
+    FnNrBufferSpecSetU32, FnNrBufferSpecSetU64, FnNrBufferViewportGetSwapchain,
+    FnNrFrameAcquireBuffers, FnNrFrameCompose, FnNrFrameCreate, FnNrFrameGetBufferViewport,
+    FnNrFrameGetViewportCount, FnNrFrameNoArgs, FnNrFrameSendMetaData, FnNrFrameSetBufferViewport,
+    FnNrFrameSetBufferViewport3, FnNrFrameSetColorTextures, FnNrHandleDestroy,
+    FnNrRenderingAcquireFrame, FnNrRenderingCreate, FnNrRenderingGetI32, FnNrRenderingOneHandle,
+    FnNrRenderingSetGraphicContext, FnNrRenderingSetI32, FnNrRenderingSetU64, FnNrSwapchainCreate,
+    FnNrSwapchainCreateAndroidSurface, FnNrSwapchainGetRecommendBufferCount,
+    FnNrSwapchainSetBuffers, FnNrViewportCreate, FnNrViewportSetF32x2, FnNrViewportSetI32,
+    FnNrViewportSetNearFar, FnNrViewportSetPtr, FnNrViewportSetU32, FnNrViewportSetU64, FnQueryInt,
+    FnSetGlassesEventCallback, FnSetNativeErrorCallback, FnSwitchTrackingType, FnUnityPluginLoad,
+    FnVoid, NrGraphicContext, NrHandle, NrPose, UserDefinedSettings,
 };
 use crate::ffi::{
     FnDisposeRgbCameraDataHandle, FnStartRgbCameraCapture, FnStopRgbCameraCapture,
@@ -1692,12 +1691,21 @@ impl XrealNative {
     pub fn camera_intrinsic(&self, component: i32) -> Option<[f32; 4]> {
         let f = self.get_camera_intrinsic?;
         let (mut focal, mut principal) = ([0.0f32; 2], [0.0f32; 2]);
-        unsafe { f(component, &mut focal, &mut principal) }
-            .then_some([focal[0], focal[1], principal[0], principal[1]])
+        unsafe { f(component, &mut focal, &mut principal) }.then_some([
+            focal[0],
+            focal[1],
+            principal[0],
+            principal[1],
+        ])
     }
 
     /// A camera's 4x4 projection matrix (16 floats, Unity `Matrix4x4` column-major) for `[near, far]`.
-    pub fn camera_projection_matrix(&self, component: i32, near: f32, far: f32) -> Option<[f32; 16]> {
+    pub fn camera_projection_matrix(
+        &self,
+        component: i32,
+        near: f32,
+        far: f32,
+    ) -> Option<[f32; 16]> {
         let f = self.get_camera_projection_matrix?;
         let mut mat = [0.0f32; 16];
         unsafe { f(component, near, far, &mut mat) }.then_some(mat)

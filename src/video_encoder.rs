@@ -161,7 +161,16 @@ pub fn start(
             godot::global::godot_warn!("[xreal] HWEncoderCreate failed");
             return false;
         }
-        let cfg = config_json(output, width, height, bitrate, fps, with_mic, with_internal, with_alpha);
+        let cfg = config_json(
+            output,
+            width,
+            height,
+            bitrate,
+            fps,
+            with_mic,
+            with_internal,
+            with_alpha,
+        );
         let Ok(cfg_c) = CString::new(cfg.as_str()) else {
             destroy(handle);
             return false;
@@ -175,7 +184,9 @@ pub fn start(
         // path, not screen capture). Without it HWEncoderStart dereferenced a null field → SIGSEGV.
         let mp = set_media_projection(handle, std::ptr::null_mut());
         if mp != 0 {
-            godot::global::godot_warn!("[xreal] HWEncoderSetMediaProjection returned {mp} (continuing)");
+            godot::global::godot_warn!(
+                "[xreal] HWEncoderSetMediaProjection returned {mp} (continuing)"
+            );
         }
         if start_fn(handle) != 0 {
             godot::global::godot_warn!("[xreal] HWEncoderStart failed");
@@ -268,7 +279,16 @@ mod tests {
 
     #[test]
     fn config_json_embeds_params_and_rtp_codec_type() {
-        let j = config_json("rtp://10.0.0.2:6000", 1280, 720, 4_000_000, 30, true, false, false);
+        let j = config_json(
+            "rtp://10.0.0.2:6000",
+            1280,
+            720,
+            4_000_000,
+            30,
+            true,
+            false,
+            false,
+        );
         for needle in [
             "\"width\":1280",
             "\"height\":720",
@@ -285,7 +305,16 @@ mod tests {
 
     #[test]
     fn config_json_local_file_is_codec_type_zero() {
-        let j = config_json("/sdcard/clip.mp4", 640, 480, 1_000_000, 24, false, true, true);
+        let j = config_json(
+            "/sdcard/clip.mp4",
+            640,
+            480,
+            1_000_000,
+            24,
+            false,
+            true,
+            true,
+        );
         assert!(j.contains("\"codecType\":0"));
         assert!(j.contains("\"addMicphoneAudio\":false"));
         assert!(j.contains("\"addInternalAudio\":true"));

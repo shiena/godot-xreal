@@ -633,7 +633,12 @@ impl XrealSession {
     }
 
     /// A `ffi::component` camera's 4x4 projection matrix (16 floats) for `[near, far]`.
-    pub fn camera_projection_matrix(&self, component: i32, near: f32, far: f32) -> Option<[f32; 16]> {
+    pub fn camera_projection_matrix(
+        &self,
+        component: i32,
+        near: f32,
+        far: f32,
+    ) -> Option<[f32; 16]> {
         self.native
             .lock()
             .expect("xreal native mutex")

@@ -325,7 +325,12 @@ impl XrealSystem {
     /// A `COMPONENT_*` camera's 4x4 projection matrix (16 floats, Unity column-major) for `[near, far]`.
     /// Empty when unavailable.
     #[func]
-    fn get_camera_projection_matrix(&self, component: i64, near: f64, far: f64) -> PackedFloat32Array {
+    fn get_camera_projection_matrix(
+        &self,
+        component: i64,
+        near: f64,
+        far: f64,
+    ) -> PackedFloat32Array {
         session::shared()
             .and_then(|s| s.camera_projection_matrix(component as i32, near as f32, far as f32))
             .map(|m| PackedFloat32Array::from(&m))

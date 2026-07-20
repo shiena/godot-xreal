@@ -172,7 +172,11 @@ fn alloc_trampoline_near(patch_addr: usize, page_size: usize) -> Option<usize> {
     let maps = std::fs::read_to_string("/proc/self/maps").ok()?;
     let mut ranges: Vec<(usize, usize)> = Vec::new();
     for line in maps.lines() {
-        let Some((s, e)) = line.split_whitespace().next().and_then(|r| r.split_once('-')) else {
+        let Some((s, e)) = line
+            .split_whitespace()
+            .next()
+            .and_then(|r| r.split_once('-'))
+        else {
             continue;
         };
         if let (Ok(s), Ok(e)) = (usize::from_str_radix(s, 16), usize::from_str_radix(e, 16)) {
@@ -265,7 +269,11 @@ pub fn patch_handle_action_callback(lib_base: usize) {
             *(tram.add(2) as *mut u64) = wrapper_addr as u64;
             let a = page;
             core::arch::asm!("dc cvau,{a}","dsb ish","ic ivau,{a}","dsb ish","isb",a=in(reg)a);
-            libc::mprotect(page as *mut libc::c_void, page_size, libc::PROT_READ | libc::PROT_EXEC);
+            libc::mprotect(
+                page as *mut libc::c_void,
+                page_size,
+                libc::PROT_READ | libc::PROT_EXEC,
+            );
         }
         godot::global::godot_print!(
             "[xreal] code_patch: trampoline at {page:#018x} → {wrapper_addr:#018x}"
