@@ -25,10 +25,6 @@ jniLibs
 /android_old/
 /.cargo/
 
-# Release-only addon payload (assembled in CI, shipped in the release zip)
-/addons/godot_gsplat/bin/
-/addons/godot_gsplat/godot_gsplat.gdextension
-
 # IDE
 .idea/
 .vscode/
