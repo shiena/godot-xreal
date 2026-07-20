@@ -273,6 +273,21 @@ impl XrealSystem {
             .unwrap_or(false)
     }
 
+    /// AR-perception (plane / anchor / image) availability, following the XREAL SDK for Unity's own
+    /// rule. That SDK has NO per-feature device gate for those subsystems — it registers them
+    /// unconditionally and assumes perception is present whenever 6DoF (`HEAD_TRACKING_POSITION`) is,
+    /// and its C# never calls `GetSupportedFeatures` (which returns a device-INDEPENDENT `0x1f` mask,
+    /// so it cannot gate by device). We use "6DoF present AND no RGB camera" to pick the perception
+    /// device (Air 2 Ultra: 6DoF, no RGB cam) apart from the One series (6DoF + RGB cam, no
+    /// trackables). **This heuristic matches com.xreal.xr 3.1.0** — a later SDK / device may change the
+    /// mapping, so revisit it on SDK bumps. (Hand tracking is already in beta for One + Eye, so a
+    /// One-class device could gain perception, at which point the "no RGB camera" test would wrongly
+    /// exclude it.)
+    fn is_ar_perception_available(&self) -> bool {
+        self.is_hmd_feature_supported(Self::FEATURE_HEAD_TRACKING_POSITION)
+            && !self.is_camera_supported()
+    }
+
     // --- Device / camera geometry (Unity space; docs/plans/coordinate-systems-notes.md). Poses are in
     // Unity's left-handed system — convert on the Godot side. Useful for aligning the AR to the RGB
     // camera view (FOV / offset) in the blend. ---
@@ -353,12 +368,12 @@ impl XrealSystem {
     #[constant]
     const PLANE_BOTH: i64 = crate::ffi::plane_detection_mode::BOTH as i64;
 
-    /// Whether the connected glasses support plane detection (`GetSupportedFeatures` bit 0; only the
-    /// Air 2 Ultra reports it). `false` on desktop / One Series / until the perception is up — so query
-    /// it at toggle time, not at startup.
+    /// Whether the connected glasses support plane detection. Gated by
+    /// [`Self::is_ar_perception_available`] (6DoF + no RGB camera = the Air 2 Ultra). `false` until the
+    /// session is up, so query it at toggle time, not at startup.
     #[func]
     fn is_plane_detection_available(&self) -> bool {
-        crate::depth_mesh::plane_detection_supported()
+        self.is_ar_perception_available()
     }
 
     /// Enable plane detection (`PLANE_HORIZONTAL | PLANE_VERTICAL` flags). Needs a live 6DoF session;
@@ -432,11 +447,12 @@ impl XrealSystem {
     #[constant]
     const ANCHOR_QUALITY_GOOD: i64 = crate::ffi::anchor_quality::GOOD as i64;
 
-    /// Whether the connected glasses support spatial anchors (`GetSupportedFeatures` bit 2; only the
-    /// Air 2 Ultra reports it). `false` on desktop / One Series / until the perception is up.
+    /// Whether the connected glasses support spatial anchors. Gated by
+    /// [`Self::is_ar_perception_available`] (6DoF + no RGB camera = the Air 2 Ultra). `false` until the
+    /// session is up.
     #[func]
     fn is_anchor_available(&self) -> bool {
-        crate::depth_mesh::anchor_supported()
+        self.is_ar_perception_available()
     }
 
     /// Enable/disable the anchor subsystem (call once before acquiring). Returns whether the export
@@ -547,11 +563,12 @@ impl XrealSystem {
     // --- Image tracking (see docs/plans/ar-features-plan.md). Needs a live 6DoF session + the
     //     vendored nr_image_tracking.aar backend + assets/nr_plugins.json + a DB blob. ---
 
-    /// Whether the connected glasses support image tracking (`GetSupportedFeatures` bit 1; only the
-    /// Air 2 Ultra reports it). `false` on desktop / One Series / until the perception is up.
+    /// Whether the connected glasses support image tracking. Gated by
+    /// [`Self::is_ar_perception_available`] (6DoF + no RGB camera = the Air 2 Ultra). `false` until the
+    /// session is up.
     #[func]
     fn is_image_tracking_available(&self) -> bool {
-        crate::depth_mesh::image_tracking_supported()
+        self.is_ar_perception_available()
     }
 
     /// Build a tracking database from a reference-image DB `blob` (produced by `trackableImageTools`)
@@ -625,11 +642,12 @@ impl XrealSystem {
     // --- Depth mesh (see docs/plans/ar-features-plan.md §4). Internal libXREALXRPlugin.so functions by
     //     LIB_BASE+offset (like hand tracking), NOT flat exports. Air 2 Ultra only. ---
 
-    /// Whether the connected glasses support depth meshing (`GetSupportedFeatures() & (1<<3)`). `false`
-    /// on non-Air-2-Ultra devices / before the perception is up.
+    /// Whether the connected glasses support depth meshing. Gated by
+    /// [`Self::is_ar_perception_available`] (6DoF + no RGB camera = the Air 2 Ultra). `false` until the
+    /// session is up.
     #[func]
     fn is_meshing_supported(&self) -> bool {
-        crate::depth_mesh::meshing_supported()
+        self.is_ar_perception_available()
     }
 
     /// Enable/disable depth meshing (`NativePerception::SetMeshingEnabled`). Returns whether the call
