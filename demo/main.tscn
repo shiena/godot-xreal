@@ -14,6 +14,7 @@
 [ext_resource type="PackedScene" uid="uid://xrstreamscn01" path="res://addons/godot_xreal/features/xreal_stream.tscn" id="12_stream"]
 [ext_resource type="PackedScene" uid="uid://xrvidrecscn01" path="res://addons/godot_xreal/features/xreal_video_recorder.tscn" id="14_recorder"]
 [ext_resource type="Shader" uid="uid://xrimgmarker01" path="res://demo/xreal_image_marker.gdshader" id="13_marker"]
+[ext_resource type="PackedScene" uid="uid://dcampreviewsc1" path="res://demo/camera_preview.tscn" id="15_preview"]
 
 ; Front/back-coloured tracked-image marker (green front / red back via FRONT_FACING) so the
 ; tracked pose's facing is readable — assigned to XrealImageTracking's marker_material override.
@@ -31,6 +32,10 @@ script = ExtResource("1_main")
 ; All sit under Main (a world-fixed node), which the world-locked features (planes, anchors,
 ; image tracking, mesh, hands) require: under the head rig they would appear head-locked.
 [node name="XrealCamera" parent="." instance=ExtResource("4_camera")]
+
+; Demo-side head-locked live preview of the RGB camera feed (the addon xreal_camera component only
+; owns the feed). Self-contained: it finds the feed + head tracker itself. Delete to drop the preview.
+[node name="CameraPreview" parent="." instance=ExtResource("15_preview")]
 
 [node name="XrealPlanes" parent="." instance=ExtResource("5_planes")]
 

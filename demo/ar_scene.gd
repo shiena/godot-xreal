@@ -4,7 +4,7 @@ extends Node3D
 ## drives at runtime, so the consumer never reaches into the scene's internals by path:
 ##   - cursor        head-locked touch-controller cursor — reparented under the head tracker
 ##   - phone_pointer phone-IMU 3D pointer — revealed once the NRController starts
-## (The camera preview quad now lives in the addon: addons/godot_xreal/features/xreal_camera.tscn.)
+## (The camera preview quad is its own demo component: demo/camera_preview.tscn + camera_preview.gd.)
 
 @onready var cursor: MeshInstance3D = $Cursor
 @onready var phone_pointer: Node3D = $PhonePointer

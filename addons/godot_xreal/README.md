@@ -63,7 +63,7 @@ reason and covers runtime failures too. The demo connects them in `demo/main.gd`
 
 | Scene | World-locked¹ | API | Devices |
 |---|---|---|---|
-| `xreal_camera.tscn` | — (preview is head-locked) | `set_enabled(on) -> bool`, `get_feed()`, `is_feed_live()`, signals `feed_changed(feed)` / `active_changed(active)`; exports `enabled`, `show_preview` | RGB camera = One Series |
+| `xreal_camera.tscn` | — | `set_enabled(on) -> bool`, `get_feed()`, `is_feed_live()`, signals `feed_changed(feed)` / `active_changed(active)`; export `enabled` (feed only — draw it yourself) | RGB camera = One Series |
 | `xreal_planes.tscn` | ✔ | `set_enabled(on) -> bool`; exports `enabled`, `switch_to_6dof` (plane detection needs 6DoF) | 6DoF devices |
 | `xreal_anchors.tscn` | ✔ | `set_enabled(on) -> bool`, `place_at_fingertip()` (pinch also places); exports `enabled`, `save_file` (Guid persistence) | Air 2 Ultra |
 | `xreal_image_tracking.tscn` | ✔ | `set_enabled(on) -> bool`, `cycle_set()`; exports `enabled`, `manifest_path` (**required** — a reference.json, see `demo/image_tracking/`), `marker_material` (optional overlay override; a ShaderMaterial with a `tracking` bool uniform gets the per-marker state) | Air 2 Ultra |
@@ -88,7 +88,9 @@ their real state comes back through `active_changed`.
   note its per-stream switches (`planes`/`anchors`/`images`/`mesh`) default to **on**; the
   feature components will take control of their own stream's switch anyway.
 - **One camera.** The glasses have a single RGB camera; keep one `xreal_camera.tscn`
-  instance (a second activation fails cleanly).
+  instance (a second activation fails cleanly). The component only exposes the feed — drawing it
+  is up to the app (the demo renders a head-locked preview in `demo/camera_preview.gd`, off the
+  shared feed via `XrealShared.find_camera_feed()`).
 - `XrealAndroidBridge.register()` (call once at startup) registers the Java bridge:
   companion-display handling + auto-enter PiP so the glasses keep rendering while the app
   is backgrounded (multi-resume).

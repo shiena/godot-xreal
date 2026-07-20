@@ -1,6 +1,7 @@
 extends Node3D
 ## XREAL glasses RGB camera as a drop-in feature component: owns the XrealCameraFeed lifecycle
-## (registered with the CameraServer) and an optional head-locked live preview quad.
+## (registered with the CameraServer). Showing the feed is the app's choice — the component only
+## exposes it; the demo draws a head-locked preview off the shared feed in demo/camera_preview.gd.
 ##
 ## Drop addons/godot_xreal/features/xreal_camera.tscn anywhere in the scene and call
 ## set_enabled(true) (or set `enabled` in the inspector). The capture itself starts lazily once
@@ -23,8 +24,6 @@ signal active_changed(active: bool)
 
 ## Start the camera at boot (applied in _ready). At runtime call set_enabled().
 @export var enabled := false
-## Show the head-locked live preview quad (reparented under the XrealHeadTracker when live).
-@export var show_preview := true
 
 var _system: Object          # XrealSystem (this feature's own stateless instance)
 var _feed: Object            # XrealCameraFeed while the capture runs
@@ -32,12 +31,10 @@ var _feed: Object            # XrealCameraFeed while the capture runs
 # setup — a hard failure isn't retried; re-plug the glasses and re-enable to recover.
 var _failed := false
 var _want := false           # camera requested (feed creation is lazy in _process)
-var _panel: MeshInstance3D
 
 func _ready() -> void:
 	# The .tscn already carries the group; re-add for script-only (code-built) instances.
 	add_to_group(XrealShared.GROUP_CAMERA)
-	_panel = $PreviewPanel
 	_system = XrealShared.make_system()  # null off-device -> the component stays inert
 	if enabled:
 		enabled = set_enabled(true)
@@ -76,15 +73,13 @@ func set_enabled(on: bool) -> bool:
 			CameraServer.remove_feed(_feed)
 			_feed = null
 			feed_changed.emit(null)
-		if _panel:
-			_panel.visible = false
 		active_changed.emit(false)
 	return enabled
 
-## Expose the RGB camera as a Godot CameraFeed and start the capture. The panel's shader samples
-## the feed's Y (R8) + CbCr (RG8) ImageTextures DIRECTLY (a CameraTexture on a script-fed feed
-## only shows Godot's placeholder) — matching the XREAL SDK's YUVTransRGB sample.
-func _setup_feed(tracker: Node3D) -> void:
+## Expose the RGB camera as a Godot CameraFeed and start the capture. Consumers sample the feed's
+## Y (R8) + CbCr (RG8) ImageTextures DIRECTLY (a CameraTexture on a script-fed feed only shows
+## Godot's placeholder) — matching the XREAL SDK's YUVTransRGB sample.
+func _setup_feed() -> void:
 	if not ClassDB.class_exists(&"XrealCameraFeed"):
 		_failed = true
 		return
@@ -108,10 +103,6 @@ func _setup_feed(tracker: Node3D) -> void:
 		_failed = true
 		return
 
-	# Head-locked preview: reparent the panel under the tracker so it follows the gaze; rendered
-	# by the eye SubViewports (shared world). Its corner position/size are set in xreal_camera.tscn.
-	if show_preview and _panel and tracker and _panel.get_parent() != tracker:
-		_panel.reparent(tracker, false)
 	# Diagnostic: the RGB camera geometry (Unity space) from libXREALXRPlugin — confirms the
 	# device/camera-param APIs return real data. See docs/plans/coordinate-systems-notes.md.
 	if _system.has_method(&"get_camera_intrinsics"):
@@ -127,25 +118,15 @@ func _process(_delta: float) -> void:
 	if _want and not _failed and _feed == null:
 		var tracker := XrealShared.find_head_tracker(get_tree())
 		if tracker and tracker.has_method(&"is_tracking") and tracker.is_tracking():
-			_setup_feed(tracker)
+			_setup_feed()
 			if _failed:
 				_want = false
 				enabled = false
 				active_changed.emit(false)
-	# Pump the feed; wire the Y/CbCr ImageTextures into the preview shader once the first frame
-	# made them, then reveal the panel (hidden until now so a not-yet-fed shader never shows as a
-	# pink unset-sampler placeholder). They update in place afterwards, so this happens once.
+	# Pump the feed so its Y/CbCr ImageTextures stay current for the consumers (preview, photo,
+	# blend, streaming) that sample them.
 	if _feed:
 		_feed.poll_frame()
-		if _panel and show_preview and not _panel.visible:
-			var mat: ShaderMaterial = _panel.material_override
-			if mat:
-				var yt = _feed.get_y_texture()
-				var ct = _feed.get_cbcr_texture()
-				if yt and ct:
-					mat.set_shader_parameter(&"y_texture", yt)
-					mat.set_shader_parameter(&"cbcr_texture", ct)
-					_panel.visible = true
 
 func _exit_tree() -> void:
 	# Best-effort camera release on a *graceful* shutdown so the glasses RGB camera is handed back
@@ -153,9 +134,6 @@ func _exit_tree() -> void:
 	# after a crash the camera stays held and must be re-plugged; this only covers clean exits.
 	if _feed and _feed.is_active():
 		_feed.set_active(false)
-	# The preview panel lives under the tracker once live — take it down with us.
-	if _panel and is_instance_valid(_panel) and _panel.get_parent() != self:
-		_panel.queue_free()
 
 ## Push a warning AND emit `error` so the load site can detect the failure (not just see the log).
 func _fail(msg: String) -> void:
