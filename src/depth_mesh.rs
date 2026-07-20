@@ -9,12 +9,10 @@
 //! the block vector each frame, copy vertices/normals/indices out, and free the SDK's C++ vectors with
 //! libc++ `operator delete`.
 //!
-//! **Air 2 Ultra only** (meshing = `GetSupportedFeatures() & (1<<3)`). Coordinate signs are
-//! on-device-verify-pending, like the other trackables.
-//!
-//! This module also owns the shared `NativePerception::GetSupportedFeatures()` capability query and the
-//! `*_supported()` gates it drives — plane / image / anchor / meshing (see [`feature_supported`]) — the
-//! device-accurate replacement for the per-trackable dlsym symbol-presence checks.
+//! **Air 2 Ultra only.** Coordinate signs are on-device-verify-pending, like the other trackables.
+//! Device gating (meshing / plane / image / anchor) lives in `XrealSystem::is_ar_perception_available`
+//! (6DoF + no RGB camera). `NativePerception::GetSupportedFeatures()` is NOT used — it returns a
+//! device-INDEPENDENT `0x1f` mask and the SDK's own C# never calls it, so it cannot gate by device.
 
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::OnceLock;
@@ -25,24 +23,11 @@ use libloading::Library;
 const OFF_GET_INPUT_MANAGER: usize = 0x47a10; // TSingleton<InputManager>::GetInstance()
 const OFF_SET_MESHING_ENABLED: usize = 0x9a4a8; // NativePerception::SetMeshingEnabled(bool)
 const OFF_GET_MESH_BLOCK_INFO: usize = 0x9a664; // NativePerception::GetMeshBlockInfo() -> vector<MeshBlockInfo>
-const OFF_GET_SUPPORTED_FEATURES: usize = 0x96214; // NativePerception::GetSupportedFeatures() -> u64
 
 const IM_PERCEPTION_PTR: usize = 0x48; // InputManager + 0x48 = NativePerception*
 const NP_STARTED: usize = 0x18; // NativePerception + 0x18 (non-zero once start succeeded)
 const NP_SESSION: usize = 0x28; // NativePerception + 0x28 (NR session handle)
 const NP_CONFIG: usize = 0x38; // NativePerception + 0x38 (NR config handle)
-
-// `NRPerceptionFeature` bits in `NativePerception::GetSupportedFeatures()`, RE'd from the SDK's own
-// gates in libXREALXRPlugin.so — the bit index is the value each gate tests (plane / image / anchor via
-// `InputManager::IsFeatureSupported(NRPerceptionFeature)`, meshing via `GetMeshInfos`, hand via
-// `IsHandTrackingSupported`): bit 0 = plane, 1 = image tracking, 2 = anchor, 3 = meshing, 4 = hand.
-// This is the device-accurate capability gate (only the Air 2 Ultra reports the trackables). Exported-
-// symbol presence CANNOT gate by device — there is one shared libXREALXRPlugin.so whose exports are
-// identical on every model — so these bits replace the old dlsym-presence checks.
-const PLANE_FEATURE_BIT: u64 = 1 << 0;
-const IMAGE_FEATURE_BIT: u64 = 1 << 1;
-const ANCHOR_FEATURE_BIT: u64 = 1 << 2;
-const MESHING_FEATURE_BIT: u64 = 1 << 3;
 
 // --- MeshBlockInfo layout (128-byte block, device-confirmed from the AcquireMesh copy loop). Each
 //     std::vector is {begin, end, cap} (24 B); count = (end-begin)/elem_size. ---
@@ -64,7 +49,6 @@ static OP_DELETE: AtomicUsize = AtomicUsize::new(0);
 
 type FnGetInputManager = unsafe extern "C" fn() -> *mut u8;
 type FnSetMeshingEnabled = unsafe extern "C" fn(*mut u8, bool);
-type FnGetSupportedFeatures = unsafe extern "C" fn(*mut u8) -> u64;
 /// `NativePerception::GetMeshBlockInfo(this) -> std::vector<MeshBlockInfo>` — the 24-byte vector is
 /// returned via x8 sret; Rust models that as a struct return.
 type FnGetMeshBlockInfo = unsafe extern "C" fn(*mut u8) -> CppVec;
@@ -109,44 +93,6 @@ unsafe fn perception() -> Option<(usize, *mut u8)> {
         return None; // perception not fully brought up yet — retry next frame
     }
     Some((lib_base, np))
-}
-
-/// The `NativePerception::GetSupportedFeatures()` bitmask, or `None` until the perception is fully up.
-fn supported_features() -> Option<u64> {
-    unsafe {
-        let (lib_base, np) = perception()?;
-        let get_features: FnGetSupportedFeatures =
-            std::mem::transmute(lib_base + OFF_GET_SUPPORTED_FEATURES);
-        Some(get_features(np))
-    }
-}
-
-/// Whether a `*_FEATURE_BIT` capability is reported by the connected glasses. Device-accurate, but
-/// `false` until the perception is fully up (so query it at feature-toggle time, not at startup) and on
-/// devices that don't support it (only the Air 2 Ultra reports the trackables).
-fn feature_supported(bit: u64) -> bool {
-    supported_features().is_some_and(|f| f & bit != 0)
-}
-
-/// Whether the glasses support spatial meshing (`GetSupportedFeatures` bit 3).
-pub fn meshing_supported() -> bool {
-    feature_supported(MESHING_FEATURE_BIT)
-}
-
-/// Whether the glasses support plane detection (`GetSupportedFeatures` bit 0). Replaces the old dlsym
-/// symbol-presence check, which couldn't tell models apart (one shared .so).
-pub fn plane_detection_supported() -> bool {
-    feature_supported(PLANE_FEATURE_BIT)
-}
-
-/// Whether the glasses support image tracking (`GetSupportedFeatures` bit 1).
-pub fn image_tracking_supported() -> bool {
-    feature_supported(IMAGE_FEATURE_BIT)
-}
-
-/// Whether the glasses support spatial anchors (`GetSupportedFeatures` bit 2).
-pub fn anchor_supported() -> bool {
-    feature_supported(ANCHOR_FEATURE_BIT)
 }
 
 /// Enable/disable meshing (`NativePerception::SetMeshingEnabled`). Returns whether the call was made
