@@ -59,8 +59,12 @@ jobs:
           VERSION="${VERSION#v}"
           sed -i "s/^version=\".*\"/version=\"${VERSION}\"/" addons/godot_xreal/plugin.cfg
           sed -i "s/^version = \".*\"/version = \"${VERSION}\"/" Cargo.toml
+          # Sync the bumped crate version into Cargo.lock (workspace members only — no dependency
+          # bumps), so the lockfile can't drift from Cargo.toml (it did at v1.0.0).
+          cargo update --workspace
           echo "plugin.cfg:"; grep '^version' addons/godot_xreal/plugin.cfg
           echo "Cargo.toml:"; grep '^version' Cargo.toml
+          echo "Cargo.lock:"; grep -A1 '^name = "godot_xreal"' Cargo.lock
 
       - name: Upload version files as artifact
         uses: actions/upload-artifact@v7
@@ -69,6 +73,7 @@ jobs:
           path: |
             addons/godot_xreal/plugin.cfg
             Cargo.toml
+            Cargo.lock
 
   # Real Android arm64 GDExtension. Needs no vendored XREAL libs — they are dlopen'd at runtime, so
   # the release binary is self-contained (DT_NEEDED = libdl/libm/libc only).
@@ -180,13 +185,14 @@ jobs:
           # doc/dummy generation lands in the repo — CI only regenerates them, it never commits.
           # Tag it, and push both with the branch.
           cp artifacts/version-commit/Cargo.toml Cargo.toml
+          cp artifacts/version-commit/Cargo.lock Cargo.lock
           cp artifacts/version-commit/addons/godot_xreal/plugin.cfg addons/godot_xreal/plugin.cfg
           cp artifacts/dummy-stubs/stub_classes.inc dummy/stub_classes.inc
           cp artifacts/dummy-stubs/stub_docs.inc dummy/stub_docs.inc
           cp artifacts/dummy-stubs/stub_members.inc dummy/stub_members.inc
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add addons/godot_xreal/plugin.cfg Cargo.toml \
+          git add addons/godot_xreal/plugin.cfg Cargo.toml Cargo.lock \
             dummy/stub_classes.inc dummy/stub_docs.inc dummy/stub_members.inc
           if git diff --cached --quiet; then
             echo "No version/generated-artifact changes needed (already in sync)"

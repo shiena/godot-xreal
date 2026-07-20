@@ -140,7 +140,8 @@ Two GitHub Actions workflows (`.github/workflows/`):
 - **`ci.yaml`** (push / PR to `main`) — `cargo fmt --check` + `cargo clippy -D warnings` (host), then
   builds the addon exactly as a release would: the Android arm64 GDExtension via `cargo ndk` (needs no
   vendored XREAL libs — they are `dlopen`'d at runtime) and the 6 desktop dummy stubs via `clang`+`lld`.
-- **`release.yaml`** (`workflow_dispatch` with a `version` input) — bumps `plugin.cfg` + `Cargo.toml`,
+- **`release.yaml`** (`workflow_dispatch` with a `version` input) — bumps `plugin.cfg` + `Cargo.toml`
+  (+ `Cargo.lock`, synced via `cargo update --workspace`),
   builds the same artifacts, tags, and publishes a GitHub Release. The release attaches
   `libgodot_xreal.so` plus a drop-in zip (`godot_xreal.gdextension` + `dummy/` + the built `.so` +
   `addons/godot_xreal/`, with an `INSTALL.md`). Users unzip it and vendor the XREAL libs — no Rust /
