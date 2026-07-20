@@ -1,8 +1,9 @@
 extends Node
 ## Photo capture as a drop-in feature component — the Godot analog of the SDK's XREALPhotoCapture.
 ## Like the SDK (which reads the camera RenderTexture back and EncodeToJPG), this renders the XREAL
-## RGB camera YCbCr feed into an offscreen SubViewport and saves the read-back image as a JPG (in
-## the user data dir + the phone gallery). RGB-camera / Eyes feature — One Series only.
+## RGB camera YCbCr feed into an offscreen SubViewport and saves the read-back image as a JPG in
+## the user data dir, returning its path — what to do with it (e.g. publish it to the phone
+## gallery, as the demo does) is the app's choice. RGB-camera / Eyes feature — One Series only.
 ##
 ## Needs the camera running: drop in xreal_camera.tscn too and enable it — the live feed is
 ## discovered via XrealShared.find_camera_feed() at capture time, no wiring needed.
@@ -76,8 +77,6 @@ func capture_photo() -> String:
 	if err != OK:
 		_fail("[xreal-capture] save_jpg failed (err %d)" % err)
 		return ""
-	print("[xreal-capture] photo saved -> %s" % path)
-	XrealShared.save_to_gallery(path, "image/jpeg", false)  # also into the phone gallery (optional helper)
 	return path
 
 ## Push a warning AND emit `error` so the load site can detect the failure (not just see the log).

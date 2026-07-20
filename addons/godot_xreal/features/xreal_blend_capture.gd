@@ -108,8 +108,6 @@ func capture_blended() -> String:
 	if err != OK:
 		_fail("[xreal-blend] save_jpg failed (err %d)" % err)
 		return ""
-	print("[xreal-blend] composite saved -> %s" % path)
-	XrealShared.save_to_gallery(path, "image/jpeg", false)  # also into the phone gallery (optional helper)
 	return path
 
 ## Push a warning AND emit `error` so the load site can detect the failure (not just see the log).

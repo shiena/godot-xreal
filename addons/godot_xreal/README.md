@@ -88,9 +88,6 @@ their real state comes back through `active_changed`.
   feature components will take control of their own stream's switch anyway.
 - **One camera.** The glasses have a single RGB camera; keep one `xreal_camera.tscn`
   instance (a second activation fails cleanly).
-- `XrealGallery` (`xreal_gallery.gd`, optional file) copies captures into the phone's
-  MediaStore gallery via the bundled `XrealBridge.java`; the capture components soft-load
-  it and work fine without it.
 - `XrealAndroidBridge.register()` (call once at startup) registers the Java bridge:
   companion-display handling + auto-enter PiP so the glasses keep rendering while the app
   is backgrounded (multi-resume).

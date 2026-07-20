@@ -90,15 +90,6 @@ static func find_camera_feed(tree: SceneTree) -> Object:
 	var cam := find_camera_feature(tree)
 	return cam.get_feed() if cam != null and cam.has_method(&"get_feed") else null
 
-## Copy a captured file into the phone's shared gallery via the OPTIONAL XrealGallery helper
-## (addons/godot_xreal/xreal_gallery.gd). Soft-loaded by path so projects shipping without that
-## file still capture fine — the JPG stays in the user data dir either way.
-static func save_to_gallery(path: String, mime: String, is_video: bool) -> void:
-	const GALLERY_SCRIPT := "res://addons/godot_xreal/xreal_gallery.gd"
-	if ResourceLoader.exists(GALLERY_SCRIPT):
-		var gallery: GDScript = load(GALLERY_SCRIPT)
-		gallery.save(path, path.get_file(), mime, is_video)
-
 ## Drive a Camera3D from the glasses RGB camera's real geometry so rendered holograms line up with
 ## the camera image: intrinsics -> vertical FOV (from fy, KEEP_HEIGHT), pose-from-head -> the small
 ## forward offset, returned in Godot space (this port's Unity->Godot map (x,-y,-z)). Static per
