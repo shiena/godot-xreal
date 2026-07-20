@@ -135,7 +135,7 @@ if ($Build) {
     Ok "Built: $so"
 }
 
-# ------------------------------------------------------- Export APK (with hang poll) ---
+# ------------------------------------------------------- Export APK (non-console binary) ---
 if ($Export) {
     $ver = (& $Godot --version 2>$null | Select-Object -First 1)
     if ($ver -notmatch '^4\.7') { Die "Godot must be 4.7-stable (template match); '$Godot --version' = '$ver'. Set -Godot / `$env:GODOT to a 4.7 binary." }
@@ -144,36 +144,21 @@ if ($Export) {
     New-Item -ItemType Directory -Force $outDir | Out-Null
     $exportFlag = if ($ReleaseApk) { '--export-release' } else { '--export-debug' }
 
-    # The Godot Android export writes the APK then HANGS instead of exiting, so run it detached and
-    # poll for a completed APK (fresh mtime + stable size + a valid ZIP end-of-central-directory),
-    # then kill it. Killing mid-write corrupts the APK (INSTALL_PARSE_FAILED_NOT_APK).
-    $start = Get-Date
+    # Use the NON-console Godot binary here (Godot_..._win64.exe, not *_console.exe). The console
+    # wrapper waits for every process in its Job Object to exit, and an Android *Gradle* build leaves
+    # a resident Gradle daemon behind, so the console binary hangs after writing the APK. The
+    # non-console binary exits normally (~20-30s). See godot-android-export-hang-repro.
     Say "Godot export ($exportFlag `"$Preset`") -> $ApkOut"
     $proc = Start-Process -FilePath $Godot -PassThru -WindowStyle Hidden -ArgumentList @(
         '--headless', '--path', $repoRoot, $exportFlag, $Preset, $ApkOut
     )
-
-    $done = $false; $prev = -1L; $stable = 0
-    for ($i = 0; $i -lt 60; $i++) {
-        Start-Sleep -Seconds 4
-        if (-not (Test-Path $ApkOut)) { continue }
-        $fi = Get-Item $ApkOut
-        if ($fi.LastWriteTime -lt $start) { continue }        # stale APK from a previous run
-        $size = $fi.Length
-        if ($size -eq $prev -and $size -gt 100MB) { $stable++ } else { $stable = 0 }
-        $prev = $size
-        if ($stable -ge 2) {
-            $bytes = [System.IO.File]::ReadAllBytes($ApkOut)
-            $eocd = $false
-            for ($j = $bytes.Length - 22; $j -ge [Math]::Max(0, $bytes.Length - 65558); $j--) {
-                if ($bytes[$j] -eq 0x50 -and $bytes[$j+1] -eq 0x4B -and $bytes[$j+2] -eq 0x05 -and $bytes[$j+3] -eq 0x06) { $eocd = $true; break }
-            }
-            if ($eocd) { $done = $true; break }
-        }
+    if (-not $proc.WaitForExit(180000)) {
+        Stop-Process -Id $proc.Id -Force
+        Die "APK export did not finish in 180s. A *console* Godot binary hangs here after a Gradle export (Gradle daemon stuck in its Job Object) — use the non-console binary."
     }
-    if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force; Start-Sleep -Milliseconds 500 }
-    Get-Process | Where-Object { $_.Name -like 'Godot*' } | Stop-Process -Force -ErrorAction SilentlyContinue
-    if (-not $done) { Die "APK export did not complete (no fresh, valid APK at $ApkOut). Check the export preset / keystore." }
+    if (-not (Test-Path $ApkOut) -or (Get-Item $ApkOut).Length -lt 1MB) {
+        Die "APK export finished (exit $($proc.ExitCode)) but $ApkOut is missing or too small. Check the export preset / keystore."
+    }
     Ok ("Exported: {0} ({1:N0} bytes)" -f $ApkOut, (Get-Item $ApkOut).Length)
 }
 
