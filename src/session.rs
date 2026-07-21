@@ -540,6 +540,20 @@ impl XrealSession {
             .rgb_camera_grab_yuv(last_timestamp, timings)
     }
 
+    /// Acquire the latest RGB frame and hand its planes to `consume` **without copying them** — see
+    /// `XrealNative::rgb_camera_with_frame`. The borrow ends when `consume` returns.
+    pub fn rgb_camera_with_frame<R>(
+        &self,
+        last_timestamp: &mut u64,
+        timings: &mut crate::native::GrabTimings,
+        consume: impl FnOnce(crate::native::RgbPlanes<'_>) -> Option<R>,
+    ) -> Option<R> {
+        self.native
+            .lock()
+            .expect("xreal native mutex")
+            .rgb_camera_with_frame(last_timestamp, timings, consume)
+    }
+
     /// Re-center the view. Calls the SDK's input-provider recenter (`NativePerception::Recenter`,
     /// which resets the perception origin the compositor reprojects against — the real fix for
     /// "move the glasses render to current-forward"), plus the legacy `RecenterGlasses` (harmless

@@ -449,6 +449,68 @@ type FnEglGetError = unsafe extern "C" fn() -> u32;
 /// plus an interleaved CbCr buffer (RG8, half-res), the layout `set_ycbcr_images` + a YCbCr shader expect.
 pub type YuvFrame = (Vec<u8>, i32, i32, Vec<u8>, i32, i32);
 
+/// Borrowed view of one acquired RGB frame. The slices point **into the SDK's own frame buffer**,
+/// so they are valid only while the frame handle is alive — i.e. only for the body of the
+/// [`XrealNative::rgb_camera_with_frame`] closure, which the lifetime enforces.
+pub struct RgbPlanes<'a> {
+    /// Luma, full-res, tightly packed (`y_width * y_height` bytes).
+    pub y: &'a [u8],
+    pub y_width: i32,
+    pub y_height: i32,
+    /// I420 plane 2 — U (Cb), half-res.
+    pub u: &'a [u8],
+    /// I420 plane 1 — V (Cr), half-res.
+    pub v: &'a [u8],
+    pub chroma_width: i32,
+    pub chroma_height: i32,
+}
+
+/// Borrow one plane of an acquired frame in place, without copying.
+///
+/// # Safety
+/// `handle` must be a live frame handle, and the returned slice must not outlive it — the lifetime
+/// `'a` is unconstrained, so the caller alone guarantees this. Only
+/// [`XrealNative::rgb_camera_with_frame`] should call it.
+unsafe fn borrow_plane<'a>(
+    get_plane: FnTryGetRgbCameraDataPlane,
+    handle: i32,
+    idx: i32,
+) -> Option<(&'a [u8], i32, i32)> {
+    let mut ptr: *mut c_void = std::ptr::null_mut();
+    let mut sz = NrSize2i::default();
+    let ok = get_plane(handle, idx, &mut ptr, &mut sz);
+    if !ok || ptr.is_null() || sz.width <= 0 || sz.height <= 0 {
+        return None;
+    }
+    let len = (sz.width as usize) * (sz.height as usize);
+    Some((
+        std::slice::from_raw_parts(ptr as *const u8, len),
+        sz.width,
+        sz.height,
+    ))
+}
+
+/// Interleave the I420 chroma planes into the `[Cb, Cr, Cb, Cr, …]` RG8 layout a YCbCr shader
+/// samples, reusing `out`'s allocation.
+///
+/// Fixed-width stores into a pre-sized buffer, deliberately: the obvious `push` loop carries a
+/// capacity check per byte, cannot vectorise, and measured 903us/frame on the X4000 (0.51 GB/s,
+/// the slowest stage of the whole grab). This shape is what LLVM lowers to a NEON two-channel
+/// interleaving store — 167us for the same work.
+pub fn interleave_cbcr(u: &[u8], v: &[u8], width: i32, height: i32, out: &mut Vec<u8>) {
+    let n = (width.max(0) as usize) * (height.max(0) as usize);
+    let m = n.min(u.len()).min(v.len());
+    // Only ever resizes on the first frame / a resolution change; steady state reuses the buffer
+    // and every byte below is overwritten, so no clear or memset is needed.
+    if out.len() != m * 2 {
+        out.resize(m * 2, 0);
+    }
+    for (dst, (&cb, &cr)) in out.chunks_exact_mut(2).zip(u[..m].iter().zip(&v[..m])) {
+        dst[0] = cb; // Cb = U
+        dst[1] = cr; // Cr = V
+    }
+}
+
 /// **TEMPORARY instrumentation.** Per-stage cost of one [`XrealNative::rgb_camera_grab_yuv`], in
 /// microseconds, so the client-side stages can be told apart from the SDK's two getters. Added to
 /// settle the open question in `docs/archive/codex-camera-acquire-analysis.md`: the disassembly says
@@ -2089,6 +2151,42 @@ impl XrealNative {
         last_timestamp: &mut u64,
         timings: &mut GrabTimings,
     ) -> Option<YuvFrame> {
+        let interleave_us = std::cell::Cell::new(0u32);
+        let out = self.rgb_camera_with_frame(last_timestamp, timings, |p| {
+            let t = std::time::Instant::now();
+            let y = p.y.to_vec();
+            let mut cbcr = Vec::new();
+            interleave_cbcr(p.u, p.v, p.chroma_width, p.chroma_height, &mut cbcr);
+            interleave_us.set(t.elapsed().as_micros() as u32);
+            Some((
+                y,
+                p.y_width,
+                p.y_height,
+                cbcr,
+                p.chroma_width,
+                p.chroma_height,
+            ))
+        });
+        timings.interleave_us = interleave_us.get();
+        out
+    }
+
+    /// Acquire the latest RGB frame and hand its planes to `consume` **without copying them** — the
+    /// slices point straight into the SDK's frame buffer. The handle is disposed as soon as
+    /// `consume` returns, which is why [`RgbPlanes`] borrows: the lifetime stops the slices from
+    /// outliving the frame. `consume` returning `None` leaves `last_timestamp` unadvanced, so the
+    /// same frame is retried on the next poll.
+    ///
+    /// Gating and timestamp semantics are as described on [`Self::rgb_camera_grab_yuv`], which is
+    /// implemented on top of this. `timings` receives the acquire / plane-fetch / dispose costs;
+    /// whatever `consume` does with the pixels is the caller's to measure. Note `planes_us` here is
+    /// the three `TryGetRGBCameraDataPlane` calls *only* — no copy — so it should be microseconds.
+    pub fn rgb_camera_with_frame<R>(
+        &self,
+        last_timestamp: &mut u64,
+        timings: &mut GrabTimings,
+        consume: impl FnOnce(RgbPlanes<'_>) -> Option<R>,
+    ) -> Option<R> {
         let acquire = self.rgb_try_acquire_latest?;
         let get_plane = self.rgb_get_data_plane?;
         let dispose = self.rgb_dispose_handle;
@@ -2108,44 +2206,28 @@ impl XrealNative {
             }
             return None;
         }
-        // Copy plane `idx` into an owned buffer. Plane pointers are valid until the handle is disposed.
-        let read_plane = |idx: i32| -> Option<(Vec<u8>, i32, i32)> {
-            let mut ptr: *mut c_void = std::ptr::null_mut();
-            let mut sz = NrSize2i::default();
-            let ok = unsafe { get_plane(frame_handle, idx, &mut ptr, &mut sz) };
-            if ok && !ptr.is_null() && sz.width > 0 && sz.height > 0 {
-                let len = (sz.width as usize) * (sz.height as usize);
-                let bytes = unsafe { std::slice::from_raw_parts(ptr as *const u8, len) }.to_vec();
-                Some((bytes, sz.width, sz.height))
-            } else {
-                None
-            }
+
+        let t = std::time::Instant::now();
+        // SAFETY: the borrows live only until `dispose` below, and `consume` cannot leak them out.
+        let planes = unsafe {
+            (|| {
+                let (y, yw, yh) = borrow_plane(get_plane, frame_handle, 0)?; // Y, full-res
+                let (v, _, _) = borrow_plane(get_plane, frame_handle, 1)?; // plane 1 = V (Cr)
+                let (u, cw, ch) = borrow_plane(get_plane, frame_handle, 2)?; // plane 2 = U (Cb)
+                Some(RgbPlanes {
+                    y,
+                    y_width: yw,
+                    y_height: yh,
+                    u,
+                    v,
+                    chroma_width: cw,
+                    chroma_height: ch,
+                })
+            })()
         };
-        let (planes_us, interleave_us) = (std::cell::Cell::new(0u32), std::cell::Cell::new(0u32));
-        let out = (|| {
-            let t = std::time::Instant::now();
-            let (y, yw, yh) = read_plane(0)?; // Y (full-res)
-            let (v, _, _) = read_plane(1)?; // plane 1 = V (Cr), half-res
-            let (u, uw, uh) = read_plane(2)?; // plane 2 = U (Cb), half-res
-            planes_us.set(t.elapsed().as_micros() as u32);
-            let t = std::time::Instant::now();
-            let n = (uw as usize) * (uh as usize);
-            let m = n.min(u.len()).min(v.len());
-            // Interleave into a pre-sized buffer with fixed-width stores. The obvious `push` loop
-            // cannot vectorise — every byte carries a capacity check — and measured 903us/frame on
-            // the X4000 (0.51 GB/s, the slowest stage in the whole grab). This shape is what LLVM
-            // lowers to a NEON two-channel interleaving store. `vec![0; _]` allocates zeroed pages
-            // rather than memset-ing, so the pre-sizing is not an extra pass.
-            let mut cbcr = vec![0u8; m * 2];
-            for (dst, (&cb, &cr)) in cbcr.chunks_exact_mut(2).zip(u[..m].iter().zip(&v[..m])) {
-                dst[0] = cb; // Cb = U
-                dst[1] = cr; // Cr = V
-            }
-            interleave_us.set(t.elapsed().as_micros() as u32);
-            Some((y, yw, yh, cbcr, uw, uh))
-        })();
-        timings.planes_us = planes_us.get();
-        timings.interleave_us = interleave_us.get();
+        timings.planes_us = t.elapsed().as_micros() as u32;
+
+        let out = planes.and_then(consume);
         // Only advance on success, so a transient plane-read failure is retried on the next poll.
         if out.is_some() {
             *last_timestamp = timestamp;
