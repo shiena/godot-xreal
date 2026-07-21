@@ -200,16 +200,24 @@ unsafe fn scratch_fbo(g: &Gl, slot: usize) -> u32 {
     fbo
 }
 
-/// Allocate a 2D RGBA8 texture of the given size and return its GL name (`None` on failure).
+/// Allocate a 2D `GL_RGB10_A2` texture of the given size and return its GL name (`None` on
+/// failure). Used for the Multipass per-eye swapchain textures.
 ///
-/// `_srgb` is intentionally ignored: `GL_RGBA8` (UNORM) is the **correct** eye-texture format for this
-/// port, confirmed on device 2026-07-17. Godot's `gl_compatibility` renderer outputs display-ready,
-/// sRGB-encoded bytes, and the XREAL compositor passthrough-samples the eye texture and writes the
+/// `_srgb` is intentionally ignored: the eye texture must be a UNORM format (NOT sRGB-typed),
+/// confirmed on device 2026-07-17. Godot's `gl_compatibility` renderer outputs display-ready,
+/// sRGB-encoded values, and the XREAL compositor passthrough-samples the eye texture and writes the
 /// sampled value to the display without re-encoding. An A/B test allocating the eye texture as
 /// `GL_SRGB8_ALPHA8` (same bytes, sRGB-typed) came out ~26% too dark — the compositor applies a
-/// sample-time sRGB→linear decode — proving UNORM `GL_RGBA8` is right here. (Unity's port uses an
-/// sRGB-typed target because it renders in *linear* space; our display-ready bytes must not be
-/// decoded.) See `docs/archive/multiview-investigation.md` (2026-07-17 color-space test).
+/// sample-time sRGB→linear decode. (Unity's port uses an sRGB-typed target because it renders in
+/// *linear* space; our display-ready values must not be decoded.) See
+/// `docs/archive/multiview-investigation.md` (2026-07-17 color-space test).
+///
+/// **`GL_RGB10_A2`** (UNORM, like the previous `GL_RGBA8`) deliberately matches Godot's
+/// `gl_compatibility` 3D render-target format (probed `0x8059` on device 2026-07-21 — see
+/// [`alloc_texture_array`], which made the same switch first): identical formats let
+/// [`blit_texture`] fill the eye with one exact `glCopyImageSubData` (no conversion, no FBO state)
+/// instead of a converting `glBlitFramebuffer`. Verified on device 2026-07-21: colours match the
+/// blit path.
 pub fn alloc_texture(width: i32, height: i32, _srgb: bool) -> Option<u32> {
     let g = gl()?;
     unsafe {
@@ -227,12 +235,12 @@ pub fn alloc_texture(width: i32, height: i32, _srgb: bool) -> Option<u32> {
         (g.tex_image_2d)(
             GL_TEXTURE_2D,
             0,
-            GL_RGBA8,
+            GL_RGB10_A2,
             width,
             height,
             0,
             GL_RGBA,
-            GL_UNSIGNED_BYTE,
+            GL_UNSIGNED_INT_2_10_10_10_REV,
             std::ptr::null(),
         );
         (g.bind_texture)(GL_TEXTURE_2D, 0);
@@ -414,15 +422,55 @@ unsafe fn temp_layer_tex(g: &Gl, w: i32, h: i32) -> Option<u32> {
 /// FBO blit only if `glCopyImageSubData`/scratch is unavailable or the sizes differ (pre-3.2
 /// devices; the layer > 0 no-op means a black right eye there, as before).
 static LAYER_LOG: AtomicU32 = AtomicU32::new(0);
-/// One-shot gate for the source-format probe in [`blit_texture_to_layer`]: 0 = not yet probed,
-/// 1 = probe ran (result in [`PROBED_SRC_FMT`]).
+/// One-shot gate for the eye-source format probe: 0 = not yet probed, 1 = probe ran (result in
+/// [`PROBED_SRC_FMT`]).
 static PROBE_LOG: AtomicU32 = AtomicU32::new(0);
 /// The probed source internal format (0 until probed / if the probe is unavailable). The direct
-/// same-format copy requires this to equal the array's `GL_RGB10_A2`.
+/// same-format copies require this to equal the eye textures' `GL_RGB10_A2`.
 static PROBED_SRC_FMT: AtomicU32 = AtomicU32::new(0);
-/// Set after the direct same-format `glCopyImageSubData` first fails, so later frames skip the
-/// doomed attempt and go straight to the scratch fallback.
+/// Set after the direct same-format `glCopyImageSubData` into an array layer first fails, so later
+/// frames skip the doomed attempt and go straight to the scratch fallback.
 static DIRECT_COPY_BROKEN: AtomicBool = AtomicBool::new(false);
+
+/// Probe (once) the eye SubViewport texture's internal format and return it (0 = unknown: not yet
+/// probed successfully, or `glGetTexLevelParameteriv` unavailable pre-GLES-3.1). Gates the direct
+/// same-format copies in [`blit_texture`] / [`blit_texture_to_layer`]: GLES restricts which format
+/// pairs the copy entry points may move between, so anything but an exact match degrades to the
+/// converting-blit paths instead of scrambling.
+unsafe fn probed_src_format(g: &Gl, src: u32) -> u32 {
+    if PROBE_LOG
+        .compare_exchange(0, 1, Ordering::Relaxed, Ordering::Relaxed)
+        .is_ok()
+    {
+        if let Some(get_tex_level_parameteriv) = g.get_tex_level_parameteriv {
+            let mut prev_tex2d: i32 = 0;
+            (g.get_integerv)(GL_TEXTURE_BINDING_2D, &mut prev_tex2d);
+            let mut src_fmt: i32 = 0;
+            (g.bind_texture)(GL_TEXTURE_2D, src);
+            get_tex_level_parameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_INTERNAL_FORMAT, &mut src_fmt);
+            (g.bind_texture)(GL_TEXTURE_2D, prev_tex2d as u32);
+            let err = (g.get_error)();
+            if err == 0 {
+                PROBED_SRC_FMT.store(src_fmt as u32, Ordering::Relaxed);
+            }
+            godot::global::godot_print!(
+                "[xreal] eye-src probe: src={src} internal_format={src_fmt:#x} gl_err={err} \
+                 (direct copy {})",
+                if src_fmt == GL_RGB10_A2 && err == 0 {
+                    "enabled: matches eye-texture format"
+                } else {
+                    "disabled: eye textures are RGB10_A2, will convert via blit"
+                }
+            );
+        } else {
+            godot::global::godot_print!(
+                "[xreal] eye-src probe: glGetTexLevelParameteriv unavailable (blit path)"
+            );
+        }
+    }
+    PROBED_SRC_FMT.load(Ordering::Relaxed)
+}
+
 pub fn blit_texture_to_layer(
     src: u32,
     src_w: i32,
@@ -437,49 +485,11 @@ pub fn blit_texture_to_layer(
         return;
     }
     unsafe {
-        // One-shot probe of the source texture's internal format: gates the direct same-format
-        // copy below (GLES restricts which format pairs the copy entry points may move between).
-        if PROBE_LOG
-            .compare_exchange(0, 1, Ordering::Relaxed, Ordering::Relaxed)
-            .is_ok()
-        {
-            if let Some(get_tex_level_parameteriv) = g.get_tex_level_parameteriv {
-                let mut prev_tex2d: i32 = 0;
-                (g.get_integerv)(GL_TEXTURE_BINDING_2D, &mut prev_tex2d);
-                let mut src_fmt: i32 = 0;
-                (g.bind_texture)(GL_TEXTURE_2D, src);
-                get_tex_level_parameteriv(
-                    GL_TEXTURE_2D,
-                    0,
-                    GL_TEXTURE_INTERNAL_FORMAT,
-                    &mut src_fmt,
-                );
-                (g.bind_texture)(GL_TEXTURE_2D, prev_tex2d as u32);
-                let err = (g.get_error)();
-                if err == 0 {
-                    PROBED_SRC_FMT.store(src_fmt as u32, Ordering::Relaxed);
-                }
-                godot::global::godot_print!(
-                    "[xreal] layer-src probe: src={src} internal_format={src_fmt:#x} gl_err={err} \
-                     (direct copy {})",
-                    if src_fmt == GL_RGB10_A2 && err == 0 {
-                        "enabled: matches array format"
-                    } else {
-                        "disabled: array is RGB10_A2, will convert via scratch"
-                    }
-                );
-            } else {
-                godot::global::godot_print!(
-                    "[xreal] layer-src probe: glGetTexLevelParameteriv unavailable (scratch path)"
-                );
-            }
-        }
-
         // Preferred path: identical formats (probed) → ONE exact copy straight into the layer.
         if let Some(copy_image_sub_data) = g.copy_image_sub_data {
             if src_w == dst_w
                 && src_h == dst_h
-                && PROBED_SRC_FMT.load(Ordering::Relaxed) == GL_RGB10_A2 as u32
+                && probed_src_format(g, src) == GL_RGB10_A2 as u32
                 && !DIRECT_COPY_BROKEN.load(Ordering::Relaxed)
             {
                 while (g.get_error)() != 0 {}
@@ -684,16 +694,64 @@ pub fn fill_texture(tex: u32, r: f32, g_: f32, b: f32) {
     }
 }
 
-/// Blit `src` (size `src_w`×`src_h`) into `dst` (size `dst_w`×`dst_h`) as a straight copy (no Y-flip;
-/// both share GL bottom-left origin — see the body comment).
+/// Copy `src` (size `src_w`×`src_h`) into `dst` (size `dst_w`×`dst_h`) as a straight copy (no
+/// Y-flip; both share GL bottom-left origin — see the body comment).
 ///
-/// Blits Godot's rendered viewport color into an eye texture each frame.
+/// Fills a Multipass eye texture from Godot's rendered SubViewport each frame. Preferred path:
+/// since [`alloc_texture`] allocates the eye texture in `GL_RGB10_A2` — the SubViewport's own
+/// format — a same-size fill is ONE exact `glCopyImageSubData` (no format conversion, no FBO
+/// binds/completeness checks/state save-restore). Gated on the same one-shot source-format probe
+/// as [`blit_texture_to_layer`]; a format mismatch, size mismatch, or copy failure falls back to
+/// the converting `glBlitFramebuffer` below.
+static BLIT2D_LOG: AtomicU32 = AtomicU32::new(0);
+/// Set after the direct same-format 2D `glCopyImageSubData` first fails, so later frames skip the
+/// doomed attempt and go straight to the blit fallback.
+static DIRECT_COPY_2D_BROKEN: AtomicBool = AtomicBool::new(false);
 pub fn blit_texture(src: u32, src_w: i32, src_h: i32, dst: u32, dst_w: i32, dst_h: i32) {
     let Some(g) = gl() else { return };
     if src == 0 || dst == 0 {
         return;
     }
     unsafe {
+        // Preferred path: identical formats (probed) → ONE exact copy, no FBO/state churn.
+        if let Some(copy_image_sub_data) = g.copy_image_sub_data {
+            if src_w == dst_w
+                && src_h == dst_h
+                && probed_src_format(g, src) == GL_RGB10_A2 as u32
+                && !DIRECT_COPY_2D_BROKEN.load(Ordering::Relaxed)
+            {
+                while (g.get_error)() != 0 {}
+                copy_image_sub_data(
+                    src,
+                    GL_TEXTURE_2D,
+                    0,
+                    0,
+                    0,
+                    0,
+                    dst,
+                    GL_TEXTURE_2D,
+                    0,
+                    0,
+                    0,
+                    0,
+                    dst_w,
+                    dst_h,
+                    1,
+                );
+                let err = (g.get_error)();
+                if BLIT2D_LOG.fetch_add(1, Ordering::Relaxed) < 8 {
+                    godot::global::godot_print!(
+                        "[xreal] direct_copy_2d dst={dst} src={src} {dst_w}x{dst_h}: gl_err={err}"
+                    );
+                }
+                if err == 0 {
+                    return;
+                }
+                // Failed — remember and fall through to the blit below.
+                DIRECT_COPY_2D_BROKEN.store(true, Ordering::Relaxed);
+            }
+        }
+
         let mut prev_draw: i32 = 0;
         let mut prev_read: i32 = 0;
         (g.get_integerv)(GL_DRAW_FRAMEBUFFER_BINDING, &mut prev_draw);
