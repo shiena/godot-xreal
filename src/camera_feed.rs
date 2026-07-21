@@ -55,7 +55,13 @@ pub struct XrealCameraFeed {
     base: Base<CameraFeed>,
     /// Capture handle from `StartRGBCameraDataCapture`, while active.
     capture_handle: Option<u64>,
+    /// Frames actually grabbed, and `poll_frame()` calls made. The camera publishes slower than we
+    /// poll, so `polls` runs ahead of `frames` — their ratio is how much duplicate work the
+    /// timestamp gate in `rgb_camera_grab_yuv` is skipping.
     frames: u64,
+    polls: u64,
+    /// Timestamp of the last grabbed frame; gates the grab (see `XrealNative::rgb_camera_grab_yuv`).
+    last_timestamp: u64,
     /// Plain textures the shader samples directly (Y = R8, CbCr = RG8). Kept in sync with the frame.
     y_tex: Option<Gd<ImageTexture>>,
     cbcr_tex: Option<Gd<ImageTexture>>,
@@ -75,6 +81,8 @@ impl ICameraFeed for XrealCameraFeed {
             base,
             capture_handle: None,
             frames: 0,
+            polls: 0,
+            last_timestamp: 0,
             y_tex: None,
             cbcr_tex: None,
             feed_camera_server: false,
@@ -126,12 +134,20 @@ impl XrealCameraFeed {
     /// also pushes the frame into the base `CameraFeed` as **separate Y + CbCr** images
     /// (`FEED_YCBCR_SEP`) for standard `CameraServer` consumers. Returns `true` if a frame was
     /// grabbed this call. Call once per frame from a driver.
+    ///
+    /// The camera publishes slower than a 60 Hz render loop polls, so `false` is the normal result
+    /// on the calls in between: the grab is gated on the SDK frame timestamp and does no copy or
+    /// texture upload unless the frame actually changed. The textures keep their last contents,
+    /// so a `false` return needs no handling by the caller.
     #[func]
     fn poll_frame(&mut self) -> bool {
         let Some(session) = session::shared() else {
             return false;
         };
-        let Some((y, yw, yh, cbcr, cw, ch)) = session.rgb_camera_grab_yuv() else {
+        self.polls += 1;
+        // `None` here is the normal "no new frame since the last poll" case, not an error.
+        let Some((y, yw, yh, cbcr, cw, ch)) = session.rgb_camera_grab_yuv(&mut self.last_timestamp)
+        else {
             return false;
         };
         self.frames += 1;
@@ -164,8 +180,9 @@ impl XrealCameraFeed {
             }
             let mean = sum.checked_div(n).unwrap_or(0);
             godot_print!(
-                "[xreal] camera frame #{} y={yw}x{yh} cbcr={cw}x{ch} mean_luma={mean}",
-                self.frames
+                "[xreal] camera frame #{} (polls={}) y={yw}x{yh} cbcr={cw}x{ch} mean_luma={mean}",
+                self.frames,
+                self.polls
             );
         }
         true

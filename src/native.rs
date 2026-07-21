@@ -2053,7 +2053,21 @@ impl XrealNative {
     /// half-res). Returns `(y, y_w, y_h, cbcr, c_w, c_h)` where `cbcr` is `[Cb, Cr, Cb, Cr, …]`
     /// (`Cb = U`, `Cr = V`) — the RG8 layout Godot's `set_ycbcr_images` + a YCbCr shader expect.
     /// The frame handle is disposed before returning.
-    pub fn rgb_camera_grab_yuv(&self) -> Option<YuvFrame> {
+    ///
+    /// `last_timestamp` gates the copy. `TryAcquireLatestImage` hands out a fresh handle to the
+    /// *same* latest frame when nothing new has been published, so polling at 60 Hz over a 30 Hz
+    /// camera re-copies and re-uploads an image we already have on roughly every other call. When
+    /// the acquired timestamp still equals `*last_timestamp` the handle is disposed immediately and
+    /// `None` is returned; on a new frame `*last_timestamp` advances. A timestamp of `0` never
+    /// gates, so an SDK build that leaves the field untouched keeps working.
+    ///
+    /// Comparing timestamps is deliberate: the SDK also exports `TryGetRGBCameraFrame`, a cheaper
+    /// "new frame?" flag, but reading it is a *destructive*, unlocked read-and-clear of shared
+    /// state — only one caller in the process may use it, and a publish landing between its load
+    /// and store is lost. The timestamp is already an out-parameter of the acquire we do anyway,
+    /// and the extra cost over the flag is one hash-map insert/erase. See
+    /// `docs/archive/codex-camera-acquire-analysis.md`.
+    pub fn rgb_camera_grab_yuv(&self, last_timestamp: &mut u64) -> Option<YuvFrame> {
         let acquire = self.rgb_try_acquire_latest?;
         let get_plane = self.rgb_get_data_plane?;
         let dispose = self.rgb_dispose_handle;
@@ -2062,6 +2076,13 @@ impl XrealNative {
         let mut resolution = NrSize2i::default();
         let mut timestamp: u64 = 0;
         if !unsafe { acquire(&mut frame_handle, &mut resolution, &mut timestamp) } {
+            return None;
+        }
+        // Same frame as the last poll — drop the handle without touching the planes.
+        if timestamp != 0 && timestamp == *last_timestamp {
+            if let Some(d) = dispose {
+                unsafe { d(frame_handle) };
+            }
             return None;
         }
         // Copy plane `idx` into an owned buffer. Plane pointers are valid until the handle is disposed.
@@ -2090,6 +2111,10 @@ impl XrealNative {
             }
             Some((y, yw, yh, cbcr, uw, uh))
         })();
+        // Only advance on success, so a transient plane-read failure is retried on the next poll.
+        if out.is_some() {
+            *last_timestamp = timestamp;
+        }
         if let Some(d) = dispose {
             unsafe { d(frame_handle) };
         }
