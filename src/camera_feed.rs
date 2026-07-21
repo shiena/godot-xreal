@@ -22,6 +22,27 @@
 use godot::classes::image::Format;
 use godot::classes::{CameraFeed, ICameraFeed, Image, ImageTexture};
 use godot::prelude::*;
+use std::time::Instant;
+
+/// **TEMPORARY instrumentation** (see `crate::native::GrabTimings`): microseconds accumulated over
+/// the frames since the last report, so the reported figure is a mean rather than one jittery
+/// sample. Remove with the timing report in `poll_frame`.
+#[derive(Default)]
+struct PollTiming {
+    grabs: u32,
+    acquire_us: u64,
+    planes_us: u64,
+    interleave_us: u64,
+    dispose_us: u64,
+    packed_us: u64,
+    image_us: u64,
+    feed_us: u64,
+    /// Split by plane: Y is 921,600 bytes and CbCr 460,800 — exactly 2:1. If the two times come out
+    /// 2:1 the upload is bandwidth/copy bound; if they come out ~1:1 a fixed per-call cost (a sync
+    /// or flush) dominates and shrinking the payload will not help.
+    upload_y_us: u64,
+    upload_cbcr_us: u64,
+}
 
 /// Feed-image plumbing:
 /// - `poll_frame` grabs the XREAL frame as Y + interleaved CbCr and keeps two plain `ImageTexture`s
@@ -62,6 +83,8 @@ pub struct XrealCameraFeed {
     polls: u64,
     /// Timestamp of the last grabbed frame; gates the grab (see `XrealNative::rgb_camera_grab_yuv`).
     last_timestamp: u64,
+    /// TEMPORARY per-stage timing accumulator; reported and reset with the periodic frame log.
+    timing: PollTiming,
     /// Plain textures the shader samples directly (Y = R8, CbCr = RG8). Kept in sync with the frame.
     y_tex: Option<Gd<ImageTexture>>,
     cbcr_tex: Option<Gd<ImageTexture>>,
@@ -83,6 +106,7 @@ impl ICameraFeed for XrealCameraFeed {
             frames: 0,
             polls: 0,
             last_timestamp: 0,
+            timing: PollTiming::default(),
             y_tex: None,
             cbcr_tex: None,
             feed_camera_server: false,
@@ -146,28 +170,53 @@ impl XrealCameraFeed {
         };
         self.polls += 1;
         // `None` here is the normal "no new frame since the last poll" case, not an error.
-        let Some((y, yw, yh, cbcr, cw, ch)) = session.rgb_camera_grab_yuv(&mut self.last_timestamp)
+        let mut grab = crate::native::GrabTimings::default();
+        let Some((y, yw, yh, cbcr, cw, ch)) =
+            session.rgb_camera_grab_yuv(&mut self.last_timestamp, &mut grab)
         else {
             return false;
         };
         self.frames += 1;
 
+        let t = Instant::now();
         let y_data = PackedByteArray::from(y.as_slice());
         let cbcr_data = PackedByteArray::from(cbcr.as_slice());
+        let packed_us = t.elapsed().as_micros() as u64;
         // Y = single-channel R8 (luma); CbCr = two-channel RG8 (Cb in R, Cr in G).
+        let t = Instant::now();
         let Some(y_img) = Image::create_from_data(yw, yh, false, Format::R8, &y_data) else {
             return false;
         };
         let Some(cbcr_img) = Image::create_from_data(cw, ch, false, Format::RG8, &cbcr_data) else {
             return false;
         };
+        let image_us = t.elapsed().as_micros() as u64;
         // Keep the plain ImageTextures the shaders sample directly (the display route); feed the
         // base CameraFeed only on request (see the struct docs for why that route is off by default).
+        let t = Instant::now();
         if self.feed_camera_server {
             self.base_mut().set_ycbcr_images(&y_img, &cbcr_img);
         }
+        let feed_us = t.elapsed().as_micros() as u64;
+        let t = Instant::now();
         update_texture(&mut self.y_tex, &y_img);
+        let upload_y_us = t.elapsed().as_micros() as u64;
+        let t = Instant::now();
         update_texture(&mut self.cbcr_tex, &cbcr_img);
+        let upload_cbcr_us = t.elapsed().as_micros() as u64;
+
+        // TEMPORARY: accumulate this grab's stages for the periodic mean below.
+        let acc = &mut self.timing;
+        acc.grabs += 1;
+        acc.acquire_us += grab.acquire_us as u64;
+        acc.planes_us += grab.planes_us as u64;
+        acc.interleave_us += grab.interleave_us as u64;
+        acc.dispose_us += grab.dispose_us as u64;
+        acc.packed_us += packed_us;
+        acc.image_us += image_us;
+        acc.feed_us += feed_us;
+        acc.upload_y_us += upload_y_us;
+        acc.upload_cbcr_us += upload_cbcr_us;
 
         if self.frames <= 3 || self.frames.is_multiple_of(120) {
             let step = (y.len() / 4096).max(1);
@@ -183,6 +232,32 @@ impl XrealCameraFeed {
                 "[xreal] camera frame #{} (polls={}) y={yw}x{yh} cbcr={cw}x{ch} mean_luma={mean}",
                 self.frames,
                 self.polls
+            );
+            // TEMPORARY: per-stage means over the frames since the last report, in microseconds.
+            let acc = std::mem::take(&mut self.timing);
+            let n = acc.grabs.max(1) as u64;
+            let total = acc.acquire_us
+                + acc.planes_us
+                + acc.interleave_us
+                + acc.dispose_us
+                + acc.packed_us
+                + acc.image_us
+                + acc.feed_us
+                + acc.upload_y_us
+                + acc.upload_cbcr_us;
+            godot_print!(
+                "[xreal] camera timing/grab (us, n={}): acquire={} planes={} interleave={} dispose={} packed={} image={} feed={} upload_y={} upload_cbcr={} | total={}",
+                acc.grabs,
+                acc.acquire_us / n,
+                acc.planes_us / n,
+                acc.interleave_us / n,
+                acc.dispose_us / n,
+                acc.packed_us / n,
+                acc.image_us / n,
+                acc.feed_us / n,
+                acc.upload_y_us / n,
+                acc.upload_cbcr_us / n,
+                total / n
             );
         }
         true

@@ -449,6 +449,23 @@ type FnEglGetError = unsafe extern "C" fn() -> u32;
 /// plus an interleaved CbCr buffer (RG8, half-res), the layout `set_ycbcr_images` + a YCbCr shader expect.
 pub type YuvFrame = (Vec<u8>, i32, i32, Vec<u8>, i32, i32);
 
+/// **TEMPORARY instrumentation.** Per-stage cost of one [`XrealNative::rgb_camera_grab_yuv`], in
+/// microseconds, so the client-side stages can be told apart from the SDK's two getters. Added to
+/// settle the open question in `docs/archive/codex-camera-acquire-analysis.md`: the disassembly says
+/// the getters are hash lookups and pointer arithmetic, which leaves the measured ~2.5 ms/frame
+/// unaccounted for. Remove once that is answered.
+#[derive(Clone, Copy, Default, Debug)]
+pub struct GrabTimings {
+    /// `TryAcquireLatestImage`.
+    pub acquire_us: u32,
+    /// 3x `TryGetRGBCameraDataPlane` + our `to_vec` of each plane (1,382,400 bytes total).
+    pub planes_us: u32,
+    /// Our byte-wise U/V -> CbCr interleave.
+    pub interleave_us: u32,
+    /// `DisposeRGBCameraDataHandle`.
+    pub dispose_us: u32,
+}
+
 // EGL_GL_TEXTURE_2D_KHR from <EGL/eglext.h>
 const EGL_GL_TEXTURE_2D_KHR: u32 = 0x30B1;
 // EGL_NATIVE_BUFFER_ANDROID from <EGL/eglext.h>
@@ -2067,7 +2084,11 @@ impl XrealNative {
     /// and store is lost. The timestamp is already an out-parameter of the acquire we do anyway,
     /// and the extra cost over the flag is one hash-map insert/erase. See
     /// `docs/archive/codex-camera-acquire-analysis.md`.
-    pub fn rgb_camera_grab_yuv(&self, last_timestamp: &mut u64) -> Option<YuvFrame> {
+    pub fn rgb_camera_grab_yuv(
+        &self,
+        last_timestamp: &mut u64,
+        timings: &mut GrabTimings,
+    ) -> Option<YuvFrame> {
         let acquire = self.rgb_try_acquire_latest?;
         let get_plane = self.rgb_get_data_plane?;
         let dispose = self.rgb_dispose_handle;
@@ -2075,9 +2096,11 @@ impl XrealNative {
         let mut frame_handle: i32 = 0;
         let mut resolution = NrSize2i::default();
         let mut timestamp: u64 = 0;
+        let t_acquire = std::time::Instant::now();
         if !unsafe { acquire(&mut frame_handle, &mut resolution, &mut timestamp) } {
             return None;
         }
+        timings.acquire_us = t_acquire.elapsed().as_micros() as u32;
         // Same frame as the last poll — drop the handle without touching the planes.
         if timestamp != 0 && timestamp == *last_timestamp {
             if let Some(d) = dispose {
@@ -2098,26 +2121,40 @@ impl XrealNative {
                 None
             }
         };
+        let (planes_us, interleave_us) = (std::cell::Cell::new(0u32), std::cell::Cell::new(0u32));
         let out = (|| {
+            let t = std::time::Instant::now();
             let (y, yw, yh) = read_plane(0)?; // Y (full-res)
             let (v, _, _) = read_plane(1)?; // plane 1 = V (Cr), half-res
             let (u, uw, uh) = read_plane(2)?; // plane 2 = U (Cb), half-res
+            planes_us.set(t.elapsed().as_micros() as u32);
+            let t = std::time::Instant::now();
             let n = (uw as usize) * (uh as usize);
             let m = n.min(u.len()).min(v.len());
-            let mut cbcr = Vec::with_capacity(m * 2);
-            for i in 0..m {
-                cbcr.push(u[i]); // Cb = U
-                cbcr.push(v[i]); // Cr = V
+            // Interleave into a pre-sized buffer with fixed-width stores. The obvious `push` loop
+            // cannot vectorise — every byte carries a capacity check — and measured 903us/frame on
+            // the X4000 (0.51 GB/s, the slowest stage in the whole grab). This shape is what LLVM
+            // lowers to a NEON two-channel interleaving store. `vec![0; _]` allocates zeroed pages
+            // rather than memset-ing, so the pre-sizing is not an extra pass.
+            let mut cbcr = vec![0u8; m * 2];
+            for (dst, (&cb, &cr)) in cbcr.chunks_exact_mut(2).zip(u[..m].iter().zip(&v[..m])) {
+                dst[0] = cb; // Cb = U
+                dst[1] = cr; // Cr = V
             }
+            interleave_us.set(t.elapsed().as_micros() as u32);
             Some((y, yw, yh, cbcr, uw, uh))
         })();
+        timings.planes_us = planes_us.get();
+        timings.interleave_us = interleave_us.get();
         // Only advance on success, so a transient plane-read failure is retried on the next poll.
         if out.is_some() {
             *last_timestamp = timestamp;
         }
+        let t_dispose = std::time::Instant::now();
         if let Some(d) = dispose {
             unsafe { d(frame_handle) };
         }
+        timings.dispose_us = t_dispose.elapsed().as_micros() as u32;
         out
     }
 

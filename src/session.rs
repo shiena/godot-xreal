@@ -529,11 +529,15 @@ impl XrealSession {
     /// Poll the latest RGB-camera frame as `(y, y_w, y_h, cbcr, c_w, c_h)` — Y plane + interleaved
     /// CbCr — for a YCbCr feed (`set_ycbcr_images`) + shader conversion. Returns `None` when the
     /// SDK's latest frame is still the one `last_timestamp` names (see the native doc).
-    pub fn rgb_camera_grab_yuv(&self, last_timestamp: &mut u64) -> Option<crate::native::YuvFrame> {
+    pub fn rgb_camera_grab_yuv(
+        &self,
+        last_timestamp: &mut u64,
+        timings: &mut crate::native::GrabTimings,
+    ) -> Option<crate::native::YuvFrame> {
         self.native
             .lock()
             .expect("xreal native mutex")
-            .rgb_camera_grab_yuv(last_timestamp)
+            .rgb_camera_grab_yuv(last_timestamp, timings)
     }
 
     /// Re-center the view. Calls the SDK's input-provider recenter (`NativePerception::Recenter`,
