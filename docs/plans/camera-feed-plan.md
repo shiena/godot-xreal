@@ -22,10 +22,17 @@ Status: **IMPLEMENTED 2026-07-13 (device-verified, full colour)** — `src/camer
   camera on.
 - Known failure mode: a pink/magenta panel = wedged camera service — a crashed client kept the
   camera held (`Recv Frame -99` in logcat, `StartRGBCameraDataCapture` returns the `u64::MAX`
-  error sentinel). Recovery requires **replugging the glasses' USB**; an app/device restart is
-  not enough. Handled in commit `1461f7b`: `src/native.rs` surfaces the sentinel as a failed
-  start, `demo/main.gd` latches `_cam_failed` instead of hammering the dead service, and the
-  capture is released on graceful exit.
+  error sentinel). Recovery requires **replugging the glasses' USB AND then fully restarting the
+  app** (2026-07-21: a replug alone is not enough — a running process's native session is bound to
+  the old connection, so its retries keep failing; and an app restart alone is not enough either).
+  Handled in commit `1461f7b`: `src/native.rs` surfaces the sentinel as a failed start,
+  `demo/main.gd` latches `_cam_failed` instead of hammering the dead service, and the capture is
+  released on graceful exit.
+- Second wedge signature (2026-07-21): after an app kill mid-capture, `Start…` can *succeed*
+  (handle=0) with **zero frames ever arriving** — and the stuck pipeline destabilised SLAM into a
+  position runaway (~0.5 m/s drift, no `GetPoseWithStates` errors). `xreal_camera.gd` catches this
+  with a 5 s first-frame watchdog (fails as "wedged", same recovery). The demo pops a modal dialog
+  on either signature (`demo/main.gd` `_show_error_dialog`).
 
 Goal: expose the XREAL glasses' RGB camera to Godot as a **`CameraFeed`** (subclass), so any
 `CameraTexture` / shader can sample the live camera — the Godot-native equivalent of the reference app's

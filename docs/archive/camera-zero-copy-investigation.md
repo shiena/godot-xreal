@@ -89,9 +89,13 @@ If a dmabuf/AHardwareBuffer surfaces at that layer, revive commit `c5b9a67`: the
 
 ## Misc findings (worth keeping)
 
-- Force-stopping the app while the camera is capturing **wedges the glasses camera service**
-  (`StartRGBCameraDataCapture` → sentinel, "Recv Frame -99"); only replugging the glasses USB
-  recovers it. Turn the camera off before killing the app in test loops.
+- Force-stopping the app while the camera is capturing **wedges the glasses camera service**.
+  Two signatures: (a) `StartRGBCameraDataCapture` → sentinel ("Recv Frame -99"); (b) start
+  "succeeds" (handle=0) but zero frames arrive — and in the observed case the stuck pipeline
+  destabilised SLAM into a position runaway (pose position drifting ~0.5 m/s to 150 m+). Recovery
+  = **replug the glasses USB AND fully restart the app** (a running process's native session is
+  bound to the old connection; its retries never succeed). Turn the camera off before killing the
+  app in test loops.
 - One Godot headless APK export produced a broken package **missing
   `assets/.godot/extension_list.cfg`** (GDExtension silently absent at runtime, `.so` present but
   never registered; no dlopen error). Re-exporting fixed it. Worth checking in the APK when the

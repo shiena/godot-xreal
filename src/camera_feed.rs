@@ -100,9 +100,11 @@ impl ICameraFeed for XrealCameraFeed {
                 // Start returned the failure sentinel (see `XrealNative::rgb_camera_start`). On this
                 // device that is a wedged glasses camera — an unclean prior exit (e.g. a render-thread
                 // crash) left it holding the capture, so NRSDK rejects the new connection ("Recv
-                // Frame, -99"). Re-plug the glasses to reset it. (Or CAMERA permission was denied.)
+                // Frame, -99"). Recovery = re-plug the glasses USB AND restart the app: a replug
+                // alone is not enough, because this process's native session stays bound to the old
+                // connection, so retries keep failing (2026-07-21). (Or CAMERA permission denied.)
                 godot_warn!(
-                    "[xreal] camera: RGB capture did not start — glasses camera wedged (re-plug to reset) or CAMERA permission denied"
+                    "[xreal] camera: RGB capture did not start — glasses camera wedged (re-plug the USB and restart the app) or CAMERA permission denied"
                 );
                 false
             }

@@ -31,6 +31,15 @@ var _feed: Object            # XrealCameraFeed while the capture runs
 # setup — a hard failure isn't retried; re-plug the glasses and re-enable to recover.
 var _failed := false
 var _want := false           # camera requested (feed creation is lazy in _process)
+var _started_ms := 0         # when the capture started, for the first-frame watchdog below
+
+## First-frame watchdog. The wedged glasses camera has TWO signatures: (a) Start… returns the
+## failure sentinel (caught at _setup_feed), and (b) Start… "succeeds" but no frame ever arrives —
+## observed 2026-07-21 after an app kill mid-capture (handle=0, zero frames, and the stuck pipeline
+## even destabilised SLAM into a position runaway). If no frame lands within this window, treat it
+## as wedged: fail loudly (the message carries "wedged" — the demo pops a dialog on it) and shut
+## the feed down instead of polling a dead camera forever.
+const FIRST_FRAME_TIMEOUT_MS := 5000
 
 func _ready() -> void:
 	# The .tscn already carries the group; re-add for script-only (code-built) instances.
@@ -97,7 +106,7 @@ func _setup_feed() -> void:
 		# The XREAL capture didn't start: an unclean prior exit left the glasses camera wedged
 		# ("Recv Frame, -99"). Re-plug the glasses to reset it. Don't show an unfed (pink) panel or
 		# spin re-attempting — disable cleanly for this run.
-		_fail("[xreal-camera] XREAL RGB camera did not start (glasses camera wedged? re-plug to reset) — camera disabled")
+		_fail("[xreal-camera] XREAL RGB camera did not start (glasses camera wedged? re-plug the USB AND restart the app — the native session can't rebind a replugged camera) — camera disabled")
 		CameraServer.remove_feed(_feed)
 		_feed = null
 		_failed = true
@@ -112,6 +121,7 @@ func _setup_feed() -> void:
 		print("[cam-geom] RGB projection=%s" % [_system.get_camera_projection_matrix(comp, 0.1, 100.0)])
 	feed_changed.emit(_feed)
 	active_changed.emit(true)
+	_started_ms = Time.get_ticks_msec()
 
 func _process(_delta: float) -> void:
 	# Lazily start the capture ONLY once head tracking is live — before that the session races.
@@ -127,6 +137,18 @@ func _process(_delta: float) -> void:
 	# blend, streaming) that sample them.
 	if _feed:
 		_feed.poll_frame()
+		# First-frame watchdog: Start… can "succeed" on a wedged camera that then never delivers
+		# a frame (see FIRST_FRAME_TIMEOUT_MS). get_y_texture() is null until the first frame.
+		if _feed.get_y_texture() == null and Time.get_ticks_msec() - _started_ms > FIRST_FRAME_TIMEOUT_MS:
+			_fail("[xreal-camera] camera started but no frame arrived within %ds — glasses camera wedged (re-plug the USB AND restart the app) — camera disabled" % (FIRST_FRAME_TIMEOUT_MS / 1000))
+			_feed.set_active(false)
+			CameraServer.remove_feed(_feed)
+			_feed = null
+			_failed = true
+			_want = false
+			enabled = false
+			feed_changed.emit(null)
+			active_changed.emit(false)
 
 func _exit_tree() -> void:
 	# Best-effort camera release on a *graceful* shutdown so the glasses RGB camera is handed back

@@ -317,10 +317,42 @@ func _on_image_set_changed(name: String) -> void:
 
 ## A feature component reported an error (via its `error` signal) — show it on the debug Status
 ## label and log it, so the failure is visible at the load site instead of buried in warnings.
+## Failures that need USER action (currently: the wedged glasses camera, which only a USB re-plug
+## clears) additionally pop a modal dialog on the phone screen — a status-label line is too easy
+## to miss for an error whose fix is physical.
 func _on_feature_error(message: String) -> void:
 	print("[demo] feature error: %s" % message)
 	if _status:
 		_status.text = message
+	# "wedged" is the marker xreal_camera.gd puts in its camera-failure messages. It fires on the
+	# Camera:ON tap (start is lazy) — the earliest point the wedge is detectable at all: nothing
+	# touches the camera at app launch, so launch-time detection would need a start/stop probe.
+	# The dialog text is deliberately short and jargon-free; the technical detail stays in the log.
+	if message.contains("wedged"):
+		_show_error_dialog("Camera unavailable.\nReplug the glasses USB cable,\nthen restart this app.")
+
+## Modal error notice on the phone screen (display 0 — where the user is tapping). Reused across
+## errors; sized like the rest of the phone UI (theme-default dialog text is unreadably small on a
+## 480 dpi phone).
+var _error_dialog: AcceptDialog
+
+func _show_error_dialog(text: String) -> void:
+	if _error_dialog == null:
+		_error_dialog = AcceptDialog.new()
+		_error_dialog.title = "XREAL"
+		var vp := get_viewport().get_visible_rect().size
+		var font_px := int(minf(vp.x, vp.y) * 0.04)
+		var label := _error_dialog.get_label()
+		label.add_theme_font_size_override(&"font_size", font_px)
+		# Wrap instead of stretching the window past the screen edge (the default label never wraps).
+		label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		_error_dialog.get_ok_button().add_theme_font_size_override(&"font_size", font_px)
+		add_child(_error_dialog)
+	_error_dialog.dialog_text = text
+	# Fixed width (85% of the shorter screen side) so wrapping has something to wrap against.
+	var s := get_viewport().get_visible_rect().size
+	_error_dialog.popup_centered(Vector2i(int(minf(s.x, s.y) * 0.85), 0))
 
 ## Push a toggle's on/off state onto the phone-menu controller (keeps the UI in sync when the app,
 ## not the user, changes it — e.g. a failed camera start or an unsupported plane mode).
