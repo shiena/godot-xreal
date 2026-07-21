@@ -20,8 +20,9 @@
 //! ```
 
 use godot::classes::image::Format;
-use godot::classes::{CameraFeed, ICameraFeed, Image, ImageTexture};
+use godot::classes::{CameraFeed, ICameraFeed, Image, ImageTexture, RenderingServer};
 use godot::prelude::*;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Instant;
 
 /// **TEMPORARY instrumentation** (see `crate::native::GrabTimings`): microseconds accumulated over
@@ -177,33 +178,59 @@ impl XrealCameraFeed {
             return false;
         };
         self.frames += 1;
+        let report = self.frames <= 3 || self.frames.is_multiple_of(120);
+        // Read the luma diagnostic before the PBO path moves `y` onto the render thread.
+        let mean = if report { mean_luma(&y) } else { 0 };
 
-        let t = Instant::now();
-        let y_data = PackedByteArray::from(y.as_slice());
-        let cbcr_data = PackedByteArray::from(cbcr.as_slice());
-        let packed_us = t.elapsed().as_micros() as u64;
-        // Y = single-channel R8 (luma); CbCr = two-channel RG8 (Cb in R, Cr in G).
-        let t = Instant::now();
-        let Some(y_img) = Image::create_from_data(yw, yh, false, Format::R8, &y_data) else {
-            return false;
-        };
-        let Some(cbcr_img) = Image::create_from_data(cw, ch, false, Format::RG8, &cbcr_data) else {
-            return false;
-        };
-        let image_us = t.elapsed().as_micros() as u64;
-        // Keep the plain ImageTextures the shaders sample directly (the display route); feed the
-        // base CameraFeed only on request (see the struct docs for why that route is off by default).
-        let t = Instant::now();
-        if self.feed_camera_server {
-            self.base_mut().set_ycbcr_images(&y_img, &cbcr_img);
+        // TEMPORARY (experiment E): once the textures exist, upload straight from the plane buffers
+        // on the render thread through a pixel-unpack buffer — no PackedByteArray, no Image. The
+        // Image path stays for the first frame (it is what creates the textures), while
+        // `feed_camera_server` is on (that route needs the Images), and permanently after any PBO
+        // failure.
+        let pbo_path = self.y_tex.is_some()
+            && self.cbcr_tex.is_some()
+            && !self.feed_camera_server
+            && !PBO_FAILED.load(Ordering::Relaxed);
+        let (mut packed_us, mut image_us, mut feed_us) = (0u64, 0u64, 0u64);
+        let (mut upload_y_us, mut upload_cbcr_us) = (0u64, 0u64);
+
+        if pbo_path {
+            let y_rid = self.y_tex.as_ref().expect("checked above").get_rid();
+            let c_rid = self.cbcr_tex.as_ref().expect("checked above").get_rid();
+            let callable = Callable::from_fn("xreal_camera_pbo_upload", move |_| {
+                upload_planes_pbo(y_rid, yw, yh, &y, c_rid, cw, ch, &cbcr);
+                Variant::nil()
+            });
+            RenderingServer::singleton().call_on_render_thread(&callable);
+        } else {
+            let t = Instant::now();
+            let y_data = PackedByteArray::from(y.as_slice());
+            let cbcr_data = PackedByteArray::from(cbcr.as_slice());
+            packed_us = t.elapsed().as_micros() as u64;
+            // Y = single-channel R8 (luma); CbCr = two-channel RG8 (Cb in R, Cr in G).
+            let t = Instant::now();
+            let Some(y_img) = Image::create_from_data(yw, yh, false, Format::R8, &y_data) else {
+                return false;
+            };
+            let Some(cbcr_img) = Image::create_from_data(cw, ch, false, Format::RG8, &cbcr_data)
+            else {
+                return false;
+            };
+            image_us = t.elapsed().as_micros() as u64;
+            // Keep the plain ImageTextures the shaders sample directly (the display route); feed the
+            // base CameraFeed only on request (see the struct docs for why that route is off by default).
+            let t = Instant::now();
+            if self.feed_camera_server {
+                self.base_mut().set_ycbcr_images(&y_img, &cbcr_img);
+            }
+            feed_us = t.elapsed().as_micros() as u64;
+            let t = Instant::now();
+            update_texture(&mut self.y_tex, &y_img);
+            upload_y_us = t.elapsed().as_micros() as u64;
+            let t = Instant::now();
+            update_texture(&mut self.cbcr_tex, &cbcr_img);
+            upload_cbcr_us = t.elapsed().as_micros() as u64;
         }
-        let feed_us = t.elapsed().as_micros() as u64;
-        let t = Instant::now();
-        update_texture(&mut self.y_tex, &y_img);
-        let upload_y_us = t.elapsed().as_micros() as u64;
-        let t = Instant::now();
-        update_texture(&mut self.cbcr_tex, &cbcr_img);
-        let upload_cbcr_us = t.elapsed().as_micros() as u64;
 
         // TEMPORARY: accumulate this grab's stages for the periodic mean below.
         let acc = &mut self.timing;
@@ -218,16 +245,7 @@ impl XrealCameraFeed {
         acc.upload_y_us += upload_y_us;
         acc.upload_cbcr_us += upload_cbcr_us;
 
-        if self.frames <= 3 || self.frames.is_multiple_of(120) {
-            let step = (y.len() / 4096).max(1);
-            let (mut sum, mut n) = (0u64, 0u64);
-            let mut i = 0;
-            while i < y.len() {
-                sum += y[i] as u64;
-                n += 1;
-                i += step;
-            }
-            let mean = sum.checked_div(n).unwrap_or(0);
+        if report {
             godot_print!(
                 "[xreal] camera frame #{} (polls={}) y={yw}x{yh} cbcr={cw}x{ch} mean_luma={mean}",
                 self.frames,
@@ -259,6 +277,20 @@ impl XrealCameraFeed {
                 acc.upload_cbcr_us / n,
                 total / n
             );
+            // TEMPORARY: the render-thread half of experiment E. `main=` is what poll_frame still
+            // costs; the PBO figures are measured inside the render-thread callback, so they are
+            // *not* part of `total` above.
+            let pbo_n = PBO_UPLOADS.swap(0, Ordering::Relaxed).max(1);
+            let pbo_y = PBO_UPLOAD_Y_US.swap(0, Ordering::Relaxed) / pbo_n;
+            let pbo_c = PBO_UPLOAD_CBCR_US.swap(0, Ordering::Relaxed) / pbo_n;
+            godot_print!(
+                "[xreal] camera upload path={} egl_ctx_on_main={:?} | render-thread pbo (us): y={} cbcr={} sum={}",
+                if pbo_path { "pbo" } else { "image" },
+                crate::gl::has_current_context(),
+                pbo_y,
+                pbo_c,
+                pbo_y + pbo_c
+            );
         }
         true
     }
@@ -275,6 +307,61 @@ impl XrealCameraFeed {
         self.cbcr_tex.clone()
     }
 }
+
+/// Mean luma over a sparse sample of the plane — a cheap "is the image alive?" diagnostic.
+fn mean_luma(y: &[u8]) -> u64 {
+    let step = (y.len() / 4096).max(1);
+    let (mut sum, mut n) = (0u64, 0u64);
+    let mut i = 0;
+    while i < y.len() {
+        sum += y[i] as u64;
+        n += 1;
+        i += step;
+    }
+    sum.checked_div(n).unwrap_or(0)
+}
+
+/// TEMPORARY (experiment E): render-thread half of the PBO upload. Resolves both `ImageTexture`s to
+/// their GL names and pushes each plane through a persistent pixel-unpack buffer, timing each into
+/// the statics below. Any failure latches [`PBO_FAILED`], which returns the feed to the Image path.
+#[allow(clippy::too_many_arguments)]
+fn upload_planes_pbo(
+    y_rid: Rid,
+    yw: i32,
+    yh: i32,
+    y: &[u8],
+    c_rid: Rid,
+    cw: i32,
+    ch: i32,
+    cbcr: &[u8],
+) {
+    let rs = RenderingServer::singleton();
+    let y_tex = rs.texture_get_native_handle(y_rid) as u32;
+    let c_tex = rs.texture_get_native_handle(c_rid) as u32;
+
+    let t = Instant::now();
+    let ok_y = crate::gl::upload_plane_pbo(0, y_tex, yw, yh, crate::gl::GL_RED, y);
+    PBO_UPLOAD_Y_US.fetch_add(t.elapsed().as_micros() as u64, Ordering::Relaxed);
+    let t = Instant::now();
+    let ok_c = crate::gl::upload_plane_pbo(1, c_tex, cw, ch, crate::gl::GL_RG, cbcr);
+    PBO_UPLOAD_CBCR_US.fetch_add(t.elapsed().as_micros() as u64, Ordering::Relaxed);
+    PBO_UPLOADS.fetch_add(1, Ordering::Relaxed);
+
+    if !(ok_y && ok_c) {
+        godot_warn!(
+            "[xreal] camera: PBO upload failed (y_tex={y_tex} ok={ok_y}, cbcr_tex={c_tex} ok={ok_c}) — falling back to the Image path"
+        );
+        PBO_FAILED.store(true, Ordering::Relaxed);
+    }
+}
+
+/// TEMPORARY: experiment-E accumulators, written on the render thread and drained by the periodic
+/// report on the main thread.
+static PBO_UPLOAD_Y_US: AtomicU64 = AtomicU64::new(0);
+static PBO_UPLOAD_CBCR_US: AtomicU64 = AtomicU64::new(0);
+static PBO_UPLOADS: AtomicU64 = AtomicU64::new(0);
+/// Latched on the first PBO failure; the feed then stays on the Image path for the process's life.
+static PBO_FAILED: AtomicBool = AtomicBool::new(false);
 
 /// Create the `ImageTexture` on the first frame, then `update()` it in place (cheap, same size).
 fn update_texture(slot: &mut Option<Gd<ImageTexture>>, img: &Gd<Image>) {

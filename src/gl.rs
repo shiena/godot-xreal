@@ -5,9 +5,15 @@
 //! is that engine side: it `dlopen`s `libGLESv3.so` and exposes just enough GL to allocate a
 //! texture and copy pixels into it.
 //!
-//! **All functions here must be called on Godot's rendering thread** (via
-//! `RenderingServer::call_on_render_thread`), where an EGL context is current. There is no EGL
-//! context on the main thread, so `glGenTextures`/`glClear` there would be a no-op or crash.
+//! **Call everything here from Godot's rendering thread** (via
+//! `RenderingServer::call_on_render_thread`) — the one place an EGL context is guaranteed current.
+//!
+//! This header used to add "there is no EGL context on the main thread". That is wrong, at least on
+//! Android: measured on the X4000 (2026-07-21), [`has_current_context`] called from `_process`
+//! returns `Some(true)`, because Godot's Android main loop *is* the GL thread. Keep using
+//! `call_on_render_thread` anyway — the contract, not the coincidence, is what holds across
+//! platforms and thread models — but note the consequence: on Android that call reorders work
+//! within one thread rather than moving it to another core.
 //!
 //! On desktop the `dlopen` fails and every entry point returns `None`/does nothing, matching the
 //! rest of the crate's "native libs absent → no-op" behaviour.
@@ -53,6 +59,13 @@ type FnGetIntegerv = unsafe extern "C" fn(u32, *mut i32);
 type FnIsEnabled = unsafe extern "C" fn(u32) -> u8;
 type FnEnable = unsafe extern "C" fn(u32);
 type FnDisable = unsafe extern "C" fn(u32);
+type FnGenBuffers = unsafe extern "C" fn(i32, *mut u32);
+type FnBindBuffer = unsafe extern "C" fn(u32, u32);
+type FnBufferData = unsafe extern "C" fn(u32, isize, *const c_void, u32);
+type FnBufferSubData = unsafe extern "C" fn(u32, isize, isize, *const c_void);
+type FnTexSubImage2D = unsafe extern "C" fn(u32, i32, i32, i32, i32, i32, u32, u32, *const c_void);
+type FnPixelStorei = unsafe extern "C" fn(u32, i32);
+type FnEglGetCurrentContext = unsafe extern "C" fn() -> *mut c_void;
 
 const GL_TEXTURE_2D: u32 = 0x0DE1;
 const GL_TEXTURE_2D_ARRAY: u32 = 0x8C1A;
@@ -79,6 +92,14 @@ const GL_TEXTURE_BINDING_2D: u32 = 0x8069;
 const GL_TEXTURE_INTERNAL_FORMAT: u32 = 0x1003;
 const GL_RGB10_A2: i32 = 0x8059;
 const GL_UNSIGNED_INT_2_10_10_10_REV: u32 = 0x8368;
+const GL_PIXEL_UNPACK_BUFFER: u32 = 0x88EC;
+const GL_PIXEL_UNPACK_BUFFER_BINDING: u32 = 0x8A45;
+const GL_STREAM_DRAW: u32 = 0x88E0;
+const GL_UNPACK_ALIGNMENT: u32 = 0x0CF5;
+/// Single-channel 8-bit pixel data (a luma plane).
+pub const GL_RED: u32 = 0x1903;
+/// Two-channel 8-bit pixel data (an interleaved CbCr plane).
+pub const GL_RG: u32 = 0x8227;
 
 struct Gl {
     gen_textures: FnGenTextures,
@@ -111,13 +132,26 @@ struct Gl {
     is_enabled: FnIsEnabled,
     enable: FnEnable,
     disable: FnDisable,
+    gen_buffers: FnGenBuffers,
+    bind_buffer: FnBindBuffer,
+    buffer_data: FnBufferData,
+    buffer_sub_data: FnBufferSubData,
+    tex_sub_image_2d: FnTexSubImage2D,
+    pixel_storei: FnPixelStorei,
+    /// `eglGetCurrentContext`, from `libEGL.so`. Only used by [`has_current_context`] to check this
+    /// module's threading assumption on a live device. Optional — a missing symbol just makes the
+    /// probe report "unknown".
+    egl_get_current_context: Option<FnEglGetCurrentContext>,
     _lib: Library,
+    _egl_lib: Option<Library>,
 }
 
 impl Gl {
     fn load() -> Result<Self, String> {
         unsafe {
             let lib = Library::new(GLES_LIB).map_err(|e| format!("dlopen {GLES_LIB}: {e}"))?;
+            // Optional: only the current-context probe needs it, so a failure must not disable GL.
+            let egl_lib = Library::new("libEGL.so").ok();
             macro_rules! sym {
                 ($name:literal, $ty:ty) => {
                     *lib.get::<$ty>(concat!($name, "\0").as_bytes())
@@ -166,7 +200,19 @@ impl Gl {
                 is_enabled: sym!("glIsEnabled", FnIsEnabled),
                 enable: sym!("glEnable", FnEnable),
                 disable: sym!("glDisable", FnDisable),
+                gen_buffers: sym!("glGenBuffers", FnGenBuffers),
+                bind_buffer: sym!("glBindBuffer", FnBindBuffer),
+                buffer_data: sym!("glBufferData", FnBufferData),
+                buffer_sub_data: sym!("glBufferSubData", FnBufferSubData),
+                tex_sub_image_2d: sym!("glTexSubImage2D", FnTexSubImage2D),
+                pixel_storei: sym!("glPixelStorei", FnPixelStorei),
+                egl_get_current_context: egl_lib.as_ref().and_then(|l| {
+                    l.get::<FnEglGetCurrentContext>(b"eglGetCurrentContext\0")
+                        .map(|s| *s)
+                        .ok()
+                }),
                 _lib: lib,
+                _egl_lib: egl_lib,
             })
         }
     }
@@ -185,9 +231,117 @@ fn gl() -> Option<&'static Gl> {
     .as_ref()
 }
 
+/// Does the calling thread have a current EGL context — i.e. is it legal to call anything else in
+/// this module from here? `Some(false)` means "no context", `None` means the probe is unavailable
+/// (no `libEGL.so` / symbol) and the answer is unknown.
+///
+/// This module's header asserts there is no context on the main thread; the probe exists to check
+/// that on a live device before anyone relies on it either way.
+pub fn has_current_context() -> Option<bool> {
+    let f = gl()?.egl_get_current_context?;
+    Some(!unsafe { f() }.is_null())
+}
+
 /// Scratch framebuffers reused for every `fill`/`blit`, created lazily on the render thread so no
 /// FBO name is generated or deleted per frame. Index 0 = draw/fill target, index 1 = blit source.
 static SCRATCH_FBO: [AtomicU32; 2] = [AtomicU32::new(0), AtomicU32::new(0)];
+
+/// Pixel-unpack buffers reused by [`upload_plane_pbo`], one per plane slot so the two uploads never
+/// contend for the same buffer. Created lazily on the render thread; never deleted.
+static SCRATCH_PBO: [AtomicU32; 2] = [AtomicU32::new(0), AtomicU32::new(0)];
+
+unsafe fn scratch_pbo(g: &Gl, slot: usize) -> u32 {
+    let existing = SCRATCH_PBO[slot].load(Ordering::Relaxed);
+    if existing != 0 {
+        return existing;
+    }
+    let mut pbo: u32 = 0;
+    (g.gen_buffers)(1, &mut pbo);
+    SCRATCH_PBO[slot].store(pbo, Ordering::Relaxed);
+    pbo
+}
+
+/// Upload one tightly-packed 8-bit plane into an existing `GL_TEXTURE_2D` through a persistent
+/// pixel-unpack buffer. `slot` selects which PBO to reuse (0 = luma, 1 = chroma), `components` is
+/// [`GL_RED`] or [`GL_RG`], and `tex` is the GL name from
+/// `RenderingServer::texture_get_native_handle`. Returns `false` if GL is unavailable, the sizes
+/// disagree, or the driver raised an error.
+///
+/// **Why a PBO.** Measured on the X4000 (Adreno 710), a plain `glTexSubImage2D` from client memory
+/// costs ~1.78 ns per *texel* regardless of bytes per texel (1651us for 921,600 R8 texels; 409us
+/// for 230,400 RG8 texels) — that signature is the driver tiling/swizzling every texel on the CPU.
+/// With the source in a buffer object the driver is free to do that pass on the GPU instead.
+///
+/// Godot's renderer owns the GL state, so every binding this touches is saved and restored.
+pub fn upload_plane_pbo(
+    slot: usize,
+    tex: u32,
+    width: i32,
+    height: i32,
+    components: u32,
+    data: &[u8],
+) -> bool {
+    let Some(g) = gl() else { return false };
+    let bytes_per_texel = match components {
+        GL_RED => 1,
+        GL_RG => 2,
+        _ => return false,
+    };
+    let expected = (width as usize) * (height as usize) * bytes_per_texel;
+    if tex == 0 || width <= 0 || height <= 0 || data.len() < expected || slot >= SCRATCH_PBO.len() {
+        return false;
+    }
+    unsafe {
+        let pbo = scratch_pbo(g, slot);
+        if pbo == 0 {
+            return false;
+        }
+        let (mut prev_tex, mut prev_pbo, mut prev_align) = (0i32, 0i32, 4i32);
+        (g.get_integerv)(GL_TEXTURE_BINDING_2D, &mut prev_tex);
+        (g.get_integerv)(GL_PIXEL_UNPACK_BUFFER_BINDING, &mut prev_pbo);
+        (g.get_integerv)(GL_UNPACK_ALIGNMENT, &mut prev_align);
+        while (g.get_error)() != 0 {} // drop any pre-existing error so ours is attributable
+
+        (g.bind_buffer)(GL_PIXEL_UNPACK_BUFFER, pbo);
+        // Orphan, then refill: re-specifying the store lets the driver hand back fresh memory
+        // instead of stalling until the previous frame's transfer has been consumed.
+        (g.buffer_data)(
+            GL_PIXEL_UNPACK_BUFFER,
+            expected as isize,
+            std::ptr::null(),
+            GL_STREAM_DRAW,
+        );
+        (g.buffer_sub_data)(
+            GL_PIXEL_UNPACK_BUFFER,
+            0,
+            expected as isize,
+            data.as_ptr() as *const c_void,
+        );
+        // R8 rows are not 4-byte aligned; without this the driver reads padded rows.
+        (g.pixel_storei)(GL_UNPACK_ALIGNMENT, 1);
+        (g.bind_texture)(GL_TEXTURE_2D, tex);
+        (g.tex_sub_image_2d)(
+            GL_TEXTURE_2D,
+            0,
+            0,
+            0,
+            width,
+            height,
+            components,
+            GL_UNSIGNED_BYTE,
+            std::ptr::null(), // offset 0 into the bound pixel-unpack buffer
+        );
+        let err = (g.get_error)();
+
+        (g.pixel_storei)(GL_UNPACK_ALIGNMENT, prev_align);
+        (g.bind_texture)(GL_TEXTURE_2D, prev_tex as u32);
+        (g.bind_buffer)(GL_PIXEL_UNPACK_BUFFER, prev_pbo as u32);
+        if err != 0 {
+            godot::global::godot_warn!("[xreal] gl: PBO upload slot {slot} -> GL error {err:#x}");
+        }
+        err == 0
+    }
+}
 
 unsafe fn scratch_fbo(g: &Gl, slot: usize) -> u32 {
     let existing = SCRATCH_FBO[slot].load(Ordering::Relaxed);
