@@ -37,6 +37,7 @@ Documentation, grouped by genre. Archived investigation logs are kept verbatim �
 
 | Doc | Outcome |
 |---|---|
+| [camera-zero-copy-investigation.md](archive/camera-zero-copy-investigation.md) | 2026-07-21: camera copy-path load PoCs, measured then reverted (code lives at `c5b9a67`). R8 `AHardwareBuffer` rejected by this gralloc (`isSupported R8=0, RGBA8=1, YCbCr420=1`); render-thread direct `glTexSubImage2D` works (3.0–3.6 → 2.5–2.7 ms, main thread freed). Floor ≈ the SDK's own `TryAcquireLatestImage` (~1.5–2 ms) — RE that (and `TryGetRGBCameraFrame`) before reviving. |
 | [codex-headlock-analysis.md](archive/codex-headlock-analysis.md) | Led to the head-lock fix: `UpdateDeviceState(updateType=1)` refreshes the compositor render pose. Solved 2026-07-13. |
 | [roll-tracking-investigation.md](archive/roll-tracking-investigation.md) | Roll was missing from the session-manager `NrPose`; solved by switching the eye cameras to the display pose (`GetHeadPoseAtTime` 4×4). |
 | [multiview-investigation.md](archive/multiview-investigation.md) | Handoff written while head-lock was unsolved (it is now). Multiview was later fixed (2026-07-17): both eyes render; stays opt-in (no perf gain over Multipass). |
