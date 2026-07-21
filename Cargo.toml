@@ -1,6 +1,6 @@
 [package]
 name = "godot_xreal"
-version = "1.0.3"
+version = "1.0.4"
 edition = "2021"
 authors = ["KOGA Mitsuhiro <shiena.jp@gmail.com>"]
 license = "MIT"

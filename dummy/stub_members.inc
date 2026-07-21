@@ -34,6 +34,8 @@ static const StubSignal _s_XrealAR[] = {
 static const StubMethod _m_XrealCameraFeed[] = {
   {"poll_frame",1,"",0,0},
   {"get_y_texture",24,"ImageTexture",0,0},
+  {"get_y_data",29,"",0,0},
+  {"get_y_data_size",24,"Vector2i",0,0},
   {"get_cbcr_texture",24,"ImageTexture",0,0},
 };
 static const StubMethod _m_XrealHeadTracker[] = {
@@ -99,6 +101,7 @@ static const StubArg _a_XrealSystem_stream_push_audio[] = {{29,"","samples"},{2,
 static const StubArg _a_XrealSystem_stream_push_frame[] = {{2,"","gl_texture_id"},{2,"","timestamp_ns"},};
 static const StubArg _a_XrealSystem_set_stereo_mode[] = {{2,"","mode"},};
 static const StubArg _a_XrealSystem_set_tracking_type[] = {{2,"","mode"},};
+static const StubArg _a_XrealSystem_set_input_source[] = {{2,"","source"},};
 static const StubMethod _m_XrealSystem[] = {
   {"is_available",1,"",0,0},
   {"is_session_started",1,"",0,0},
@@ -156,6 +159,7 @@ static const StubMethod _m_XrealSystem[] = {
   {"is_stream_active",1,"",0,0},
   {"set_stereo_mode",0,"",1,_a_XrealSystem_set_stereo_mode},
   {"set_tracking_type",0,"",1,_a_XrealSystem_set_tracking_type},
+  {"set_input_source",0,"",1,_a_XrealSystem_set_input_source},
   {"get_hmd_time_nanos",2,"",0,0},
   {"get_diagnostics",4,"",0,0},
   {"get_present_fps",3,"",0,0},
@@ -188,10 +192,10 @@ static const StubConst _c_XrealSystem[] = {
 };
 static const StubMembers stub_members[] = {
   {"XrealAR",0,0,_s_XrealAR,13,0,0},
-  {"XrealCameraFeed",_m_XrealCameraFeed,3,0,0,0,0},
+  {"XrealCameraFeed",_m_XrealCameraFeed,5,0,0,0,0},
   {"XrealHandTracker",0,0,0,0,0,0},
   {"XrealHeadTracker",_m_XrealHeadTracker,3,_s_XrealHeadTracker,10,_c_XrealHeadTracker,9},
-  {"XrealSystem",_m_XrealSystem,67,0,0,_c_XrealSystem,16},
+  {"XrealSystem",_m_XrealSystem,68,0,0,_c_XrealSystem,16},
 };
 enum { STUB_MEMBERS_COUNT = sizeof(stub_members) / sizeof(stub_members[0]) };
-#define STUB_SN_POOL 519
+#define STUB_SN_POOL 533
