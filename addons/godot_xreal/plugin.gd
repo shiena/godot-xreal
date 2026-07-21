@@ -58,6 +58,20 @@ const PROJECT_SETTINGS: Array[Dictionary] = [
 		"default": -1,
 	},
 	{
+		# Which input sources InitUserDefinedSettings asks the SDK for. "SDK Default" (-1) leaves the
+		# `debug.xreal.input_source` property / native default (Controller) in charge.
+		#
+		# Only pick a value with Hands if you actually use hand tracking: the Hands bit makes the SDK
+		# call NativePerception::SetHandTrackingEnabled synchronously during input start, measured at
+		# ~878 ms of cold start on an X4000 + One Pro — and hand tracking is Air 2 Ultra only, so on
+		# any other headset that is pure startup latency. See docs/plans/startup-latency.md.
+		"name": "xreal/input_source",
+		"type": TYPE_INT,
+		"hint": PROPERTY_HINT_ENUM,
+		"hint_string": "SDK Default:-1,Controller:1,Hands:2,Controller And Hands:3",
+		"default": -1,
+	},
+	{
 		# Keep the glasses display on while the headset is not worn (bypass the proximity sensor's
 		# auto-off). On by default; turn off to let the display sleep when the glasses are taken off.
 		"name": "xreal/display_bypass_psensor",

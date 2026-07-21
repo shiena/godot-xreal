@@ -47,6 +47,40 @@ pub fn tracking_mode_override() -> i32 {
     TRACKING_MODE_OVERRIDE.load(Ordering::Relaxed)
 }
 
+/// Explicit input-source override set from GDScript (`XrealSystem.set_input_source`). `-1` = unset
+/// (fall through to the system property / the controller-only default). Must be set **before** the
+/// session bootstraps — it is read once at `InitUserDefinedSettings`.
+static INPUT_SOURCE_OVERRIDE: AtomicI32 = AtomicI32::new(-1);
+
+/// Set the input-source override from GDScript. See [`input_source`].
+pub fn set_input_source_override(source: i32) {
+    INPUT_SOURCE_OVERRIDE.store(source, Ordering::Relaxed);
+}
+
+/// `InitUserDefinedSettings`'s `inputSource`: 1 = Controller, 2 = Hands, 3 = ControllerAndHands.
+/// Bit 1 (Hands) is the gate `InputManager::UpdateHandPose` checks, so hand tracking needs 2 or 3.
+///
+/// **Defaults to 1 (controller only), because asking for hands costs ~878 ms of cold start.**
+/// Measured on the X4000 + One Pro (2026-07-22): with the Hands bit set,
+/// `InputManager::InputStart @ 0x78794` calls `NativePerception::SetHandTrackingEnabled(true) @
+/// 0x97174` synchronously, and that single call is the entire gap between the SDK reporting input
+/// device 2 and device 3 — 878 ms of the 1.39 s input start. The reference Unity app ships
+/// `inputSource=0`. See `docs/archive/codex-input-start-analysis.md`.
+///
+/// Hand tracking is Air 2 Ultra only, so on every other headset that 878 ms bought nothing at all.
+/// Opt back in with the `xreal/input_source` project setting (mirroring Unity, which exposes Input
+/// Source the same way) — the demo reads it in `demo/main.gd` and passes it to
+/// `XrealSystem.set_input_source` before the rig starts. `xreal_hands.tscn` warns when it is not
+/// set, because dropping that scene in cannot turn it on for you: the choice is read once at
+/// bootstrap, before any feature could react to it.
+fn input_source() -> i32 {
+    let ovr = INPUT_SOURCE_OVERRIDE.load(Ordering::Relaxed);
+    if ovr >= 0 {
+        return ovr;
+    }
+    android_prop_i32(b"debug.xreal.input_source\0").unwrap_or(1)
+}
+
 /// Explicit stereo-rendering-mode override set from GDScript (`XrealSystem.set_stereo_mode`).
 /// `-1` = unset (fall through to system property / default Multipass). Must be set **before** the
 /// session bootstraps — it is read once at `InitUserDefinedSettings`.
@@ -292,9 +326,10 @@ impl XrealSession {
         // log before falling back to narrower tracking modes.
         let stereo_mode = stereo_rendering_mode();
         let tracking_mode = tracking_mode();
+        let input_src = input_source();
         godot::global::godot_print!(
             "[xreal] stereo_rendering_mode = {stereo_mode} (0=Multipass, 2=Multiview), \
-             tracking_type = {tracking_mode} (0=6DoF, 1=3DoF, 2=0DoF)"
+             tracking_type = {tracking_mode} (0=6DoF, 1=3DoF, 2=0DoF),              input_source = {input_src} (1=Controller, 3=ControllerAndHands)"
         );
         let settings = UserDefinedSettings {
             color_space: 1,
@@ -306,11 +341,9 @@ impl XrealSession {
             tracking_type: tracking_mode,
             support_mono_mode: 0,
             unity_activity: activity,
-            // InputSource enum (XREAL SDK): 1 = Controller, 2 = Hands, 3 = ControllerAndHands. Bit 1 =
-            // Hands is the gate `InputManager::UpdateHandPose` checks (`(*(InputManager+0x30))+0x18` bit
-            // 1); with 0 (none) hand tracking never runs. 3 keeps controller input while enabling hands
-            // (hand tracking is Air 2 Ultra only; the bit is simply never satisfied on the One Pro).
-            input_source: 3,
+            // See `input_source()`: controller-only by default because the Hands bit costs ~878 ms
+            // of cold start; the hands feature opts back in.
+            input_source: input_src,
         };
         if !native.init_user_defined_settings(settings) {
             return TryStart::Disabled(

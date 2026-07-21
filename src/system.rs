@@ -769,6 +769,22 @@ impl XrealSystem {
         session::set_tracking_mode_override(mode as i32);
     }
 
+    /// Which input sources `InitUserDefinedSettings` asks the SDK for: `1` = Controller (default),
+    /// `2` = Hands, `3` = ControllerAndHands. Must be called **before** the XR rig starts the session
+    /// — it is read once at bootstrap. Also settable with
+    /// `adb shell setprop debug.xreal.input_source <n>`.
+    ///
+    /// **Only ask for Hands if you actually use hand tracking.** The Hands bit makes the SDK call
+    /// `NativePerception::SetHandTrackingEnabled(true)` synchronously during input start, measured at
+    /// **~878 ms of cold start** on an X4000 + One Pro — and hand tracking is Air 2 Ultra only, so on
+    /// any other headset that is pure latency. `addons/godot_xreal/features/xreal_hands.tscn` sets
+    /// this to `3` from its `_ready()`, so scenes that include the hands feature get it automatically
+    /// and everyone else starts faster. See `docs/archive/codex-input-start-analysis.md`.
+    #[func]
+    fn set_input_source(&self, source: i64) {
+        session::set_input_source_override(source as i32);
+    }
+
     /// Current HMD clock in nanoseconds (`0` while the perception pipe is down).
     #[func]
     fn get_hmd_time_nanos(&self) -> i64 {

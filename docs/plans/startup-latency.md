@@ -1,6 +1,8 @@
 # Startup latency: phone screen → glasses rendering
 
-Status: **one fix shipped (`750a5e7`), two leads open.** Measured 2026-07-22 on an X4000 (Beam Pro)
+Status: **two fixes shipped (`750a5e7` + the input-source default), one lead open.** Phone-to-glasses
+went from **4.42 s to ~2.9 s**; process-start-to-glasses from **5.39 s to ~3.9 s**, against the
+reference Unity app's 2.76 s. Measured 2026-07-22 on an X4000 (Beam Pro)
 + XREAL One Pro, cold start via `adb shell am start`, against the reference Unity app
 (`com.kadinche.layeredclient.xreal`, Unity 6000.0.77f1, XREAL SDK 3.1.0) measured the same way.
 
@@ -81,7 +83,9 @@ window + auto-PiP) now competes with scene loading, which is likely why it measu
 **Answer to "can a Godot project setting fix this?": no.** The autoload setting addresses the wrong
 half — it moves the *input* to the bootstrap, not the bootstrap's start.
 
-## Open lead 1: the bootstrap start is pinned to main-scene load (~1.45 s)
+## Open lead: the bootstrap start is pinned to main-scene load (~1.45 s)
+
+With the two fixes below in, this is the largest single item left.
 
 Unity starts XR during engine initialisation; we start it from the first `_process` of a node in the
 scene tree. Closing this needs the bootstrap to run without a scene, which means one of:
@@ -95,18 +99,44 @@ scene tree. Closing this needs the bootstrap to run without a scene, which means
   thread-safe, and this codebase has history with SDK threading (see `src/signal_guard.rs`).
 - **Smaller main scene**: whatever the demo can shed shortens this directly. Not a library fix.
 
-## Open lead 2: SDK input start, 1.39 s vs Unity's 0.20 s
+## Fixed: the Hands input bit was costing 878 ms (`xreal/input_source`)
 
-Between our `display start callback` and `native session created` the SDK spends ~1.39 s, reported
-to us as device-state callbacks `0 → 2 → 3 → 4` (`unity_plugin.rs::xr_set_device_connected`). Unity's
-equivalent — `[XR] [InputManager] InputStart` to `InputStart End` — takes **0.20 s** on the same
-device, cold.
+Between our `display start callback` and `native session created` the SDK spent ~1.39 s, reported to
+us as device-state callbacks `0 → 2 → 3 → 4`. Unity's equivalent took 0.20 s. RE'd in
+`docs/archive/codex-input-start-analysis.md`; the answer is not 6DoF SLAM and not our hand-built
+`IUnityXRInput` table:
 
-The transitions are the SDK calling *us*, so the pacing is the SDK's, not our polling granularity.
-Why it is ~7× slower for us is **unresolved**. Candidates: a different tracking mode or perception
-configuration, initialisation Unity's XR loader does earlier that we do later, or something we hand
-`InitUserDefinedSettings` that forces a slower path. This is ~1.2 s of the remaining gap and the
-largest single unknown.
+**We passed `input_source = 3` (ControllerAndHands) to `InitUserDefinedSettings`, and the only thing
+`InputManager::InputStart @ 0x78794` does between reporting device 2 and device 3 is call
+`NativePerception::SetHandTrackingEnabled(true) @ 0x97174`, synchronously.** The reference Unity app
+ships `inputSource=0`. Hand tracking is Air 2 Ultra only — the code comment next to our hardcoded `3`
+even said so — so on every other headset that call bought nothing.
+
+The default is now **Controller only**, with `xreal/input_source` to opt back in (Unity exposes the
+same choice in its Project Settings). Measured with the setting left unset, hands feature still
+present in the demo scene:
+
+| | before | after |
+|---|---|---|
+| device-state sequence | 0 → 2 → 3 → 4 | **0 → 2** (hand notifications gone) |
+| device 0 → 2 | 394 ms | ~325 ms |
+| device 2 → `GfxThreadStart` | 878 ms + | **~88 ms** |
+| input start total | ~1.39 s | **~0.41 s** |
+| process start → `GfxThreadStart` | 4.24 s | 3.87 / 3.90 s |
+
+`xreal_hands.tscn` cannot turn the bit on for you — `input_source` is read once at bootstrap, before
+any feature node could react — so it emits a `push_warning` naming the setting instead of failing
+silently.
+
+**This repo's own `project.godot` sets `input_source=3`**, because the demo exists to show every
+feature and hand tracking is one of them. So the demo keeps paying the 878 ms; the numbers above are
+what an app that does not ask for hands gets. If you are timing the demo's startup, that is why.
+
+The remaining 394 → ~325 ms is a composite (HMD `StartOrResume`, device/category and six
+eye-geometry queries, perception `StartOrResume(6DoF)`, controller `StartOrResume`) with no sleep,
+retry or timeout in the wrapper. Unity reaches the same subsystems' `Resume` branches instead, at
+7 + 69 + 75 ms, which **LIKELY** reflects lifecycle placement rather than a setting we can change.
+Not pursued further.
 
 ## Measurement notes
 

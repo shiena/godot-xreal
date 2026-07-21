@@ -38,7 +38,20 @@ func _make_hand(color: Color) -> Array:
 	return arr
 
 func _ready() -> void:
+	# Hand tracking needs the SDK's Hands input bit, which is OFF by default because asking for it
+	# costs ~878ms of cold start (NativePerception::SetHandTrackingEnabled runs synchronously during
+	# input start; see docs/plans/startup-latency.md). Dropping this scene in cannot turn it on for
+	# you - the session bootstraps from the XR rig's first _process and the choice has to be made
+	# before that - so say so loudly instead of failing silently.
 	if XrealShared.is_native_runtime():
+		var src := int(ProjectSettings.get_setting("xreal/input_source", -1))
+		# -1 ("SDK Default") resolves to controller-only, so it has no Hands bit either. Parenthesise
+		# the mask: in GDScript `==` binds tighter than `&`.
+		if src < 0 or (src & 2) == 0:
+			var shown := "SDK Default (controller only)" if src < 0 else str(src)
+			push_warning(("[xreal-hands] hand tracking is off: set Project Settings > " +
+				"xreal/input_source to \"Controller And Hands\" (currently %s). It defaults to " +
+				"controller-only because the Hands bit costs ~878 ms of startup.") % shown)
 		XrealShared.get_hand_tracker(get_tree())  # the trackers register with XRServer in its ready
 	_joints["/user/hand_tracker/left"] = _make_hand(Color(0.30, 0.70, 1.0))
 	_joints["/user/hand_tracker/right"] = _make_hand(Color(1.0, 0.55, 0.30))

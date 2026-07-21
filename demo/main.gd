@@ -97,6 +97,11 @@ func _ready() -> void:
 		var stereo_mode := int(ProjectSettings.get_setting("xreal/stereo_mode", -1))
 		if stereo_mode >= 0 and _system.has_method(&"set_stereo_mode"):
 			_system.set_stereo_mode(stereo_mode)
+		# Input sources (1 = Controller [default], 2 = Hands, 3 = both). Hands costs ~878ms of cold
+		# start — see the setting's comment in addons/godot_xreal/plugin.gd.
+		var input_source := int(ProjectSettings.get_setting("xreal/input_source", -1))
+		if input_source >= 0 and _system.has_method(&"set_input_source"):
+			_system.set_input_source(input_source)
 	else:
 		push_error("[demo] godot_xreal GDExtension not loaded — XrealSystem/XrealHeadTracker missing. Build the Android .so (cargo ndk) and check the .gdextension paths.")
 	_spawn_rig()
