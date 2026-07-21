@@ -7,6 +7,11 @@ Status: **IMPLEMENTED 2026-07-13 (device-verified, full colour)** — `src/camer
   `CameraTexture` shows only a placeholder for script-fed feeds** — so the feed also keeps two
   plain `ImageTexture`s (`get_y_texture()` / `get_cbcr_texture()`) that the 3D panel shader
   samples directly.
+- Since that made the `set_ycbcr_images` route consumer-less (every addon consumer — panel, blend,
+  stream, photo — samples the plain textures), the per-frame `set_ycbcr_images` push is **gated
+  behind `feed_camera_server` (default OFF)** as of 2026-07-21: it cost a duplicate GPU upload per
+  frame for a route nothing displays. Set it `true` only for external code that consumes
+  `CameraServer` feeds through the standard API.
 - `set_ycbcr_images` only exists from godot-rust **`api-4-6`** (crate feature bumped).
 - Colour conversion is a port of the SDK's `YUVTransRGB` (full-range BT.601) in the panel shader.
 - **The RGB camera does _not_ conflict with 6DoF SLAM** (disproved on-device 2026-07-18, commit

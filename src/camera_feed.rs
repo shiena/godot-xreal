@@ -2,8 +2,11 @@
 //!
 //! Subclasses `CameraFeed` (the idiomatic custom-camera-source pattern): `activate_feed` starts the
 //! XREAL RGB capture, `deactivate_feed` stops it, and `poll_frame()` — called each frame by a driver
-//! (e.g. the demo's `_process`) — pushes the latest frame into the feed. Spike scope: pushes the
-//! **Y plane** as grayscale `RGB8` via `set_rgb_image`. See `docs/plans/camera-feed-plan.md`.
+//! (e.g. the addon's `xreal_camera.gd`) — publishes the latest frame as **Y + CbCr textures** for a
+//! YCbCr→RGB shader (no CPU colour conversion). See `docs/plans/camera-feed-plan.md`.
+//!
+//! **Consumers read the custom getters, NOT the standard `CameraServer` texture route** — see the
+//! class docs on [`XrealCameraFeed`] for the full story (this trips up readers who know `CameraFeed`).
 //!
 //! Usage (GDScript):
 //! ```gdscript
@@ -12,6 +15,8 @@
 //! feed.set_active(true)          # -> activate_feed() starts the camera
 //! # each frame:
 //! feed.poll_frame()
+//! # display: sample feed.get_y_texture() / feed.get_cbcr_texture() in a YCbCr->RGB shader
+//! # (addons/godot_xreal/shaders/xreal_ycbcr*.gdshader) — NOT via CameraTexture.
 //! ```
 
 use godot::classes::image::Format;
@@ -19,19 +24,31 @@ use godot::classes::{CameraFeed, ICameraFeed, Image, ImageTexture};
 use godot::prelude::*;
 
 /// Feed-image plumbing:
-/// - `poll_frame` grabs the XREAL frame as Y + interleaved CbCr, calls `set_ycbcr_images` (so the
-///   Godot CameraFeed carries data), AND keeps two plain `ImageTexture`s (`get_y_texture` /
-///   `get_cbcr_texture`) updated. The 3D panel shader samples those ImageTextures directly — a
-///   `CameraTexture` bound to a *script-fed* feed shows only the placeholder on this build, so the
-///   direct textures are what actually display (matching the XREAL SDK's YUVTransRGB sample).
+/// - `poll_frame` grabs the XREAL frame as Y + interleaved CbCr and keeps two plain `ImageTexture`s
+///   (`get_y_texture` / `get_cbcr_texture`) updated — the textures every addon shader samples
+///   directly (matching the XREAL SDK's YUVTransRGB sample). Only with `feed_camera_server = true`
+///   does it ALSO call `set_ycbcr_images` so the base `CameraFeed` carries data for standard
+///   `CameraServer` consumers; that route is off by default because a `CameraTexture` bound to a
+///   *script-fed* feed shows only the placeholder on this build, so the extra per-frame GPU upload
+///   would feed a route nothing displays.
 use crate::session;
 
 /// The XREAL glasses' RGB camera exposed as a Godot `CameraFeed` (full colour, via the native C ABI).
 ///
-/// Add it to the `CameraServer` and call `poll_frame()` each frame to push the latest frame as
-/// separate Y + CbCr planes; sample `get_y_texture()` / `get_cbcr_texture()` in a YCbCr→RGB shader
-/// to display it. Present only on glasses that carry an RGB camera (e.g. the One Pro, not the
-/// Air 2 Ultra — gate on `XrealSystem.is_camera_supported()`).
+/// Add it to the `CameraServer` and call `poll_frame()` each frame to grab the latest frame; sample
+/// `get_y_texture()` (R8 luma) and `get_cbcr_texture()` (RG8 chroma) in a YCbCr→RGB shader to
+/// display it (`addons/godot_xreal/shaders/xreal_ycbcr*.gdshader` do exactly that). Present only on
+/// glasses that carry an RGB camera (e.g. the One Pro, not the Air 2 Ultra — gate on
+/// `XrealSystem.is_camera_supported()`).
+///
+/// **Read frames via the custom getters, not `CameraTexture`.** If you know Godot's `CameraFeed`
+/// this is the surprise: frames do NOT flow through the standard `CameraServer` texture route by
+/// default. On this build a `CameraTexture` bound to a script-fed feed shows only the placeholder,
+/// so the addon bypasses it — `poll_frame()` updates the two plain `ImageTexture`s above and every
+/// consumer (camera panel, blend capture, stream, photo capture) samples those directly. Code that
+/// consumes feeds through the standard `CameraFeed` API can opt in via `feed_camera_server`, which
+/// additionally pushes each frame into the base feed (`set_ycbcr_images`) at the cost of a second
+/// per-frame GPU upload.
 #[derive(GodotClass)]
 #[class(base = CameraFeed)]
 pub struct XrealCameraFeed {
@@ -42,6 +59,13 @@ pub struct XrealCameraFeed {
     /// Plain textures the shader samples directly (Y = R8, CbCr = RG8). Kept in sync with the frame.
     y_tex: Option<Gd<ImageTexture>>,
     cbcr_tex: Option<Gd<ImageTexture>>,
+    /// Also push each frame into the base `CameraFeed` via `set_ycbcr_images` — the route standard
+    /// `CameraServer` consumers read. **Off by default**: nothing in the addon reads it (a
+    /// `CameraTexture` bound to this script-fed feed shows only the placeholder on this build) and
+    /// it duplicates every frame's GPU upload. Turn on only for external code that consumes
+    /// `CameraServer` feeds through the standard API.
+    #[export]
+    feed_camera_server: bool,
 }
 
 #[godot_api]
@@ -53,6 +77,7 @@ impl ICameraFeed for XrealCameraFeed {
             frames: 0,
             y_tex: None,
             cbcr_tex: None,
+            feed_camera_server: false,
         }
     }
 
@@ -94,9 +119,11 @@ impl ICameraFeed for XrealCameraFeed {
 
 #[godot_api]
 impl XrealCameraFeed {
-    /// Poll the latest RGB-camera frame and push it into the feed as **separate Y + CbCr** images
-    /// (`FEED_YCBCR_SEP`), for full-colour display via the YCbCr→RGB shader. Returns `true` if a
-    /// frame was pushed this call. Call once per frame from a driver.
+    /// Poll the latest RGB-camera frame and refresh `get_y_texture()` / `get_cbcr_texture()` (the
+    /// textures the YCbCr→RGB shaders sample — the display route). With `feed_camera_server` on it
+    /// also pushes the frame into the base `CameraFeed` as **separate Y + CbCr** images
+    /// (`FEED_YCBCR_SEP`) for standard `CameraServer` consumers. Returns `true` if a frame was
+    /// grabbed this call. Call once per frame from a driver.
     #[func]
     fn poll_frame(&mut self) -> bool {
         let Some(session) = session::shared() else {
@@ -116,9 +143,11 @@ impl XrealCameraFeed {
         let Some(cbcr_img) = Image::create_from_data(cw, ch, false, Format::RG8, &cbcr_data) else {
             return false;
         };
-        // Feed the Godot CameraFeed (for CameraServer integration), then keep the plain ImageTextures
-        // the 3D panel shader samples directly (see module docs for why a CameraTexture won't do here).
-        self.base_mut().set_ycbcr_images(&y_img, &cbcr_img);
+        // Keep the plain ImageTextures the shaders sample directly (the display route); feed the
+        // base CameraFeed only on request (see the struct docs for why that route is off by default).
+        if self.feed_camera_server {
+            self.base_mut().set_ycbcr_images(&y_img, &cbcr_img);
+        }
         update_texture(&mut self.y_tex, &y_img);
         update_texture(&mut self.cbcr_tex, &cbcr_img);
 
