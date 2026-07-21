@@ -28,10 +28,27 @@ signal active_changed(active: bool)
 ## Emitted after a stop finalized the mp4, with its absolute path (in the user data dir).
 signal finished(path: String)
 
+## Capture size/bitrate preset (SDK VideoCapture's Resolution Level). `CUSTOM` uses the explicit
+## record_width/record_height/record_bitrate below; every other value overrides them at start.
+@export var resolution_level: XrealShared.ResolutionLevel = XrealShared.ResolutionLevel.HIGH
 @export var record_width := 1280
 @export var record_height := 720
 @export var record_bitrate := 8_000_000
 @export var record_fps := 30
+
+## What ends up in the file (SDK VideoCapture's Blend Mode). BLEND draws the holograms over the RGB
+## camera image, RGB_ONLY records the camera alone, VIRTUAL_ONLY records the holograms alone.
+## RGB_ONLY and (without a green key) a camera-less BLEND both need the camera feature switched on.
+enum BlendMode { BLEND, RGB_ONLY, VIRTUAL_ONLY }
+@export var blend_mode: BlendMode = BlendMode.BLEND
+## Replace the real world behind the holograms with a chroma key, for compositing in post. Ignored
+## for RGB_ONLY, which has no holograms to key against.
+@export var green_background := false
+@export var green_key: Color = Color(0.0, 1.0, 0.0)
+## Which 3D render layers the capture camera sees (SDK VideoCapture's Culling Mask). Defaults to all
+## 20 of Godot's layers; clear bits to keep objects out of the recording without hiding them in the
+## glasses.
+@export_flags_3d_render var record_cull_mask := 0xFFFFF
 
 var _system: Object                 # XrealSystem (this feature's own stateless instance)
 var _ar_vp: SubViewport             # head-POV AR, transparent bg (holograms only)
@@ -67,6 +84,9 @@ func set_enabled(on: bool) -> void:
 		_fail("[xreal-record] HW encoder busy (FPV streaming?) — stop it first")
 		active_changed.emit(false)
 		return
+	# Before _ensure_viewport(): both SubViewports size themselves off record_width/height, so the
+	# preset has to land first or the capture would be sized differently from the encoder.
+	_apply_resolution_level()
 	_ensure_viewport()
 	# Local date-time in the name (record_YYYYMMDD_HHMMSS.mp4) so the file reads naturally in the
 	# gallery ("2026-07-20T14:25:30" -> "20260720_142530").
@@ -90,6 +110,17 @@ func _stop() -> void:
 	active_changed.emit(false)
 	finished.emit(_path)
 
+## Fold the Resolution Level preset into record_width/height/bitrate, so everything downstream (both
+## SubViewports, the ColorRect, the encoder config) keeps reading one set of values. CUSTOM leaves the
+## exported values alone.
+func _apply_resolution_level() -> void:
+	if resolution_level == XrealShared.ResolutionLevel.CUSTOM:
+		return
+	var preset := XrealShared.resolution_preset(resolution_level)
+	record_width = preset.x
+	record_height = preset.y
+	record_bitrate = preset.z
+
 ## Head-POV AR viewport (transparent bg): holograms only, so it composites over the camera for the
 ## blend and, with no camera, reads back as holograms on black.
 func _ensure_viewport() -> void:
@@ -103,6 +134,7 @@ func _ensure_viewport() -> void:
 	add_child(_ar_vp)
 	_ar_cam = Camera3D.new()
 	_ar_cam.current = true
+	_ar_cam.cull_mask = record_cull_mask
 	_ar_vp.add_child(_ar_cam)
 
 ## Composite viewport blending the AR viewport over the RGB camera (xreal_blend_2d.gdshader, same
@@ -152,17 +184,28 @@ func _process(_delta: float) -> void:
 			# Plain AR (no camera): head-locked with the default FOV.
 			_ar_cam.fov = 75.0
 			_ar_cam.global_transform = tracker.global_transform
-	# Camera ON -> record the camera+AR blend (what a bystander sees); camera OFF -> the AR view alone.
+	# The blend viewport is what applies blend_mode and the green key, so it is needed whenever either
+	# asks for something other than "holograms on transparent" — which is exactly what _ar_vp already
+	# is. That keeps the common VIRTUAL_ONLY / camera-off case on the cheap single-viewport path.
+	var needs_comp := (
+		(blending and blend_mode == BlendMode.BLEND)
+		or blend_mode == BlendMode.RGB_ONLY
+		or (green_background and blend_mode != BlendMode.RGB_ONLY)
+	)
 	var src_vp := _ar_vp
-	if blending:
+	if needs_comp:
 		_ensure_comp()
-		_comp_mat.set_shader_parameter(&"y_texture", feed.get_y_texture())
-		_comp_mat.set_shader_parameter(&"cbcr_texture", feed.get_cbcr_texture())
+		if blending:
+			_comp_mat.set_shader_parameter(&"y_texture", feed.get_y_texture())
+			_comp_mat.set_shader_parameter(&"cbcr_texture", feed.get_cbcr_texture())
 		_comp_mat.set_shader_parameter(&"ar_texture", _ar_vp.get_texture())
+		_comp_mat.set_shader_parameter(&"blend_mode", int(blend_mode))
+		_comp_mat.set_shader_parameter(&"green_background", green_background)
+		_comp_mat.set_shader_parameter(&"green_key", Vector3(green_key.r, green_key.g, green_key.b))
 		_comp_vp.render_target_update_mode = SubViewport.UPDATE_ALWAYS
 		src_vp = _comp_vp
 	elif _comp_vp != null:
-		_comp_vp.render_target_update_mode = SubViewport.UPDATE_DISABLED  # idle the blend when camera is off
+		_comp_vp.render_target_update_mode = SubViewport.UPDATE_DISABLED  # idle the blend when unused
 	var viewport_rid := src_vp.get_viewport_rid()
 	var ts := Time.get_ticks_usec() * 1000  # nanoseconds
 	# ViewportTexture.get_rid() is a proxy RID. In the Compatibility renderer its copied tex_id can

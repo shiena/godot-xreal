@@ -27,6 +27,20 @@ static var _hand_tracker: Node = null
 ## True only when the REAL native extension is live. The desktop editor loads a dummy stub that
 ## registers all the Xreal* classes (for the F1 docs), so class presence alone is not enough —
 ## gate on the platform too.
+## Capture resolution presets, mirroring the SDK VideoCapture sample's Resolution Level. `High` is
+## the RGB camera's own 1280x720 — going above it only upscales, so it is the top of the range.
+## Returns `(width, height, bitrate)`; `CUSTOM` is the caller's own exported values.
+enum ResolutionLevel { LOW, MIDDLE, HIGH, CUSTOM }
+
+static func resolution_preset(level: int) -> Vector3i:
+	match level:
+		ResolutionLevel.LOW:
+			return Vector3i(640, 360, 2_000_000)
+		ResolutionLevel.MIDDLE:
+			return Vector3i(960, 540, 4_000_000)
+		_:
+			return Vector3i(1280, 720, 8_000_000)
+
 static func is_native_runtime() -> bool:
 	return OS.get_name() == "Android" and ClassDB.class_exists(&"XrealSystem")
 

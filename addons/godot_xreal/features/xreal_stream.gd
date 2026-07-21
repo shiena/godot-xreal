@@ -35,10 +35,23 @@ signal active_changed(active: bool)
 ## end to end, but the composite is NOT spatially aligned — the protocol carries no observer-camera
 ## pose. See docs/plans/observer-view-notes.md.
 @export var observer_mode := false
+## Capture size/bitrate preset (SDK VideoCapture's Resolution Level). `CUSTOM` uses the explicit
+## stream_width/stream_height/stream_bitrate below; every other value overrides them at start.
+@export var resolution_level: XrealShared.ResolutionLevel = XrealShared.ResolutionLevel.HIGH
 @export var stream_width := 1280
 @export var stream_height := 720
 @export var stream_bitrate := 8_000_000
 @export var stream_fps := 30
+
+## What goes out on the wire (SDK VideoCapture's Blend Mode). BLEND draws the holograms over the RGB
+## camera image, RGB_ONLY sends the camera alone, VIRTUAL_ONLY sends the holograms alone.
+enum BlendMode { BLEND, RGB_ONLY, VIRTUAL_ONLY }
+@export var blend_mode: BlendMode = BlendMode.BLEND
+## Replace the real world behind the holograms with a chroma key. Ignored for RGB_ONLY.
+@export var green_background := false
+@export var green_key: Color = Color(0.0, 1.0, 0.0)
+## Which 3D render layers the capture camera sees (SDK VideoCapture's Culling Mask).
+@export_flags_3d_render var stream_cull_mask := 0xFFFFF
 
 const RTP_PORT := 5555
 ## Include app audio (fed via stream_push_audio from an AudioEffectCapture). Off by default — feed
@@ -129,6 +142,7 @@ func _on_paired(server_ip: String) -> void:
 		active_changed.emit(false)
 		return
 	var url := "rtp://%s:%d" % [server_ip, RTP_PORT]
+	_apply_resolution_level()
 	_ensure_viewport()
 	_apply_fov()  # in case the receiver's UpdateCameraParam arrived before the viewport existed
 	# ObserverView streams the virtual-only AR with alpha (useAlpha) for the PC-webcam composite.
@@ -180,6 +194,16 @@ func _stop() -> void:
 
 ## Head-POV AR viewport (transparent bg): holograms only, so it composites over the camera for the
 ## blend and, with no camera, reads back as holograms on black.
+## Fold the Resolution Level preset into stream_width/height/bitrate so everything downstream reads
+## one set of values. CUSTOM leaves the exported values alone.
+func _apply_resolution_level() -> void:
+	if resolution_level == XrealShared.ResolutionLevel.CUSTOM:
+		return
+	var preset := XrealShared.resolution_preset(resolution_level)
+	stream_width = preset.x
+	stream_height = preset.y
+	stream_bitrate = preset.z
+
 func _ensure_viewport() -> void:
 	if _ar_vp != null:
 		return
@@ -191,6 +215,7 @@ func _ensure_viewport() -> void:
 	add_child(_ar_vp)
 	_ar_cam = Camera3D.new()
 	_ar_cam.current = true
+	_ar_cam.cull_mask = stream_cull_mask
 	_ar_vp.add_child(_ar_cam)
 
 ## Composite viewport blending the AR viewport over the RGB camera (xreal_blend_2d.gdshader, same
@@ -247,12 +272,22 @@ func _process(_delta: float) -> void:
 				_ar_cam.fov = 75.0
 			_ar_cam.global_transform = tracker.global_transform
 	# Camera ON -> stream the camera+AR blend (what a bystander sees); camera OFF -> the AR view alone.
+	# See the recorder for why the blend viewport is only needed for some mode/key combinations.
+	var needs_comp := (
+		(blending and blend_mode == BlendMode.BLEND)
+		or blend_mode == BlendMode.RGB_ONLY
+		or (green_background and blend_mode != BlendMode.RGB_ONLY)
+	)
 	var src_vp := _ar_vp
-	if blending:
+	if needs_comp:
 		_ensure_comp()
-		_comp_mat.set_shader_parameter(&"y_texture", feed.get_y_texture())
-		_comp_mat.set_shader_parameter(&"cbcr_texture", feed.get_cbcr_texture())
+		if blending:
+			_comp_mat.set_shader_parameter(&"y_texture", feed.get_y_texture())
+			_comp_mat.set_shader_parameter(&"cbcr_texture", feed.get_cbcr_texture())
 		_comp_mat.set_shader_parameter(&"ar_texture", _ar_vp.get_texture())
+		_comp_mat.set_shader_parameter(&"blend_mode", int(blend_mode))
+		_comp_mat.set_shader_parameter(&"green_background", green_background)
+		_comp_mat.set_shader_parameter(&"green_key", Vector3(green_key.r, green_key.g, green_key.b))
 		_comp_vp.render_target_update_mode = SubViewport.UPDATE_ALWAYS
 		src_vp = _comp_vp
 	elif _comp_vp != null:
