@@ -59,7 +59,9 @@ running on an XREAL-compatible host (phone / Beam) with the glasses on USB-C.
 >    +0x18/+0x20/+0x28) allocating GL textures the engine owns.
 > 2. **`stereo_rendering_mode = 0` (Multi-pass)**, NOT Multiview(2): Multiview's single-buffer mode
 >    never calls `QueryTextureDesc`; Multi-pass makes a normal multi-buffer swapchain where
->    `SetSwapChainBuffers → QueryTextureDesc` fires and registers our textures.
+>    `SetSwapChainBuffers → QueryTextureDesc` fires and registers our textures. (Historical note:
+>    Multiview was later made to work too — `patch_create_display_layer` forces the real
+>    DisplayOverlay so the swapchain registers; see Phase 4 below.)
 > 3. Per frame: `PopulateNextFrameDesc` → fill `renderPasses[k].textureId` → `SubmitCurrentFrame`.
 > 4. `patch_update_metrics` (lib+0x68974 → `ret`) so `SubmitCurrentFrame`'s `UpdateMetrics` doesn't
 >    SIGBUS on the null metrics callback; presentation happens earlier via `SubmitFrame`.
@@ -83,10 +85,14 @@ running on an XREAL-compatible host (phone / Beam) with the glasses on USB-C.
   (`docs/archive/codex-headlock-analysis.md`). Recommended config: **6DoF + Multipass + DISP pose**.
 
 ### Phase 4 (post-MVP) — stereo / distortion / IPD — stereo ✅, rest shelved
-- Stereo ships as **two `SubViewport`s + Multipass** (per-eye cameras). Multiview is shelved:
-  the NR compositor can only import client `GL_TEXTURE_2D`, so the right eye stays black with a
-  `GL_TEXTURE_2D_ARRAY` (`docs/archive/codex-righteye-analysis.md`); `stereo_rendering_mode()`
-  is pinned to 0 (Multi-pass).
+- Stereo ships as **two `SubViewport`s + Multipass** (per-eye cameras) by default. Multiview
+  **works opt-in** since 2026-07-17 (`setprop debug.xreal.stereo_mode 2`, read by
+  `stereo_rendering_mode()`): the black right eye was Adreno GLES layer-copy quirks — not the
+  compositor rejecting a client `GL_TEXTURE_2D_ARRAY` as
+  `docs/archive/codex-righteye-analysis.md` hypothesized — handled in `src/gl.rs`; since
+  2026-07-21 each eye is ONE direct `glCopyImageSubData` into the `GL_RGB10_A2` array (same copy
+  cost as Multipass). No rendering-load gain over Multipass (the rig still draws two
+  SubViewports), so Multipass stays the default.
 - The `XRInterfaceExtension` migration was not needed for stereo and is not planned; hand
   tracking does integrate with Godot XR via `XRHandTracker`/`XRServer`
   (`docs/plans/hand-tracking-plan.md`).

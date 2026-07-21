@@ -1,14 +1,16 @@
 # Multiview / head-lock investigation — handoff for the next session
 
-Status (updated 2026-07-16): **head-lock is SOLVED** (2026-07-13; see
-[`codex-headlock-analysis.md`](codex-headlock-analysis.md)). **Multiview is SHELVED and the port is now
-Multipass-only** (the `debug.xreal.force_multiview` escape was removed). The read the "Final status
-2026-07-16" section at the bottom for the definitive account — in short: the right eye actually renders
-**correctly** (the long-running "unfixable gray right eye" was a *measurement artifact*, not a real
-failure), but Multiview gives our two-SubViewport rig no single-pass benefit and shares an unrelated
-cross-thread crash, so there is nothing to gain. **Everything between here and that final section is
-kept verbatim as a historical record and contains now-superseded conclusions (esp. "right eye =
-unfixable gray") — trust the final section over the older text.**
+Status (updated 2026-07-21): **head-lock is SOLVED** (2026-07-13; see
+[`codex-headlock-analysis.md`](codex-headlock-analysis.md)). **Multiview WORKS opt-in**
+(`setprop debug.xreal.stereo_mode 2`): the black/gray right eye was solved 2026-07-17 — the causes
+were Adreno GLES layer-copy quirks, handled in `src/gl.rs`. Since 2026-07-21 the eye textures
+(Multipass 2D and the Multiview array alike) are allocated `GL_RGB10_A2` — Godot's
+`gl_compatibility` SubViewport format — and each eye is filled by a single direct
+`glCopyImageSubData`, so Multiview's copy cost equals Multipass's. It still gives our
+two-SubViewport rig no single-pass rendering benefit, so **Multipass remains the default**.
+**Everything below is kept verbatim as a historical record and contains now-superseded conclusions
+(esp. "right eye = unfixable gray") — trust this status and the "Final status 2026-07-16" section
+at the bottom over the older text.**
 
 ## The goal (user-confirmed)
 

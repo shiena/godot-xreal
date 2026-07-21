@@ -9,9 +9,17 @@ all passed. Originally written as a plan derived from a clean disassembly pass o
 
 Deltas found on device after this was written:
 
-- Stereo must run as **Multi-pass (`stereo_rendering_mode = 0`), not Multiview** — the NR
-  compositor can't import a client `GL_TEXTURE_2D_ARRAY` (right eye stays black); see
-  `docs/archive/codex-righteye-analysis.md`. Option (b) below (two `SubViewport`s) is what shipped.
+- Stereo ships as **Multi-pass (`stereo_rendering_mode = 0`) by default**; Multiview (mode 2) also
+  works opt-in since 2026-07-17. The initial "NR compositor can't import a client
+  `GL_TEXTURE_2D_ARRAY`" verdict (`docs/archive/codex-righteye-analysis.md`) was disproved — the
+  black right eye was Adreno GLES layer-copy quirks, solved in `src/gl.rs`. Multiview brings no
+  perf gain (the rig still renders two `SubViewport`s and copies per eye), so Multipass stays the
+  default. Option (b) below (two `SubViewport`s) is what shipped.
+- Eye textures are allocated **`GL_RGB10_A2` UNORM** (2026-07-21), matching Godot's
+  `gl_compatibility` SubViewport render-target format so the per-frame eye fill is a single exact
+  `glCopyImageSubData` (both Multipass 2D textures and the Multiview array — see `src/gl.rs`). The
+  desc's sRGB flag is ignored: an sRGB-*typed* eye texture samples ~26% dark (compositor decodes at
+  sample time; 2026-07-17 A/B test, `docs/archive/multiview-investigation.md`).
 - `UpdateMetrics` inside `SubmitCurrentFrame` SIGBUSes on the null Unity metrics callback and is
   patched to `ret` (`src/signal_guard.rs`); render stats are read via the flat `NRMetrics*` C API
   instead (`docs/plans/render-metrics-gdscript-plan.md`).
