@@ -449,15 +449,50 @@ type FnEglGetError = unsafe extern "C" fn() -> u32;
 /// plus an interleaved CbCr buffer (RG8, half-res), the layout `set_ycbcr_images` + a YCbCr shader expect.
 pub type YuvFrame = (Vec<u8>, i32, i32, Vec<u8>, i32, i32);
 
+/// A CPU-writable / GPU-sampled camera plane: an R8 `AHardwareBuffer` whose `EGLImage` has been
+/// bound **over a Godot-owned GL texture's storage** (see
+/// [`XrealNative::camera_ahb_create_r8_bound`]). Per-frame updates are a plain row-copy into the
+/// locked mapping ([`XrealNative::rgb_camera_grab_yuv_into_ahb`]) — the GPU samples the same
+/// memory, so there is no per-frame GL call at all. PoC for the zero-upload camera path.
+pub struct CameraAhbPlane {
+    /// `AHardwareBuffer*`, kept as `usize` so the handle can cross to the render thread.
+    ahb: usize,
+    /// `EGLImageKHR`, ditto. Held for the lifetime of the binding (never destroyed mid-session).
+    egl_image: usize,
+    pub width: i32,
+    pub height: i32,
+    /// Allocator-chosen row stride in pixels (R8: pixels == bytes).
+    stride: u32,
+}
+// Raw handles are process-global graphics objects; they cross threads only for the one-shot
+// render-thread creation/bind, after which writes happen from the polling thread alone.
+unsafe impl Send for CameraAhbPlane {}
+
 // EGL_GL_TEXTURE_2D_KHR from <EGL/eglext.h>
 const EGL_GL_TEXTURE_2D_KHR: u32 = 0x30B1;
 // EGL_NATIVE_BUFFER_ANDROID from <EGL/eglext.h>
 const EGL_NATIVE_BUFFER_ANDROID: u32 = 0x3140;
+// EGL_IMAGE_PRESERVED_KHR / EGL_NONE from <EGL/eglext.h> / <EGL/egl.h>
+const EGL_IMAGE_PRESERVED_KHR: i32 = 0x30D2;
+const EGL_NONE: i32 = 0x3038;
+// AHardwareBuffer formats/usages (<android/hardware_buffer.h>). R8 needs API 33+.
+const AHARDWAREBUFFER_FORMAT_R8_UNORM: u32 = 0x38;
+const AHARDWAREBUFFER_USAGE_CPU_WRITE_OFTEN: u64 = 0x30;
+const AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE: u64 = 0x100;
 
 // AHardwareBuffer_allocate(const AHardwareBuffer_Desc*, AHardwareBuffer**)
 type FnAHardwareBufferAllocate =
     unsafe extern "C" fn(*const AHardwareBufferDesc, *mut *mut c_void) -> i32;
 type FnAHardwareBufferRelease = unsafe extern "C" fn(*mut c_void);
+// AHardwareBuffer_lock(buffer, usage, fence, rect, outVirtualAddress) — API 26+. CPU-maps the buffer.
+type FnAHardwareBufferLock =
+    unsafe extern "C" fn(*mut c_void, u64, i32, *const c_void, *mut *mut c_void) -> i32;
+// AHardwareBuffer_unlock(buffer, outFence) — flushes CPU writes so the GPU sees them.
+type FnAHardwareBufferUnlock = unsafe extern "C" fn(*mut c_void, *mut i32) -> i32;
+// AHardwareBuffer_describe(buffer, outDesc) — fills the ACTUAL allocated desc (incl. row stride).
+type FnAHardwareBufferDescribe = unsafe extern "C" fn(*mut c_void, *mut AHardwareBufferDesc);
+// AHardwareBuffer_isSupported(desc) -> 1 if this gralloc can allocate it — API 29+.
+type FnAHardwareBufferIsSupported = unsafe extern "C" fn(*const AHardwareBufferDesc) -> i32;
 // glEGLImageTargetTexture2DOES(target, image) from GL_OES_EGL_image
 type FnGlEglImageTargetTexture2DOES = unsafe extern "C" fn(u32, *mut c_void);
 
@@ -490,6 +525,10 @@ struct GlTextureApi {
     egl_destroy_image_khr: FnEglDestroyImageKHR,
     ahb_allocate: Option<FnAHardwareBufferAllocate>,
     ahb_release: Option<FnAHardwareBufferRelease>,
+    ahb_lock: Option<FnAHardwareBufferLock>,
+    ahb_unlock: Option<FnAHardwareBufferUnlock>,
+    ahb_describe: Option<FnAHardwareBufferDescribe>,
+    ahb_is_supported: Option<FnAHardwareBufferIsSupported>,
     gl_egl_image_target_texture: Option<FnGlEglImageTargetTexture2DOES>,
     egl_get_native_client_buffer: Option<FnEglGetNativeClientBufferANDROID>,
     egl_get_error: Option<FnEglGetError>,
@@ -518,6 +557,26 @@ impl GlTextureApi {
             });
             let ahb_release = android_lib.as_ref().and_then(|l| {
                 l.get::<FnAHardwareBufferRelease>(b"AHardwareBuffer_release\0")
+                    .ok()
+                    .map(|s| *s)
+            });
+            let ahb_lock = android_lib.as_ref().and_then(|l| {
+                l.get::<FnAHardwareBufferLock>(b"AHardwareBuffer_lock\0")
+                    .ok()
+                    .map(|s| *s)
+            });
+            let ahb_unlock = android_lib.as_ref().and_then(|l| {
+                l.get::<FnAHardwareBufferUnlock>(b"AHardwareBuffer_unlock\0")
+                    .ok()
+                    .map(|s| *s)
+            });
+            let ahb_describe = android_lib.as_ref().and_then(|l| {
+                l.get::<FnAHardwareBufferDescribe>(b"AHardwareBuffer_describe\0")
+                    .ok()
+                    .map(|s| *s)
+            });
+            let ahb_is_supported = android_lib.as_ref().and_then(|l| {
+                l.get::<FnAHardwareBufferIsSupported>(b"AHardwareBuffer_isSupported\0")
                     .ok()
                     .map(|s| *s)
             });
@@ -558,6 +617,10 @@ impl GlTextureApi {
                 egl_destroy_image_khr: sym!(egl_lib, "eglDestroyImageKHR", FnEglDestroyImageKHR),
                 ahb_allocate,
                 ahb_release,
+                ahb_lock,
+                ahb_unlock,
+                ahb_describe,
+                ahb_is_supported,
                 gl_egl_image_target_texture,
                 egl_get_native_client_buffer,
                 egl_get_error,
@@ -2089,6 +2152,266 @@ impl XrealNative {
                 cbcr.push(v[i]); // Cr = V
             }
             Some((y, yw, yh, cbcr, uw, uh))
+        })();
+        if let Some(d) = dispose {
+            unsafe { d(frame_handle) };
+        }
+        out
+    }
+
+    /// Acquire the latest RGB-camera frame and hand the raw plane pointers to `f` while the frame
+    /// handle is alive: `[(ptr, w, h); 3]` = plane 0 Y (full-res), 1 V/Cr, 2 U/Cb (half-res). The
+    /// pointers die when this returns (the handle is disposed). Backs the direct-upload camera
+    /// path: the callback `glTexSubImage2D`s straight from the SDK memory on the render thread —
+    /// no intermediate buffer for Y at all. Returns `f`'s result, `None` if no fresh frame or any
+    /// plane is missing.
+    pub fn rgb_camera_with_planes(
+        &self,
+        f: &mut dyn FnMut(&[(*const u8, i32, i32); 3]) -> bool,
+    ) -> Option<bool> {
+        let acquire = self.rgb_try_acquire_latest?;
+        let get_plane = self.rgb_get_data_plane?;
+        let dispose = self.rgb_dispose_handle;
+
+        let mut frame_handle: i32 = 0;
+        let mut resolution = NrSize2i::default();
+        let mut timestamp: u64 = 0;
+        if !unsafe { acquire(&mut frame_handle, &mut resolution, &mut timestamp) } {
+            return None;
+        }
+        let read_plane = |idx: i32| -> Option<(*const u8, i32, i32)> {
+            let mut ptr: *mut c_void = std::ptr::null_mut();
+            let mut sz = NrSize2i::default();
+            let ok = unsafe { get_plane(frame_handle, idx, &mut ptr, &mut sz) };
+            (ok && !ptr.is_null() && sz.width > 0 && sz.height > 0).then_some((
+                ptr as *const u8,
+                sz.width,
+                sz.height,
+            ))
+        };
+        let out = (|| {
+            let planes = [read_plane(0)?, read_plane(1)?, read_plane(2)?];
+            Some(f(&planes))
+        })();
+        if let Some(d) = dispose {
+            unsafe { d(frame_handle) };
+        }
+        out
+    }
+
+    /// Allocate an **R8 `AHardwareBuffer`** (CPU-write / GPU-sample), wrap it in an `EGLImage` via
+    /// `eglGetNativeClientBufferANDROID`, and bind that image **over the storage of an existing GL
+    /// texture** (`gl_tex_id` — e.g. a Godot `ImageTexture`'s native handle). After this, CPU writes
+    /// into the buffer (see [`Self::rgb_camera_grab_yuv_into_ahb`]) are what the GPU samples — no
+    /// `glTexSubImage2D`, no Godot `Image` round-trip. PoC for the zero-upload camera path
+    /// (`debug.xreal.camera_ahb 1`).
+    ///
+    /// MUST run on Godot's render thread (`eglGetCurrentDisplay` needs the EGL context current).
+    /// Errors are step-tagged so the device log shows exactly which link failed (R8 AHB needs
+    /// API 33+; `glEGLImageTargetTexture2DOES` on `GL_TEXTURE_2D` needs `GL_OES_EGL_image`).
+    pub fn camera_ahb_create_r8_bound(
+        &self,
+        width: i32,
+        height: i32,
+        gl_tex_id: u32,
+    ) -> Result<CameraAhbPlane, String> {
+        let gl = self.gl.as_ref().ok_or("gl/egl api unavailable")?;
+        let allocate = gl
+            .ahb_allocate
+            .ok_or("AHardwareBuffer_allocate unavailable")?;
+        let describe = gl
+            .ahb_describe
+            .ok_or("AHardwareBuffer_describe unavailable")?;
+        let get_client_buf = gl
+            .egl_get_native_client_buffer
+            .ok_or("eglGetNativeClientBufferANDROID unavailable")?;
+        let bind_image = gl
+            .gl_egl_image_target_texture
+            .ok_or("glEGLImageTargetTexture2DOES unavailable")?;
+        if gl.ahb_lock.is_none() || gl.ahb_unlock.is_none() {
+            return Err("AHardwareBuffer_lock/unlock unavailable".into());
+        }
+        unsafe {
+            // Diagnostic: which formats can this gralloc allocate CPU-write/GPU-sample? Logged once
+            // so a failed R8 tells us the fallback menu (RGBA8 = packed-Y, 0x23 = YUV via OES).
+            if let Some(is_supported) = gl.ahb_is_supported {
+                let probe = |format: u32| -> i32 {
+                    let d = AHardwareBufferDesc {
+                        width: width as u32,
+                        height: height as u32,
+                        layers: 1,
+                        format,
+                        usage: AHARDWAREBUFFER_USAGE_CPU_WRITE_OFTEN
+                            | AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE,
+                        stride: 0,
+                        rfu0: 0,
+                        rfu1: 0,
+                    };
+                    is_supported(&d)
+                };
+                godot::global::godot_print!(
+                    "[xreal] camera ahb: isSupported(cpu_write|gpu_sample) R8={} RGBA8={} YCbCr420={}",
+                    probe(AHARDWAREBUFFER_FORMAT_R8_UNORM),
+                    probe(1),    // AHARDWAREBUFFER_FORMAT_R8G8B8A8_UNORM
+                    probe(0x23), // AHARDWAREBUFFER_FORMAT_Y8Cb8Cr8_420
+                );
+            }
+            let desc = AHardwareBufferDesc {
+                width: width as u32,
+                height: height as u32,
+                layers: 1,
+                format: AHARDWAREBUFFER_FORMAT_R8_UNORM,
+                usage: AHARDWAREBUFFER_USAGE_CPU_WRITE_OFTEN
+                    | AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE,
+                stride: 0,
+                rfu0: 0,
+                rfu1: 0,
+            };
+            let mut ahb: *mut c_void = std::ptr::null_mut();
+            let status = allocate(&desc, &mut ahb);
+            if status != 0 || ahb.is_null() {
+                return Err(format!(
+                    "AHardwareBuffer_allocate(R8 {width}x{height}) -> {status} (R8 needs API 33+)"
+                ));
+            }
+            let release = |gl: &GlTextureApi, ahb| {
+                if let Some(f) = gl.ahb_release {
+                    f(ahb);
+                }
+            };
+            // The ACTUAL row stride the allocator picked (in pixels; R8: pixels == bytes).
+            let mut got = AHardwareBufferDesc {
+                width: 0,
+                height: 0,
+                layers: 0,
+                format: 0,
+                usage: 0,
+                stride: 0,
+                rfu0: 0,
+                rfu1: 0,
+            };
+            describe(ahb, &mut got);
+            let client_buf = get_client_buf(ahb);
+            if client_buf.is_null() {
+                release(gl, ahb);
+                return Err("eglGetNativeClientBufferANDROID -> null".into());
+            }
+            let display = (gl.egl_get_current_display)();
+            if display.is_null() {
+                release(gl, ahb);
+                return Err("eglGetCurrentDisplay -> null (not on the render thread?)".into());
+            }
+            let attrs: [i32; 3] = [EGL_IMAGE_PRESERVED_KHR, 1, EGL_NONE];
+            let image = (gl.egl_create_image_khr)(
+                display,
+                std::ptr::null_mut(), // EGL_NO_CONTEXT (required for EGL_NATIVE_BUFFER_ANDROID)
+                EGL_NATIVE_BUFFER_ANDROID,
+                client_buf,
+                attrs.as_ptr(),
+            );
+            if image.is_null() {
+                let egl_err = gl.egl_get_error.map(|f| f()).unwrap_or(0);
+                release(gl, ahb);
+                return Err(format!(
+                    "eglCreateImageKHR(AHB) -> null egl_err={egl_err:#x}"
+                ));
+            }
+            // Replace the GL texture's storage with the AHB-backed image.
+            while (gl.get_error)() != 0 {}
+            (gl.bind_texture)(GL_TEXTURE_2D, gl_tex_id);
+            bind_image(GL_TEXTURE_2D, image);
+            let gl_err = (gl.get_error)();
+            (gl.bind_texture)(GL_TEXTURE_2D, 0);
+            if gl_err != 0 {
+                (gl.egl_destroy_image_khr)(display, image);
+                release(gl, ahb);
+                return Err(format!(
+                    "glEGLImageTargetTexture2DOES(TEXTURE_2D, R8) gl_err={gl_err}"
+                ));
+            }
+            Ok(CameraAhbPlane {
+                ahb: ahb as usize,
+                egl_image: image as usize,
+                width,
+                height,
+                stride: got.stride.max(width as u32),
+            })
+        }
+    }
+
+    /// Like [`Self::rgb_camera_grab_yuv`], but row-copies the **Y plane straight into `plane`'s
+    /// CPU mapping** (`AHardwareBuffer_lock` → copy → `unlock`; the GPU samples that same memory,
+    /// so there is NO texture upload for Y). Returns `(y_w, y_h, cbcr, c_w, c_h)` with the
+    /// interleaved CbCr for the unchanged chroma path, or `None` if no fresh frame / lock failure.
+    pub fn rgb_camera_grab_yuv_into_ahb(
+        &self,
+        plane: &CameraAhbPlane,
+    ) -> Option<(i32, i32, Vec<u8>, i32, i32)> {
+        let gl = self.gl.as_ref()?;
+        let lock = gl.ahb_lock?;
+        let unlock = gl.ahb_unlock?;
+        let acquire = self.rgb_try_acquire_latest?;
+        let get_plane = self.rgb_get_data_plane?;
+        let dispose = self.rgb_dispose_handle;
+
+        let mut frame_handle: i32 = 0;
+        let mut resolution = NrSize2i::default();
+        let mut timestamp: u64 = 0;
+        if !unsafe { acquire(&mut frame_handle, &mut resolution, &mut timestamp) } {
+            return None;
+        }
+        let read_plane = |idx: i32| -> Option<(*const u8, i32, i32)> {
+            let mut ptr: *mut c_void = std::ptr::null_mut();
+            let mut sz = NrSize2i::default();
+            let ok = unsafe { get_plane(frame_handle, idx, &mut ptr, &mut sz) };
+            (ok && !ptr.is_null() && sz.width > 0 && sz.height > 0).then_some((
+                ptr as *const u8,
+                sz.width,
+                sz.height,
+            ))
+        };
+        let out = (|| {
+            let (y_ptr, yw, yh) = read_plane(0)?; // Y (full-res, packed)
+                                                  // Lock the AHB mapping and row-copy Y (honouring the allocator's row stride).
+            let mut vaddr: *mut c_void = std::ptr::null_mut();
+            let lock_status = unsafe {
+                lock(
+                    plane.ahb as *mut c_void,
+                    AHARDWAREBUFFER_USAGE_CPU_WRITE_OFTEN,
+                    -1,
+                    std::ptr::null(),
+                    &mut vaddr,
+                )
+            };
+            if lock_status != 0 || vaddr.is_null() {
+                godot::global::godot_warn!("[xreal] camera ahb: lock -> {lock_status}");
+                return None;
+            }
+            let copy_w = yw.min(plane.width) as usize;
+            let copy_h = yh.min(plane.height) as usize;
+            unsafe {
+                for row in 0..copy_h {
+                    std::ptr::copy_nonoverlapping(
+                        y_ptr.add(row * yw as usize),
+                        (vaddr as *mut u8).add(row * plane.stride as usize),
+                        copy_w,
+                    );
+                }
+                unlock(plane.ahb as *mut c_void, std::ptr::null_mut());
+            }
+            // Chroma: interleave into the RG8 layout the (unchanged) CbCr path expects.
+            let (v_ptr, vw, vh) = read_plane(1)?; // plane 1 = V (Cr), half-res
+            let (u_ptr, uw, uh) = read_plane(2)?; // plane 2 = U (Cb), half-res
+            let n = (uw as usize) * (uh as usize);
+            let m = n.min((vw as usize) * (vh as usize));
+            let mut cbcr = Vec::with_capacity(m * 2);
+            unsafe {
+                for i in 0..m {
+                    cbcr.push(*u_ptr.add(i)); // Cb = U
+                    cbcr.push(*v_ptr.add(i)); // Cr = V
+                }
+            }
+            Some((yw, yh, cbcr, uw, uh))
         })();
         if let Some(d) = dispose {
             unsafe { d(frame_handle) };

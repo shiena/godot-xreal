@@ -98,6 +98,22 @@ fn android_prop_i32(key: &[u8]) -> Option<i32> {
 /// Default remains Multipass only because Multiview buys **zero** GPU here (our rig draws two Godot
 /// SubViewports every frame in both modes; the single-pass-instanced win needs the *engine* to draw
 /// both eyes in one pass). See `docs/archive/multiview-investigation.md`.
+/// PoC toggle (`setprop debug.xreal.camera_ahb 1`): route the camera **Y plane** through an
+/// `AHardwareBuffer`/`EGLImage` bound over the Godot texture, so per-frame Y updates are one CPU
+/// row-copy with no texture upload. Read per poll so it can be flipped without reinstalling
+/// (takes effect on the next camera off→on). See `XrealCameraFeed`.
+pub fn camera_ahb_requested() -> bool {
+    android_prop_i32(b"debug.xreal.camera_ahb\0") == Some(1)
+}
+
+/// PoC toggle (`setprop debug.xreal.camera_direct 1`): grab + upload the camera frame **on the
+/// render thread**, `glTexSubImage2D`ing straight from the SDK plane pointers into the existing
+/// Y/CbCr textures — no `Image`/`PackedByteArray`/`update()` chain. Read per poll so it can be
+/// flipped live. See `XrealCameraFeed`.
+pub fn camera_direct_requested() -> bool {
+    android_prop_i32(b"debug.xreal.camera_direct\0") == Some(1)
+}
+
 fn stereo_rendering_mode() -> i32 {
     // 1) Explicit override (GDScript API — carries the `xreal/stereo_mode` ProjectSetting).
     let ovr = STEREO_MODE_OVERRIDE.load(Ordering::Relaxed);
@@ -533,6 +549,44 @@ impl XrealSession {
             .lock()
             .expect("xreal native mutex")
             .rgb_camera_grab_yuv()
+    }
+
+    /// Direct-upload camera path: run `f` with the latest frame's raw plane pointers (render
+    /// thread; see `XrealNative::rgb_camera_with_planes`).
+    pub fn rgb_camera_with_planes(
+        &self,
+        f: &mut dyn FnMut(&[(*const u8, i32, i32); 3]) -> bool,
+    ) -> Option<bool> {
+        self.native
+            .lock()
+            .expect("xreal native mutex")
+            .rgb_camera_with_planes(f)
+    }
+
+    /// AHB PoC: allocate an R8 `AHardwareBuffer` + `EGLImage` and bind it over `gl_tex_id`'s
+    /// storage. Render thread only. See `XrealNative::camera_ahb_create_r8_bound`.
+    pub fn camera_ahb_create_r8_bound(
+        &self,
+        width: i32,
+        height: i32,
+        gl_tex_id: u32,
+    ) -> Result<crate::native::CameraAhbPlane, String> {
+        self.native
+            .lock()
+            .expect("xreal native mutex")
+            .camera_ahb_create_r8_bound(width, height, gl_tex_id)
+    }
+
+    /// AHB PoC: grab the latest camera frame, Y row-copied straight into `plane`'s mapping (no
+    /// upload), CbCr returned interleaved. See `XrealNative::rgb_camera_grab_yuv_into_ahb`.
+    pub fn rgb_camera_grab_yuv_into_ahb(
+        &self,
+        plane: &crate::native::CameraAhbPlane,
+    ) -> Option<(i32, i32, Vec<u8>, i32, i32)> {
+        self.native
+            .lock()
+            .expect("xreal native mutex")
+            .rgb_camera_grab_yuv_into_ahb(plane)
     }
 
     /// Re-center the view. Calls the SDK's input-provider recenter (`NativePerception::Recenter`,

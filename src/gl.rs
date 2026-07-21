@@ -49,6 +49,10 @@ type FnCopyImageSubData =
 // glGetTexLevelParameteriv(target, level, pname, params) — GLES 3.1. Used to probe the source
 // texture's internal format (gates the direct same-format layer copy).
 type FnGetTexLevelParameteriv = unsafe extern "C" fn(u32, i32, u32, *mut i32);
+// glTexSubImage2D(target, level, xoff, yoff, w, h, format, type, pixels)
+type FnTexSubImage2D = unsafe extern "C" fn(u32, i32, i32, i32, i32, i32, u32, u32, *const c_void);
+// glPixelStorei(pname, param)
+type FnPixelStorei = unsafe extern "C" fn(u32, i32);
 type FnGetIntegerv = unsafe extern "C" fn(u32, *mut i32);
 type FnIsEnabled = unsafe extern "C" fn(u32) -> u8;
 type FnEnable = unsafe extern "C" fn(u32);
@@ -77,6 +81,9 @@ const GL_FRAMEBUFFER_COMPLETE: u32 = 0x8CD5;
 const GL_SCISSOR_TEST: u32 = 0x0C11;
 const GL_TEXTURE_BINDING_2D: u32 = 0x8069;
 const GL_TEXTURE_INTERNAL_FORMAT: u32 = 0x1003;
+const GL_RED: u32 = 0x1903;
+const GL_RG: u32 = 0x8227;
+const GL_UNPACK_ALIGNMENT: u32 = 0x0CF5;
 const GL_RGB10_A2: i32 = 0x8059;
 const GL_UNSIGNED_INT_2_10_10_10_REV: u32 = 0x8368;
 
@@ -106,6 +113,8 @@ struct Gl {
     /// GLES 3.1 `glGetTexLevelParameteriv`. Optional (absent pre-3.1). Probes the eye SubViewport
     /// texture's internal format once; the direct same-format layer copy is gated on the result.
     get_tex_level_parameteriv: Option<FnGetTexLevelParameteriv>,
+    tex_sub_image_2d: FnTexSubImage2D,
+    pixel_storei: FnPixelStorei,
     framebuffer_texture_layer: FnFramebufferTextureLayer,
     get_integerv: FnGetIntegerv,
     is_enabled: FnIsEnabled,
@@ -158,6 +167,8 @@ impl Gl {
                     .get::<FnGetTexLevelParameteriv>(b"glGetTexLevelParameteriv\0")
                     .map(|s| *s)
                     .ok(),
+                tex_sub_image_2d: sym!("glTexSubImage2D", FnTexSubImage2D),
+                pixel_storei: sym!("glPixelStorei", FnPixelStorei),
                 framebuffer_texture_layer: sym!(
                     "glFramebufferTextureLayer",
                     FnFramebufferTextureLayer
@@ -811,6 +822,41 @@ pub fn blit_texture(src: u32, src_w: i32, src_h: i32, dst: u32, dst_w: i32, dst_
         );
         (g.bind_framebuffer)(GL_READ_FRAMEBUFFER, prev_read as u32);
         (g.bind_framebuffer)(GL_DRAW_FRAMEBUFFER, prev_draw as u32);
+    }
+}
+
+/// Upload raw single/two-channel bytes straight into a GL texture (`glTexSubImage2D`) — the
+/// direct-upload camera path: called on the render thread with the SDK's plane pointer (or a small
+/// reused staging buffer), bypassing the whole Godot `Image`/`PackedByteArray` chain. `channels`:
+/// 1 = R8 (`GL_RED`), 2 = RG8 (`GL_RG`). The texture must already be allocated at `w`×`h` in the
+/// matching format (Godot's `ImageTexture` R8/RG8). Returns the GL error (0 = ok).
+pub fn upload_texture_2d(tex: u32, w: i32, h: i32, channels: i32, data: *const u8) -> u32 {
+    let Some(g) = gl() else { return u32::MAX };
+    if tex == 0 || data.is_null() {
+        return u32::MAX;
+    }
+    let format = if channels == 2 { GL_RG } else { GL_RED };
+    unsafe {
+        while (g.get_error)() != 0 {}
+        let mut prev_tex: i32 = 0;
+        (g.get_integerv)(GL_TEXTURE_BINDING_2D, &mut prev_tex);
+        (g.bind_texture)(GL_TEXTURE_2D, tex);
+        // Tightly packed rows (R8 rows can be any byte width; default alignment is 4).
+        (g.pixel_storei)(GL_UNPACK_ALIGNMENT, 1);
+        (g.tex_sub_image_2d)(
+            GL_TEXTURE_2D,
+            0,
+            0,
+            0,
+            w,
+            h,
+            format,
+            GL_UNSIGNED_BYTE,
+            data as *const c_void,
+        );
+        (g.pixel_storei)(GL_UNPACK_ALIGNMENT, 4);
+        (g.bind_texture)(GL_TEXTURE_2D, prev_tex as u32);
+        (g.get_error)()
     }
 }
 
