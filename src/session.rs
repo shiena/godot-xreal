@@ -168,10 +168,17 @@ static GLASSES_EVENT_CALLBACK_REGISTERED: AtomicBool = AtomicBool::new(false);
 
 /// Set once the native error callback (`SetNativeErrorCallback`) is registered.
 static NATIVE_ERROR_CALLBACK_REGISTERED: AtomicBool = AtomicBool::new(false);
-/// Retry runtime-dependent bootstrap at a modest cadence while the glasses / NR runtime
-/// are unavailable. This avoids spamming UnityPluginLoad/provider registration every frame.
+/// Retry runtime-dependent bootstrap while the glasses / NR runtime are unavailable. Backing off
+/// matters because every attempt re-runs `XrealNative::load()`, but the cadence has to start tight:
+/// measured on the X4000 (2026-07-22) the Activity appears **~145 ms** after our first probe, and a
+/// flat 60-call (≈1 s at 60 fps) wait turned that into a ~0.93 s stall on every cold start — a fifth
+/// of the whole phone-screen-to-glasses gap. So double from one frame instead, which finds it within
+/// ~100 ms while still converging to the old cadence if the runtime really is far off.
 static SHARED_CALLS: AtomicU64 = AtomicU64::new(0);
 static NEXT_RUNTIME_RETRY_CALL: AtomicU64 = AtomicU64::new(0);
+static RUNTIME_RETRY_BACKOFF: AtomicU64 = AtomicU64::new(1);
+/// Ceiling for [`RUNTIME_RETRY_BACKOFF`] — the old flat value, reached after six attempts (~1 s).
+const RUNTIME_RETRY_BACKOFF_MAX: u64 = 60;
 
 /// Initialize (once) and return the process-global XREAL session, or `None` when it is
 /// not (yet) available.
@@ -195,12 +202,18 @@ pub fn shared() -> Option<&'static XrealSession> {
     match XrealSession::try_start() {
         TryStart::Ready(session) => {
             NEXT_RUNTIME_RETRY_CALL.store(0, Ordering::SeqCst);
+            RUNTIME_RETRY_BACKOFF.store(1, Ordering::SeqCst);
             let _ = SESSION.set(*session);
             SESSION.get()
         }
         // Activity or the XREAL session target is not ready yet; retry soon.
         TryStart::WaitingForRuntime => {
-            NEXT_RUNTIME_RETRY_CALL.store(call.wrapping_add(60), Ordering::SeqCst);
+            let backoff = RUNTIME_RETRY_BACKOFF.load(Ordering::SeqCst);
+            NEXT_RUNTIME_RETRY_CALL.store(call.wrapping_add(backoff), Ordering::SeqCst);
+            RUNTIME_RETRY_BACKOFF.store(
+                backoff.saturating_mul(2).min(RUNTIME_RETRY_BACKOFF_MAX),
+                Ordering::SeqCst,
+            );
             None
         }
         TryStart::Disabled(reason) => {
