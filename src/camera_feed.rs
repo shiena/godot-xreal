@@ -25,9 +25,13 @@ use godot::prelude::*;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
-/// **TEMPORARY instrumentation** (see `crate::native::GrabTimings`): microseconds accumulated over
-/// the frames since the last report, so the reported figure is a mean rather than one jittery
-/// sample. Remove with the timing report in `poll_frame`.
+/// Per-stage grab cost (see `crate::native::GrabTimings`): microseconds accumulated over the frames
+/// since the last report, so the reported figure is a mean rather than one jittery sample.
+///
+/// Collecting this costs ~8 `Instant::now()` calls per grabbed frame — well under a microsecond
+/// against a ~525us grab — so it always runs; only the report line is gated (see
+/// [`TIMING_PROP`]). It is what found every win in the optimisation pass recorded in
+/// `docs/plans/camera-feed-plan.md`, so it is kept rather than deleted.
 #[derive(Default)]
 struct PollTiming {
     grabs: u32,
@@ -86,8 +90,12 @@ pub struct XrealCameraFeed {
     last_timestamp: u64,
     /// Reused CbCr interleave buffer for the direct path — the only per-frame pixel copy left there.
     cbcr_buf: Vec<u8>,
-    /// TEMPORARY per-stage timing accumulator; reported and reset with the periodic frame log.
+    /// Per-stage timing accumulator; reported and reset with the periodic frame log when
+    /// [`TIMING_PROP`] is set.
     timing: PollTiming,
+    /// Whether to print the per-stage timing line. Sampled from [`TIMING_PROP`] at capture start, so
+    /// `setprop` then a camera off/on cycle is enough — no rebuild.
+    timing_report: bool,
     /// Plain textures the shader samples directly (Y = R8, CbCr = RG8). Kept in sync with the frame.
     y_tex: Option<Gd<ImageTexture>>,
     cbcr_tex: Option<Gd<ImageTexture>>,
@@ -111,6 +119,7 @@ impl ICameraFeed for XrealCameraFeed {
             last_timestamp: 0,
             cbcr_buf: Vec::new(),
             timing: PollTiming::default(),
+            timing_report: false,
             y_tex: None,
             cbcr_tex: None,
             feed_camera_server: false,
@@ -126,6 +135,8 @@ impl ICameraFeed for XrealCameraFeed {
             godot_warn!("[xreal] camera: RGB camera C ABI unavailable (libXREALXRPlugin.so)");
             return false;
         }
+        // Sampled per capture start so `setprop` + a camera off/on cycle takes effect immediately.
+        self.timing_report = crate::session::android_prop_i32(TIMING_PROP).unwrap_or(0) != 0;
         match session.rgb_camera_start() {
             Some(handle) => {
                 self.capture_handle = Some(handle);
@@ -312,7 +323,7 @@ impl XrealCameraFeed {
         true
     }
 
-    /// TEMPORARY: fold one grab's per-stage costs into the running means.
+    /// Fold one grab's per-stage costs into the running means.
     fn accumulate(
         &mut self,
         grab: &crate::native::GrabTimings,
@@ -335,7 +346,8 @@ impl XrealCameraFeed {
         acc.upload_cbcr_us += upload_cbcr_us;
     }
 
-    /// TEMPORARY: print the frame line plus per-stage means since the last report, then reset.
+    /// Print the frame line, plus — when [`TIMING_PROP`] is set — the per-stage means since the last
+    /// report. Resets the accumulator either way.
     fn report(&mut self, path: &str, yw: i32, yh: i32, cw: i32, ch: i32, mean: u64) {
         godot_print!(
             "[xreal] camera frame #{} (polls={}) y={yw}x{yh} cbcr={cw}x{ch} mean_luma={mean} path={path}",
@@ -343,6 +355,9 @@ impl XrealCameraFeed {
             self.polls
         );
         let acc = std::mem::take(&mut self.timing);
+        if !self.timing_report {
+            return;
+        }
         let n = acc.grabs.max(1) as u64;
         let total = acc.acquire_us
             + acc.planes_us
@@ -395,8 +410,8 @@ fn mean_luma(y: &[u8]) -> u64 {
     sum.checked_div(n).unwrap_or(0)
 }
 
-/// TEMPORARY: per-stage costs the direct path measures inside the frame closure, plus the frame
-/// facts the periodic report needs (the planes themselves do not outlive that closure).
+/// Per-stage costs the direct path measures inside the frame closure, plus the frame facts the
+/// periodic report needs (the planes themselves do not outlive that closure).
 #[derive(Default)]
 struct DirectStages {
     interleave_us: u64,
@@ -406,6 +421,10 @@ struct DirectStages {
     size: (i32, i32, i32, i32),
     mean: u64,
 }
+
+/// `adb shell setprop debug.xreal.camera_timing 1` (then toggle the camera off/on) to print the
+/// per-stage grab breakdown every 120 frames. Off by default — it is a diagnostic, not telemetry.
+const TIMING_PROP: &[u8] = b"debug.xreal.camera_timing ";
 
 /// Latched on the first GL upload failure; the feed then stays on the Image path for the process's
 /// life. The Image path is Godot's own and always works, so this is a safe permanent fallback.

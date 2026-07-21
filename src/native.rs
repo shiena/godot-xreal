@@ -511,11 +511,14 @@ pub fn interleave_cbcr(u: &[u8], v: &[u8], width: i32, height: i32, out: &mut Ve
     }
 }
 
-/// **TEMPORARY instrumentation.** Per-stage cost of one [`XrealNative::rgb_camera_grab_yuv`], in
-/// microseconds, so the client-side stages can be told apart from the SDK's two getters. Added to
-/// settle the open question in `docs/archive/codex-camera-acquire-analysis.md`: the disassembly says
-/// the getters are hash lookups and pointer arithmetic, which leaves the measured ~2.5 ms/frame
-/// unaccounted for. Remove once that is answered.
+/// Per-stage cost of one grab, in microseconds, so the SDK's own calls can be told apart from the
+/// client-side work around them. Reported by `XrealCameraFeed` when
+/// `debug.xreal.camera_timing` is set.
+///
+/// This settled the open question in `docs/archive/codex-camera-acquire-analysis.md`: the
+/// disassembly said the SDK getters were hash lookups and pointer arithmetic, and the measurement
+/// agreed — `acquire` is ~4us and `planes` is 0. Every microsecond of the old ~3.5 ms/frame was on
+/// our side. Kept because it is how any future regression here gets found.
 #[derive(Clone, Copy, Default, Debug)]
 pub struct GrabTimings {
     /// `TryAcquireLatestImage`.

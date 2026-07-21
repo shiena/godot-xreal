@@ -58,7 +58,7 @@ pub fn set_stereo_mode_override(mode: i32) {
 }
 
 /// Read a NUL-terminated Android system property as `i32` (`None` off-Android or if unset/unparseable).
-fn android_prop_i32(key: &[u8]) -> Option<i32> {
+pub fn android_prop_i32(key: &[u8]) -> Option<i32> {
     #[cfg(target_os = "android")]
     {
         let mut buf = [0u8; 92]; // PROP_VALUE_MAX
