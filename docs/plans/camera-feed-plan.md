@@ -34,6 +34,70 @@ Status: **IMPLEMENTED 2026-07-13 (device-verified, full colour)** — `src/camer
   with a 5 s first-frame watchdog (fails as "wedged", same recovery). The demo pops a modal dialog
   on either signature (`demo/main.gd` `_show_error_dialog`).
 
+## Per-frame cost: 208 ms/s → 15.7 ms/s (2026-07-21, device-verified)
+
+`poll_frame` cost **3,466 µs per grab, 60 times a second — 208 ms of CPU per second, 20.8 % of a
+core**. It is now **525 µs at 29.4 grabs/s = 15.7 ms/s (1.5 %)**. Four changes, each measured on the
+X4000 + One Pro before being kept:
+
+| # | change | per grab | commit |
+|---|---|---|---|
+| 0 | baseline | 3,466 µs × 60/s | |
+| 1 | skip the grab when the frame timestamp is unchanged | ×29.4/s instead of ×60/s | `ae1d305` |
+| 2 | vectorise the CbCr interleave (903 → 167 µs) | 3,148 µs | `497117e` |
+| 3 | upload through a PBO, drop `PackedByteArray`/`Image` | 1,130 µs | `fcd7a79` |
+| 4 | upload straight from the SDK's plane pointers | **525 µs** | `e7bb8f7` |
+
+Four findings worth keeping:
+
+- **The SDK calls are free.** `TryAcquireLatestImage` = 4 µs, `DisposeRGBCameraDataHandle` = 5 µs,
+  and the three `TryGetRGBCameraDataPlane` calls together = **0 µs**. This refutes the old
+  "the floor is the SDK acquire" conclusion in `docs/archive/camera-zero-copy-investigation.md`;
+  every microsecond was on our side. Disassembly: `docs/archive/codex-camera-acquire-analysis.md`.
+- **The camera publishes at 30 fps** (confirmed: 29.4 grabs/s against 59.7 polls/s), so a 60 Hz poll
+  did every frame's work twice. Gate on the timestamp `TryAcquireLatestImage` already returns —
+  *not* on the SDK's `TryGetRGBCameraFrame` flag, which is a destructive unlocked read-and-clear.
+- **Adreno's `glTexSubImage2D` from client memory costs ~1.78 ns per _texel_, not per byte** (1651 µs
+  for 921,600 R8 texels; 409 µs for 230,400 RG8 texels — equal per texel, 2× apart per byte). That is
+  the driver tiling every texel on the CPU. Sourcing from a pixel-unpack buffer moves that pass to
+  the GPU and the cost becomes per-byte (2.3 GB/s), which is where change 3's 2,060 → 597 µs came from.
+- **Godot's Android main loop is the GL thread** — `eglGetCurrentContext()` from `_process` returns
+  non-null — so `poll_frame` can issue GL inline. `crate::gl::has_current_context()` checks that at
+  runtime rather than assuming it; where it is false the feed falls back to the `Image` path.
+
+Not adopted, both measured and rejected:
+
+- **Splitting CbCr into two R8 textures** to drop the interleave: it removed the expected 100 µs but
+  added ~60 µs of chroma upload and ~65 µs to the *luma* upload (three PBO orphans per frame instead
+  of two), for a net 525 → 543 µs. No gain, and it would have changed the public
+  `get_cbcr_texture()` API across five GDScript consumers and three shaders. Reverted.
+- **Zero-copy via AHardwareBuffer/EGLImage**: impossible through the public C ABI — see the archive
+  memo. Commit `c5b9a67` should not be revived.
+
+Per-stage timing is still in the code, behind
+`adb shell setprop debug.xreal.camera_timing 1` (then toggle the camera off/on):
+
+```
+[xreal] camera timing/grab (us, n=120): acquire=4 planes=0 interleave=99 dispose=5 \
+        packed=0 image=0 feed=0 upload_y=270 upload_cbcr=138 | total=525
+```
+
+### Getting pixels on the CPU (OpenCV etc.)
+
+The direct path never materialises a CPU copy, so **there is no CPU pixel accessor exposed to
+GDScript today** — and `texture.get_image()` is not it (GPU readback, and the direct path bypasses
+Godot's `update()`, so its cached image goes stale). Options, in order of cost:
+
+- **In-process Rust/C++** — `XrealNative::rgb_camera_with_frame()` lends `&[u8]` straight into the
+  SDK's buffer. Work inside the closure costs **nothing extra**; the Y plane is already a dense
+  1280×720 8-bit grayscale image (no conversion, which is what most CV wants). The pointers die when
+  the closure returns, so anything threaded needs a copy.
+- **GDScript** — needs a `#[func]` returning `PackedByteArray`; cost is one memcpy at the measured
+  4.1 GB/s: **~225 µs** for Y alone, **~340 µs** for all three planes. The three planes are
+  contiguous in one buffer, so a single copy is enough — but note the order is **Y, V, U = YV12**,
+  not I420 (`cv::COLOR_YUV2BGR_YV12`). Contiguity is a wrapper implementation detail, so assert it
+  at runtime and fall back to three copies.
+
 Goal: expose the XREAL glasses' RGB camera to Godot as a **`CameraFeed`** (subclass), so any
 `CameraTexture` / shader can sample the live camera — the Godot-native equivalent of the reference app's
 `XrealFrameSource`. Feasibility: **confirmed on both sides** (see below); this note is the RE map +
