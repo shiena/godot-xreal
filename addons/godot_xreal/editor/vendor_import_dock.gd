@@ -46,8 +46,15 @@ func _build_ui() -> void:
 	add_child(title)
 
 	var help := Label.new()
-	help.text = "Pick com.xreal.xr's .tgz / .tar.gz (or an extracted package folder) to copy the required .so / .aar / tool into place."
+	help.text = "Pick com.xreal.xr (.tgz / .tar.gz, or an extracted package folder) to stage the .so / .aar / tool."
 	help.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	# Cap the wrapped height. An autowrap Label reports its *wrapped* height as its minimum, and a dock
+	# tab that has never been the active one was never laid out (~17px wide), so it wraps to hundreds
+	# of lines and asks for thousands of px. The editor's dock slot sizes hidden tabs too
+	# (use_hidden_tabs_for_min_size), so that minimum pushes the dock below it (FileSystem) off-screen
+	# until this tab is first opened.
+	help.max_lines_visible = 3
+	help.tooltip_text = "Extracts (via the system tar) and copies the required .so / .aar / host tool out of the Unity package — the in-editor analog of scripts/vendor_xreal_libs."
 	help.modulate = Color(1, 1, 1, 0.75)
 	add_child(help)
 
@@ -57,10 +64,13 @@ func _build_ui() -> void:
 	add_child(pick)
 
 	_status = RichTextLabel.new()
-	_status.fit_content = true
 	_status.bbcode_enabled = true
 	_status.selection_enabled = true
-	_status.custom_minimum_size = Vector2(0, 120)
+	# Floor only, and deliberately no fit_content: fit_content makes the minimum height the *content*
+	# height measured at the current width, which in a never-shown dock tab is thousands of px — same
+	# trap as the help label above. The import log scrolls inside the label instead, and EXPAND_FILL
+	# still hands it every pixel the dock actually has.
+	_status.custom_minimum_size = Vector2(0, 48)
 	_status.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	add_child(_status)
 
