@@ -230,14 +230,44 @@ the RGB camera is on — as H.264 over RTP. **Microphone audio is included** (gr
 asked); **app audio is not** — see the capture-audio row in [Supported features](#supported-features)
 for why.
 
-Run a receiver on a PC on the **same LAN**; the app finds it automatically (LAN broadcast + handshake)
-and starts streaming — there is no address to enter. Either works:
+**There are two ways to receive it:** XREAL's own desktop app, or the scripts in this repo.
 
-- **[`scripts/stream_server/`](scripts/stream_server/)** — ours, needing only python 3 and ffmpeg. Both
-  the video (RFC 6184 H.264) and the audio (RFC 3016 LATM, AAC-LC 16 kHz mono) are standard, so no
-  vendor software is involved. Start it *before* pressing Stream.
-- XREAL's **StreamingReceiver** desktop app, from XREAL's
-  [First Person View](https://docs.xreal.com/Tools/First%20Person%20View) page.
+Either way, start the receiver on a PC on the **same LAN** *before* pressing Stream. You never type an
+address: the app broadcasts, whichever receiver is listening answers, and streaming begins. The order
+matters — a receiver started afterwards has already missed the handshake.
+
+#### 1. XREAL's official StreamingReceiver
+
+The desktop app from XREAL's [First Person View](https://docs.xreal.com/Tools/First%20Person%20View)
+page. Run it, press Stream, done — this port pairs with it exactly as the Unity SDK does.
+
+#### 2. `scripts/stream_server/` — this repo's own receivers
+
+Open source, no vendor software. Both wire formats turn out to be ordinary standards — video RFC 6184
+H.264, audio RFC 3016 LATM carrying AAC-LC 16 kHz mono — so nothing proprietary is needed to decode
+them. Two front ends:
+
+**Watch it in a browser** — [`fpv_server.py`](scripts/stream_server/fpv_server.py):
+
+```bash
+python scripts/stream_server/fpv_server.py       # then open http://localhost:8080
+```
+
+Python 3 and nothing else — no `pip install`, no ffmpeg. The server never decodes; it turns RTP into
+FLV over a WebSocket and the browser's own H.264/AAC decoders play it. Viewers may join and leave at
+any time.
+
+**Watch or record with ffplay/ffmpeg** — additionally needs ffmpeg on `PATH`:
+
+```powershell
+pwsh scripts/stream_server/receive.ps1           # live ffplay window
+pwsh scripts/stream_server/receive.ps1 -Record   # record to an .mkv in that folder
+```
+
+(`scripts/stream_server/receive.sh [--record]` on macOS / Linux.)
+
+Options, the discovery protocol, and why a silent audio track in a quiet room is expected rather than a
+fault: [`scripts/stream_server/README.md`](scripts/stream_server/README.md).
 
 Streaming uses our own render target rather than the camera, so no RGB camera is required (it works on
 the camera-less Air 2 Ultra too).
@@ -271,6 +301,7 @@ demo/                    AR demo (main.tscn + managers: hand/anchor/image/mesh/s
 dummy/                   desktop GDExtension stub source (gdext_dummy.c) — built into addons/godot_xreal/bin/
 jniLibs/                 vendored XREAL core .so (git-ignored)
 scripts/                 build + vendor_xreal_libs + build_dummy_libs + build_image_db (.ps1/.sh)
+  stream_server/         FPV receivers: fpv_server.py (browser) + receive.ps1/.sh (ffplay/record)
 .github/workflows/       CI (fmt/clippy/test/build) + Release (prebuilt addon)
 docs/                    guides / reference / plans / archive — see docs/README.md for the index
 ```

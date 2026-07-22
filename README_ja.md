@@ -203,14 +203,44 @@ API:
 デモの **Stream** ボタンは一人称視点 — AR シーン、RGB カメラ ON 時はカメラ + AR の合成 — を H.264/RTP で
 配信します。**マイク音声は載ります**（初回に `RECORD_AUDIO` の許可を与えてください）が、
 **アプリ自身の音は載りません** — 理由は[対応機能](#対応機能)の「キャプチャの音声」行を参照。
-受信側は**同一 LAN** の PC で起動します。アプリが受信側を自動検出（LAN ブロードキャスト + ハンドシェイク）
-して配信を開始するため、アドレス入力は不要です。次のどちらでも受信できます。
+**受信方法は 2 つあります。** XREAL 公式の PC アプリを使うか、本リポジトリのスクリプトを使うかです。
 
-- **[`scripts/stream_server/`](scripts/stream_server/)** — 自前の受信サーバー。python 3 と ffmpeg だけで
-  動きます。映像（RFC 6184 H.264）も音声（RFC 3016 LATM、AAC-LC 16 kHz モノラル）も標準形式なので、
-  ベンダー製ソフトは不要です。**Stream を押す前に**起動してください。
-- XREAL の **StreamingReceiver**（PC アプリ）。XREAL の
-  [First Person View](https://docs.xreal.com/Tools/First%20Person%20View) ページから入手できます。
+どちらの場合も、受信側は**同一 LAN** の PC で **Stream を押す前に**起動してください。アプリがブロード
+キャストし、待ち受けている受信側が応答して配信が始まるため、アドレス入力は不要です。順序は重要で、後から
+起動した受信側はハンドシェイクを取り逃しています。
+
+#### 1. XREAL 公式の StreamingReceiver
+
+XREAL の [First Person View](https://docs.xreal.com/Tools/First%20Person%20View) ページで配布されている
+PC アプリです。起動して Stream を押すだけで、本移植は Unity SDK と同じ手順でペアリングします。
+
+#### 2. `scripts/stream_server/` — 本リポジトリ同梱の受信サーバー
+
+オープンソースのみで動き、ベンダー製ソフトは不要です。映像（RFC 6184 H.264）も音声（RFC 3016 LATM で
+AAC-LC 16 kHz モノラル）もごく標準的な形式であることが分かったため、復号に独自実装は要りません。用途に
+応じて 2 通りあります。
+
+**ブラウザで見る** — [`fpv_server.py`](scripts/stream_server/fpv_server.py):
+
+```bash
+python scripts/stream_server/fpv_server.py       # 起動後 http://localhost:8080 を開く
+```
+
+必要なのは python 3 だけです（`pip install` 不要、ffmpeg 不要）。サーバーは一切デコードせず、RTP を FLV に
+詰め替えて WebSocket で送るだけで、復号はブラウザ内蔵の H.264/AAC デコーダが行います。視聴者はいつでも
+接続・切断できます。
+
+**ffplay で見る / 録画する** — 別途 ffmpeg が `PATH` に必要です:
+
+```powershell
+pwsh scripts/stream_server/receive.ps1           # ffplay のライブウインドウ
+pwsh scripts/stream_server/receive.ps1 -Record   # 同フォルダに .mkv で録画
+```
+
+（macOS / Linux は `scripts/stream_server/receive.sh [--record]`。）
+
+オプション・ディスカバリのプロトコル・静かな部屋で音声が無音になるのが不具合ではなく仕様である理由は
+[`scripts/stream_server/README.md`](scripts/stream_server/README.md) にまとめています。
 
 カメラではなく自前のレンダーターゲットを配信するので RGB カメラは不要で、カメラ非搭載の Air 2 Ultra でも
 動作します。
@@ -244,6 +274,7 @@ demo/                    AR デモ（main.tscn + 各 manager: hand/anchor/image/
 dummy/                   デスクトップ GDExtension スタブのソース（gdext_dummy.c）= ビルド先は addons/godot_xreal/bin/
 jniLibs/                 vendoring した XREAL コア .so（git 管理外）
 scripts/                 build + vendor_xreal_libs + build_dummy_libs + build_image_db（.ps1/.sh）
+  stream_server/         FPV 受信サーバー: fpv_server.py（ブラウザ）+ receive.ps1/.sh（ffplay/録画）
 .github/workflows/       CI（fmt/clippy/test/build）+ Release（プリビルトアドオン）
 docs/                    guides / reference / plans / archive — 目次は docs/README.md
 ```
