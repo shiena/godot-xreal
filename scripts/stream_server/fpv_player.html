@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<title>XREAL FPV</title>
+<!--
+  Served by fpv_server.py. The server sends an FLV stream over WebSocket and this page hands it to
+  mpegts.js (Apache-2.0), which feeds it to Media Source Extensions - so the browser's own H.264 and
+  AAC decoders do the decoding. Nothing here decodes, and nothing on the server does either.
+
+  mpegts.js is loaded from a CDN. To run offline, drop mpegts.js next to this file and change the
+  src to "mpegts.js" - the server serves only this page, so you would also add a route for it.
+-->
+<style>
+  :root { color-scheme: dark light; }
+  body { margin: 0; font: 14px/1.5 system-ui, sans-serif; background: #111; color: #ddd;
+         display: flex; flex-direction: column; min-height: 100vh; }
+  header { padding: .6rem 1rem; display: flex; gap: 1rem; align-items: center; flex-wrap: wrap; }
+  h1 { font-size: 1rem; font-weight: 600; margin: 0; }
+  #status { color: #8b8; }
+  #status.err { color: #e88; }
+  main { flex: 1; display: grid; place-items: center; padding: 0 1rem 1rem; }
+  video { width: 100%; max-width: 1280px; background: #000; aspect-ratio: 16 / 9; }
+  button { font: inherit; padding: .3rem .8rem; }
+</style>
+
+<header>
+  <h1>XREAL FPV</h1>
+  <span id="status">connecting…</span>
+  <button id="resync">resync</button>
+  <label><input type="checkbox" id="mute" checked> mute</label>
+</header>
+<main><video id="v" autoplay muted playsinline></video></main>
+
+<script src="https://cdn.jsdelivr.net/npm/mpegts.js@1.7.3/dist/mpegts.js"></script>
+<script>
+const video = document.getElementById('v');
+const status = document.getElementById('status');
+const url = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/live';
+let player = null;
+
+function say(text, isError) {
+  status.textContent = text;
+  status.classList.toggle('err', !!isError);
+}
+
+function start() {
+  if (!window.mpegts || !mpegts.isSupported()) {
+    say('mpegts.js unavailable - offline, or this browser has no MSE support', true);
+    return;
+  }
+  stop();
+  player = mpegts.createPlayer(
+    { type: 'flv', isLive: true, url },
+    // Chase the live edge: the server sends from the newest keyframe, and without this the
+    // buffer grows every time the tab is backgrounded.
+    { enableStashBuffer: false, liveBufferLatencyChasing: true, liveBufferLatencyMaxLatency: 1.5 }
+  );
+  player.on(mpegts.Events.ERROR, (type, detail) => say(`${type}: ${detail}`, true));
+  player.on(mpegts.Events.MEDIA_INFO, info => say(`${info.width}x${info.height} - ${info.audioCodec || 'no audio'}`));
+  player.attachMediaElement(video);
+  player.load();
+  video.play().catch(() => say('click the video to start playback'));
+  say('waiting for the app to stream…');
+}
+
+function stop() {
+  if (!player) return;
+  player.destroy();
+  player = null;
+}
+
+document.getElementById('resync').onclick = start;
+document.getElementById('mute').onchange = e => { video.muted = e.target.checked; };
+start();
+</script>

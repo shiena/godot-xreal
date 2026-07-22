@@ -6,3 +6,4 @@ fpv_*.mp4
 *.wav
 *.png
 *.import
+__pycache__/

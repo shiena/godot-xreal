@@ -137,6 +137,40 @@ def _serve_one(conn: socket.socket) -> None:
                 print(f"[pair] {name} ({len(payload)} bytes) - ignored", flush=True)
 
 
+def run(ip: "str | None" = None, tcp_port: int = 6002, hint: str = "") -> int:
+    """Answer discovery forever. Importable so fpv_server.py can pair without shelling out."""
+    # Deliberately no SO_REUSEADDR. On Windows it lets a second instance bind the same port, and
+    # the two then split the app's discovery reply and control connection between them: pairing
+    # times out while this one still cheerfully logs FIND-SERVER. Failing the bind is far kinder.
+    tcp = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        tcp.bind(("0.0.0.0", tcp_port))
+        udp.bind(("0.0.0.0", DISCOVERY_PORT))
+    except OSError as e:
+        print(f"[pair] cannot bind ({e})", file=sys.stderr)
+        print("[pair] another pair_server, or XREAL's StreamingReceiver, already holds "
+              f"UDP {DISCOVERY_PORT} / TCP {tcp_port} - close it and retry.", file=sys.stderr)
+        return 1
+    tcp.listen(1)
+
+    print(f"[pair] waiting for FIND-SERVER on UDP {DISCOVERY_PORT} (control TCP {tcp_port})", flush=True)
+    if hint:
+        print(hint, flush=True)
+
+    threading.Thread(target=serve_control, args=(tcp,), daemon=True).start()
+
+    while True:
+        data, addr = udp.recvfrom(1024)
+        if FIND_MSG not in data:
+            continue
+        reply_ip = ip or local_ip_towards(addr[0])
+        reply = f"{reply_ip}:{tcp_port}".encode("ascii")
+        udp.sendto(reply, addr)
+        print(f"[pair] FIND-SERVER from {addr[0]} -> {reply.decode()}", flush=True)
+        print(f"[pair] the app will stream to rtp://{reply_ip}:5555 (video) / :5557 (audio)", flush=True)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--ip", help="address to advertise (default: whichever NIC faces the app)")
@@ -148,35 +182,8 @@ def main() -> int:
     if args.then:
         _then_cmd.extend(args.then)
 
-    # Deliberately no SO_REUSEADDR. On Windows it lets a second instance bind the same port, and
-    # the two then split the app's discovery reply and control connection between them: pairing
-    # times out while this one still cheerfully logs FIND-SERVER. Failing the bind is far kinder.
-    tcp = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    try:
-        tcp.bind(("0.0.0.0", args.tcp_port))
-        udp.bind(("0.0.0.0", DISCOVERY_PORT))
-    except OSError as e:
-        print(f"[pair] cannot bind ({e})", file=sys.stderr)
-        print("[pair] another pair_server, or XREAL's StreamingReceiver, already holds "
-              f"UDP {DISCOVERY_PORT} / TCP {args.tcp_port} - close it and retry.", file=sys.stderr)
-        return 1
-    tcp.listen(1)
-
-    print(f"[pair] waiting for FIND-SERVER on UDP {DISCOVERY_PORT} (control TCP {args.tcp_port})", flush=True)
-    print("[pair] hit Stream in the app, then start ffplay/ffmpeg on stream.sdp.", flush=True)
-
-    threading.Thread(target=serve_control, args=(tcp,), daemon=True).start()
-
-    while True:
-        data, addr = udp.recvfrom(1024)
-        if FIND_MSG not in data:
-            continue
-        ip = args.ip or local_ip_towards(addr[0])
-        reply = f"{ip}:{args.tcp_port}".encode("ascii")
-        udp.sendto(reply, addr)
-        print(f"[pair] FIND-SERVER from {addr[0]} -> {reply.decode()}", flush=True)
-        print(f"[pair] the app will stream to rtp://{ip}:5555 (video) / :5557 (audio)", flush=True)
+    return run(args.ip, args.tcp_port,
+               hint="[pair] hit Stream in the app, then start ffplay/ffmpeg on stream.sdp.")
 
 
 if __name__ == "__main__":

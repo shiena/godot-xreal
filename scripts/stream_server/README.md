@@ -11,13 +11,40 @@ StreamingReceiver.exe. Dev/verification tooling — two twins do the same thing:
 - `python` 3 — answers the app's discovery broadcast; no `pip install`.
 - `ffmpeg` (bundles `ffplay`). Windows: `scoop install ffmpeg`. mac: `brew install ffmpeg`. Linux: `apt install ffmpeg`.
 
-## Use
+## Two receivers
+
+| | |
+|---|---|
+| `fpv_server.py` | **Watch it in a browser.** RTP in, FLV over WebSocket out; the browser decodes. No codec library is linked, so no codec copyright or patent licence attaches to the server. |
+| `receive.ps1` / `receive.sh` | **Watch or record locally** with ffplay/ffmpeg. |
+
+### Browser: `fpv_server.py`
+
+```
+python scripts/stream_server/fpv_server.py     # then open http://localhost:8080
+```
+
+Pairing runs in-process, so this is the only thing to start. Open the page, hit **Stream** in the
+app, and the video appears. Viewers may join and leave at any time — each one is served from the
+next keyframe, with its own timeline rebased to zero.
+
+The server only reframes bytes: RTP → access units → FLV tags → WebSocket. Depacketizing is ~150
+lines (RFC 6184 FU-A/STAP-A for video, RFC 3016 LATM for audio) and FLV muxing is a tag header plus
+an `AVCDecoderConfigurationRecord` / `AudioSpecificConfig` — the browser's own H.264 and AAC decoders
+do the rest, via [mpegts.js](https://github.com/xqq/mpegts.js/) (Apache-2.0) and Media Source
+Extensions. `fpv_player.html` loads mpegts.js from a CDN; to run offline, vendor it next to the page.
+
+Options: `--http-port`, `--video-port` (audio is `+2`), `--audio-rate` / `--audio-channels` (must
+match the encoder's `audioSampleRate`, default 16000 mono), `--ip` to force the advertised address.
+
+### ffplay / ffmpeg: `receive.ps1` / `receive.sh`
+
 1. Start the receiver **first** and leave it running:
    ```
    pwsh scripts/stream_server/receive.ps1          # Windows
    scripts/stream_server/receive.sh                # mac / Linux
    ```
-   or record to an .mp4 instead of live-playing:
+   or record to an .mkv instead of live-playing:
    ```
    pwsh scripts/stream_server/receive.ps1 -Record  # Windows
    scripts/stream_server/receive.sh --record       # mac / Linux
@@ -72,6 +99,12 @@ AAC-LC / 16 kHz / mono / 1024-sample frames, which is what ffmpeg reports back.
   3.9 s of audio kept out of an 8 s capture; with the flag, 7.99 s).
 - Audio is **microphone only** — Godot's Android audio driver offers no loopback of the app's own
   output. See the streaming section of the top-level README.
+- **A silent audio track in a quiet room is expected, not a bug.** The encoder opens the mic as
+  `VOICE_COMMUNICATION` with an Acoustic Echo Canceler and Noise Suppression attached
+  (`adb shell dumpsys audio` shows this under `RecordActivityMonitor`), and that gate floors ambient
+  noise to exact zeros — every sample identical, ffmpeg reporting mean == max == -91 dB. Measured:
+  dead silence with the room quiet, then -40.9 dB mean / -25.3 dB peak the moment a tone played
+  nearby. Make a noise before concluding the audio path is broken.
 - Keep every `print()` in `pair_server.py` ASCII. On a Japanese Windows console (cp932) a stray
   em dash raises `UnicodeEncodeError`, which kills the control thread mid-session: discovery keeps
   answering while the app times out on the handshake, which is a thoroughly misleading symptom.

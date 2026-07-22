@@ -108,10 +108,13 @@ EGL context**, so the call must be on the render thread.
   `RenderingServer.call_on_render_thread` callback (so `HWEncoderUpdateSurface` runs on the render thread).
 - **Receiving side**: either XREAL's official **`StreamingReceiver.exe`** (Unity + FFmpeg), paired via
   `demo/stream_pairing.gd` (FIND-SERVER discovery + TCP handshake), or — since 2026-07-22 — our own
-  **`scripts/stream_server/`**, which needs only python and ffmpeg and gets video *and* audio. It
-  answers the same FIND-SERVER handshake, because the app discovers its peer rather than being told
-  an address. (This receiver was briefly deleted on the mistaken belief that the RTP audio was
-  proprietary; see "Audio over RTP".)
+  **`scripts/stream_server/`**, which answers the same FIND-SERVER handshake (the app discovers its
+  peer rather than being told an address). Two receivers there: `receive.ps1`/`.sh` play or record
+  with ffplay/ffmpeg, and **`fpv_server.py` serves it to a browser** — RTP in, FLV over WebSocket
+  out, decoded by the browser via mpegts.js + MSE. `fpv_server.py` links no codec at all, so no
+  codec copyright or patent licence attaches to it; that matters if a receiver is ever shipped.
+  (This tooling was briefly deleted on the mistaken belief that the RTP audio was proprietary; see
+  "Audio over RTP".)
 
 ## On-device TODO (the real unknowns)
 1. **GL-context/thread correctness of `UpdateSurface`** — the encoder must read Godot's SubViewport GL
