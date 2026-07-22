@@ -240,8 +240,18 @@ def run(ip: "str | None" = None, tcp_port: int = 6002, hint: str = "",
 
     threading.Thread(target=serve_control, args=(tcp,), daemon=True).start()
 
+    # The timeout is what makes Ctrl+C work. On Windows a blocking recvfrom() is never interrupted
+    # by it: the console handler sets the interrupt flag, but this thread is parked in WSARecvFrom
+    # and never returns to bytecode to notice, so the process looks like it is ignoring you.
+    # Surfacing every half second gives the interpreter somewhere to raise KeyboardInterrupt.
+    # (POSIX does not need this - SIGINT interrupts the syscall.)
+    udp.settimeout(0.5)
+
     while True:
-        data, addr = udp.recvfrom(1024)
+        try:
+            data, addr = udp.recvfrom(1024)
+        except socket.timeout:
+            continue
         if FIND_MSG not in data:
             continue
         reply_ip = ip or local_ip_towards(addr[0])

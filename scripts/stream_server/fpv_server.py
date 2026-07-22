@@ -527,4 +527,4 @@ if __name__ == "__main__":
     try:
         sys.exit(main())
     except KeyboardInterrupt:
-        pass
+        print("[fpv] stopped", flush=True)
