@@ -68,6 +68,48 @@ pub extern "system" fn Java_com_godot_game_XrealBridge_nativeRegisterActivity<'l
     unsafe { ndk_context::initialize_android_context(vm_ptr, activity_ptr) };
 }
 
+/// The `MediaProjection` the user consented to, as a raw `jobject`, or null when there is none.
+///
+/// `HWEncoderSetMediaProjection` wants exactly this: the SDK's C# passes
+/// `AndroidJavaObject.GetRawObject()`. A null projection is not a neutral value — reverse
+/// engineering showed `addInternalAudio:true` builds an `AudioPlaybackCaptureConfiguration` from it
+/// (see `docs/archive/codex-audio-mix-analysis.md`), so a null one leaves app-audio capture unstarted
+/// and the encoder's mixer with nothing to add to the microphone.
+///
+/// Stored as a leaked global ref: the encoder keeps the pointer across the capture, and Java-side
+/// ownership ends the moment `onProjectionReady` returns.
+static MEDIA_PROJECTION: std::sync::atomic::AtomicPtr<c_void> =
+    std::sync::atomic::AtomicPtr::new(std::ptr::null_mut());
+
+/// Raw `jobject` of the consented `MediaProjection`, or null. Null on desktop.
+pub fn media_projection_ptr() -> *mut c_void {
+    MEDIA_PROJECTION.load(std::sync::atomic::Ordering::Acquire)
+}
+
+/// JNI: called from `XrealProjection.onProjectionReady` (and with null when it is revoked).
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "system" fn Java_com_godot_game_XrealProjection_nativeSetMediaProjection<'local>(
+    env: jni::JNIEnv<'local>,
+    _class: jni::objects::JClass<'local>,
+    projection: jni::objects::JObject<'local>,
+) {
+    use std::sync::atomic::Ordering;
+
+    if projection.is_null() {
+        MEDIA_PROJECTION.store(std::ptr::null_mut(), Ordering::Release);
+        return;
+    }
+    let Ok(global) = env.new_global_ref(&projection) else {
+        return;
+    };
+    let raw = global.as_raw() as *mut c_void;
+    // Leaked on purpose, as with the Activity above: the encoder may hold this pointer for the
+    // length of a capture, and there is at most one projection per app run.
+    std::mem::forget(global);
+    MEDIA_PROJECTION.store(raw, Ordering::Release);
+}
+
 /// Glasses hot-plug event counters. The JNI callbacks below run on the Android UI thread
 /// (DisplayManager listener), so they only bump these counters; `XrealHeadTracker::process`
 /// (Godot main thread) polls them and re-emits as `glasses_connected` / `glasses_disconnected`

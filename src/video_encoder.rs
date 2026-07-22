@@ -25,10 +25,6 @@ type FnSetConfig = unsafe extern "C" fn(u64, *const c_char) -> i32;
 type FnSetMediaProjection = unsafe extern "C" fn(u64, *mut core::ffi::c_void) -> i32;
 type FnStart = unsafe extern "C" fn(u64) -> i32;
 type FnUpdateSurface = unsafe extern "C" fn(u64, usize, u64) -> i32;
-/// `HWEncoderNotifyAudioData(handle, samples, nSamples, nBytesPerSample, nChannels, sampleRate, fmt)`
-/// — `fmt` 0 = s16 / 8 = float. Feeds app ("internal") audio; the mic is captured natively when
-/// enabled in the config.
-type FnNotifyAudio = unsafe extern "C" fn(u64, *const u8, i32, i32, i32, i32, i32) -> i32;
 type FnStop = unsafe extern "C" fn(u64) -> i32;
 type FnDestroy = unsafe extern "C" fn(u64) -> i32;
 
@@ -36,7 +32,6 @@ type FnDestroy = unsafe extern "C" fn(u64) -> i32;
 struct Encoder {
     _lib: Library,
     update_surface: FnUpdateSurface,
-    notify_audio: Option<FnNotifyAudio>,
     stop: FnStop,
     destroy: FnDestroy,
     handle: u64,
@@ -59,8 +54,19 @@ fn codec_type(output: &str) -> i32 {
     }
 }
 
+/// Fallback output rate of the AAC track when we are not feeding app audio, matching the XREAL Unity
+/// SDK's `RECORD_AUDIO_SAMPLERATE_DEFAULT` (its `monophonic` variant is 16000).
+///
+/// **The encoder does not resample.** Measured on the X4000: pushing 44100 Hz PCM while the config
+/// said 48000 produced an audio track 0.914x the video's length — exactly 44100/48000. The rate
+/// passed per push to `HWEncoderNotifyAudioData` labels the samples, but the *config* rate is what
+/// the track is written at, so the two have to agree. The Unity SDK never hits this because Android
+/// runs Unity's mixer at 48000 too, so its constant already matches.
+const AUDIO_SAMPLE_RATE: i32 = 48_000;
+
 /// Build the encoder config JSON (SDK format from `EncodeTypes.cs`). `with_mic` captures the microphone
-/// natively; `with_internal` mixes app audio fed via [`push_audio`]. `with_alpha` sets `useAlpha` — the
+/// natively; `with_internal` makes it capture app audio too (needs a MediaProjection). `with_alpha`
+/// sets `useAlpha` — the
 /// encoder then packs the frame's RGB + alpha (top/bottom) for the ObserverView MRC composite; the input
 /// texture must carry a real alpha channel (a transparent-bg viewport). See docs/plans/observer-view-notes.md.
 #[allow(clippy::too_many_arguments)]
@@ -73,12 +79,13 @@ fn config_json(
     with_mic: bool,
     with_internal: bool,
     with_alpha: bool,
+    audio_rate: Option<i32>,
 ) -> String {
     format!(
         concat!(
             "{{\"width\":{},\"height\":{},\"bitRate\":{},\"fps\":{},\"codecType\":{},",
             "\"outPutPath\":\"{}\",\"useStepTime\":0,\"useAlpha\":{},\"useLinnerTexture\":true,",
-            "\"addMicphoneAudio\":{},\"addInternalAudio\":{},\"audioSampleRate\":16000,",
+            "\"addMicphoneAudio\":{},\"addInternalAudio\":{},\"audioSampleRate\":{},",
             "\"audioBitRate\":128000}}"
         ),
         width,
@@ -89,7 +96,8 @@ fn config_json(
         output,
         with_alpha,
         with_mic,
-        with_internal
+        with_internal,
+        audio_rate.unwrap_or(AUDIO_SAMPLE_RATE)
     )
 }
 
@@ -111,6 +119,7 @@ pub fn start(
     with_mic: bool,
     with_internal: bool,
     with_alpha: bool,
+    audio_rate: Option<i32>,
 ) -> bool {
     let mut guard = ENCODER.lock().expect("encoder mutex");
     if guard.is_some() {
@@ -151,10 +160,6 @@ pub fn start(
             Ok(s) => *s,
             Err(_) => return false,
         };
-        let notify_audio: Option<FnNotifyAudio> = lib
-            .get::<FnNotifyAudio>(b"HWEncoderNotifyAudioData\0")
-            .ok()
-            .map(|s| *s);
 
         let mut handle: u64 = 0;
         if create(&mut handle) != 0 || handle == 0 {
@@ -170,6 +175,7 @@ pub fn start(
             with_mic,
             with_internal,
             with_alpha,
+            audio_rate,
         );
         let Ok(cfg_c) = CString::new(cfg.as_str()) else {
             destroy(handle);
@@ -180,9 +186,24 @@ pub fn start(
             destroy(handle);
             return false;
         }
-        // Match the SDK: call SetMediaProjection right after the config (null = RGB-camera/texture
-        // path, not screen capture). Without it HWEncoderStart dereferenced a null field → SIGSEGV.
-        let mp = set_media_projection(handle, std::ptr::null_mut());
+        // Must come right after the config, as the SDK does: without it HWEncoderStart dereferenced
+        // a null field → SIGSEGV. The projection is not decoration — with `addInternalAudio` the
+        // encoder builds an AudioPlaybackCaptureConfiguration from it and opens its own AudioRecord
+        // for app sound, then adds those blocks to the microphone's (docs/archive/codex-audio-mix-
+        // analysis.md). Null is still correct when app audio was not asked for, or consent was
+        // declined: the capture simply does not start.
+        let projection = if with_internal {
+            crate::jni_bridge::media_projection_ptr()
+        } else {
+            std::ptr::null_mut()
+        };
+        if with_internal && projection.is_null() {
+            godot::global::godot_warn!(
+                "[xreal] app audio requested but no MediaProjection was granted - \
+                 recording microphone only"
+            );
+        }
+        let mp = set_media_projection(handle, projection);
         if mp != 0 {
             godot::global::godot_warn!(
                 "[xreal] HWEncoderSetMediaProjection returned {mp} (continuing)"
@@ -200,44 +221,11 @@ pub fn start(
         *guard = Some(Encoder {
             _lib: lib,
             update_surface,
-            notify_audio,
             stop,
             destroy,
             handle,
         });
         true
-    }
-}
-
-/// Feed one buffer of app ("internal") audio to the stream via `HWEncoderNotifyAudioData`. `samples` is
-/// raw PCM; `bytes_per_sample`/`channels`/`sample_rate`/`fmt` (0=s16, 8=float) describe it. Returns the
-/// encoder status (`-1` if not streaming / the export is absent). The mic, if enabled, is captured
-/// natively — this is only for app audio.
-pub fn push_audio(
-    samples: &[u8],
-    n_samples: i32,
-    bytes_per_sample: i32,
-    channels: i32,
-    sample_rate: i32,
-    fmt: i32,
-) -> i32 {
-    let guard = ENCODER.lock().expect("encoder mutex");
-    match guard
-        .as_ref()
-        .and_then(|e| e.notify_audio.map(|f| (e.handle, f)))
-    {
-        Some((handle, f)) => unsafe {
-            f(
-                handle,
-                samples.as_ptr(),
-                n_samples,
-                bytes_per_sample,
-                channels,
-                sample_rate,
-                fmt,
-            )
-        },
-        None => -1,
     }
 }
 
@@ -288,6 +276,7 @@ mod tests {
             true,
             false,
             false,
+            None,
         );
         for needle in [
             "\"width\":1280",
@@ -298,6 +287,7 @@ mod tests {
             "\"outPutPath\":\"rtp://10.0.0.2:6000\"",
             "\"addMicphoneAudio\":true",
             "\"addInternalAudio\":false",
+            "\"audioSampleRate\":48000",
         ] {
             assert!(j.contains(needle), "missing {needle} in {j}");
         }
@@ -314,10 +304,12 @@ mod tests {
             false,
             true,
             true,
+            Some(44_100),
         );
         assert!(j.contains("\"codecType\":0"));
         assert!(j.contains("\"addMicphoneAudio\":false"));
         assert!(j.contains("\"addInternalAudio\":true"));
         assert!(j.contains("\"useAlpha\":true"));
+        assert!(j.contains("\"audioSampleRate\":44100"));
     }
 }

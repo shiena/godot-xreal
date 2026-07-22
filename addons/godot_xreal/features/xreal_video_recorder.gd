@@ -49,6 +49,11 @@ enum BlendMode { BLEND, RGB_ONLY, VIRTUAL_ONLY }
 ## 20 of Godot's layers; clear bits to keep objects out of the recording without hiding them in the
 ## glasses.
 @export_flags_3d_render var record_cull_mask := 0xFFFFF
+## Which audio ends up in the file (SDK VideoCapture's Audio State). Both sources are captured and
+## mixed natively by the SDK's encoder: MIC needs RECORD_AUDIO granted, APP needs an Android
+## MediaProjection (a consent dialog — see XrealShared.request_app_audio_consent). Either is dropped
+## silently when its prerequisite is missing.
+@export var audio_state: XrealShared.AudioState = XrealShared.AudioState.NONE
 
 var _system: Object                 # XrealSystem (this feature's own stateless instance)
 var _ar_vp: SubViewport             # head-POV AR, transparent bg (holograms only)
@@ -92,13 +97,24 @@ func set_enabled(on: bool) -> void:
 	# gallery ("2026-07-20T14:25:30" -> "20260720_142530").
 	var stamp := Time.get_datetime_string_from_system().replace("-", "").replace(":", "").replace("T", "_")
 	_path = OS.get_user_data_dir().path_join("record_%s.mp4" % stamp)
-	# A local file path (no rtp:// / rtmp:// scheme) makes the encoder write an mp4. No audio.
-	if not _system.stream_start(_path, record_width, record_height, record_bitrate, record_fps, false, false, false):
+	# A local file path (no rtp:// / rtmp:// scheme) makes the encoder write an mp4.
+	# App audio is captured natively too, but only through an Android MediaProjection. Consent is a
+	# system dialog and therefore asynchronous, so the first capture that wants app audio triggers it
+	# and records microphone-only; the next one has both. Passing the flag without a projection would
+	# just enable an empty AAC path (docs/archive/codex-audio-mix-analysis.md), so it is dropped here.
+	var want_app := XrealShared.audio_wants_app(audio_state)
+	if want_app and not XrealShared.is_app_audio_ready():
+		XrealShared.request_app_audio_consent()
+		push_warning("[xreal-record] app audio needs screen-capture consent; "
+			+ "this recording carries the microphone only")
+		want_app = false
+	var want_mic := XrealShared.audio_wants_mic(audio_state) and XrealShared.is_mic_granted()
+	if not _system.stream_start(_path, record_width, record_height, record_bitrate, record_fps, want_mic, want_app, false):
 		_fail("[xreal-record] recorder start failed")
 		active_changed.emit(false)
 		return
 	_active = true
-	print("[xreal-record] recording -> %s" % _path)
+	print("[xreal-record] recording -> %s (app_audio=%s, mic=%s)" % [_path, want_app, want_mic])
 	active_changed.emit(true)
 
 func _stop() -> void:
