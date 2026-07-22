@@ -49,7 +49,7 @@ Verified on the XREAL One Pro (rows marked "Air 2 Ultra" on the XREAL Air 2 Ultr
 | **Phone 3D pointer** (host IMU) | ✅ (demo) | Tilt the phone to aim a 3D ray in the glasses (`demo/phone_pointer.gd`). Orientation is fused in GDScript from the NRController's raw IMU (`accel` → pitch/roll, `gyro` → yaw) exposed by `XrealSystem.poll_controller()` — the NRController *fused pose* and Godot's own `Input.get_gyroscope()` both read empty on this host. The ray raycasts to highlight what it hits and the trigger selects it; an on-screen left/right-hand toggle switches the beam origin; gyro drift is damped by bias-learning + a deadzone. `recenter` sets forward. |
 | **Multi-resume** — glasses app keeps running (and rendering) when the phone switches apps | ✅ | **Where the Unity SDK uses a floating return window, this port implements auto-enter Picture-in-Picture instead.** Backgrounding drops the app to a small phone tile (paused-but-visible), so Godot's GL thread + Surface stay alive and the glasses keep showing live frames; tapping the tile returns to fullscreen. `XrealBridge.enableAutoEnterPiP`, driven from `demo/main.gd`; manifest scaffolding `nr_features=multiResume` + `NRFakeActivity`. **Device-verified**: the render submit counter keeps advancing past background. Why PiP rather than the floating window / a foreground service / a SurfaceView reparent: `docs/plans/background-render-plan.md`. |
 | **Plane detection** → GDScript | ✅ (Air 2 Ultra) | Horizontal/vertical plane detection via `XrealSystem.set_plane_detection_mode()` + `poll_planes()` (added/updated/removed with pose, size, alignment) + `get_plane_boundary()`. Flat C exports in `libXREALXRPlugin.so` (no extra AAR); needs 6DoF. All 4 AR features' C ABI is RE-confirmed — see [`docs/plans/ar-features-plan.md`](docs/plans/ar-features-plan.md). |
-| **Capture audio** — mic ✅ / app audio ❌ | ⚠️ partial | FPV streaming can carry **microphone** audio (the SDK's encoder captures it natively; needs `RECORD_AUDIO` granted at runtime). **App audio — Godot's own output — is not available**, and video recording has no audio at all. Not a porting gap: Godot's Android driver (`audio_driver_opensl.cpp`) is hardcoded to 44.1 kHz with a fixed 1024×2 buffer and no AAudio/Oboe path, so under recording load `AudioEffectCapture` receives only 85–93 % of nominal frames (measured; nothing is discarded — they are never produced) and the audio track runs short against the video. `audio/driver/mix_rate` and `output_latency` are both ignored by that driver. See [`docs/plans/fpv-streaming-plan.md`](docs/plans/fpv-streaming-plan.md#app-audio-does-not-work-on-android-engine-limitation-measured-2026-07-22). |
+| **Capture audio** — microphone + app audio | ✅ | Recordings and FPV streams can carry both, and **the SDK's encoder captures and mixes them natively** — Godot's own mixer is not in the path. Set the capture component's `audio_state`. The mic needs `RECORD_AUDIO`; app ("internal") audio needs an Android **MediaProjection**, because `addInternalAudio` makes the encoder open its own `AudioPlaybackCapture` — so a screen-capture consent dialog appears on the first capture that asks for it, and that one records mic-only while the next has both. See the [audio note](#note-what-the-microphone-does-and-does-not-pick-up) below for the DSP the mic goes through. |
 | **Spatial anchors** → GDScript | ✅ (Air 2 Ultra) | Create/persist/restore world anchors via `XrealSystem.acquire_anchor()` / `poll_anchors()` / `save_anchor()` / `load_anchor()` / `estimate_anchor_quality()` etc. Flat C exports (`XRTrackedAnchor` layout device-confirmed) + the vendored `nr_spatial_anchor.aar` backend; needs 6DoF. Also adds `is_camera_supported()` / `is_hmd_feature_supported()` — the SDK's per-device gate (the Air 2 Ultra has no RGB camera). |
 
 Also ported: image tracking, marker tracking, depth meshing, photo / blended capture and FPV
@@ -226,9 +226,8 @@ set via `XrealSystem.init_image_database`.
 ### FPV streaming: the receiver app
 
 The demo's **Stream** button streams the first-person view — the AR scene, or the camera + AR blend when
-the RGB camera is on — as H.264 over RTP. **Microphone audio is included** (grant `RECORD_AUDIO` when
-asked); **app audio is not** — see the capture-audio row in [Supported features](#supported-features)
-for why.
+the RGB camera is on — as H.264 over RTP, with microphone and/or app audio depending on the
+component's `audio_state` (see the capture-audio row in [Supported features](#supported-features)).
 
 **There are two ways to receive it:** XREAL's own desktop app, or the scripts in this repo.
 
@@ -271,6 +270,32 @@ fault: [`scripts/stream_server/README.md`](scripts/stream_server/README.md).
 
 Streaming uses our own render target rather than the camera, so no RGB camera is required (it works on
 the camera-less Air 2 Ultra too).
+
+#### Note: what the microphone does and does not pick up
+
+The encoder opens the mic as **`AUDIO_SOURCE_VOICE_COMMUNICATION` with an Acoustic Echo Canceler and
+Noise Suppression attached** — visible under `RecordActivityMonitor` in `adb shell dumpsys audio`.
+That is a telephony front-end, not a plain recorder, and it changes what you get in ways worth knowing
+before you conclude something is broken. All of the following was measured on device:
+
+- **A quiet room records as exact digital silence**, not a noise floor: every sample identical,
+  `mean == max == -91 dB`. Make some noise before deciding the audio path is dead.
+- **Steady tones are suppressed.** A continuous 1 kHz tone spiked the level 60 dB at onset and was
+  then pushed back down — that is the noise suppressor doing its job on a stationary signal. Test with
+  speech or music; a test tone is close to the worst possible probe for this path.
+- **It will not howl.** Putting the glasses next to a speaker playing the stream does not feed back:
+  the echo canceler treats the app audio coming back as echo, and the suppressor flattens whatever
+  steady tone a loop would build.
+- With both sources on, **app audio dominates**: BGM measured around -22 dBFS against a mic
+  contribution below -38 dBFS, so the mic is easy to mistake for absent.
+
+Historical note: earlier versions fed app audio in from Godot's mixer through `AudioEffectCapture` and
+`HWEncoderNotifyAudioData`, and this README claimed app audio was impossible because of an engine
+limitation. That was wrong on both counts. `HWEncoderNotifyAudioData` feeds the *microphone* pipeline
+rather than an app-audio one, so enabling it alongside the native mic produced two rival producers on
+one track — an audio track 1.79× the video's length, 35 % of it silence. The path the SDK actually
+intends is the MediaProjection one above. See
+[`docs/archive/codex-audio-mix-analysis.md`](docs/archive/codex-audio-mix-analysis.md).
 
 ## Layout
 

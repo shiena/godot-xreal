@@ -123,7 +123,27 @@ EGL context**, so the call must be on the render thread.
    `StreamingReceiver.exe` (`demo/stream_pairing.gd`, FIND-SERVER) and streams to `rtp://<ip>:5555`.
 2. Confirm the config fields the encoder needs (bitrate/fps), the timestamp unit, and that a
    `useLinnerTexture`/`useAlpha` mismatch doesn't garble the frame.
-## Audio — mic **works**; app audio is **blocked by a Godot Android limitation**
+## Audio — mic **works**; app audio **works too**, via MediaProjection
+
+> **Corrected 2026-07-23.** This section previously concluded that app audio was impossible because
+> Godot's Android mixer starves under recording load. That was wrong twice over. Godot's mixer is not
+> in the path at all: `addInternalAudio` makes the *encoder* open its own Android
+> `AudioPlaybackCapture` from a `MediaProjection`, and it mixes that with the mic itself
+> (`docs/archive/codex-audio-mix-analysis.md`). What we were doing instead — pushing PCM in with
+> `HWEncoderNotifyAudioData` — feeds the **microphone** pipeline, not an app-audio one, so with the
+> native mic also on the two became rival producers on one track: audio 1.79x the video's length, 35 %
+> of it silence. The measurements below are kept because they are real; their *conclusion* is not.
+> Device-verified after the fix: a recording with both sources at audio/video **0.9962**, no silence
+> run over 20 ms.
+>
+> Implementation: `XrealProjection`/`XrealProjectionActivity`/`XrealProjectionService` collect consent
+> (Android 14 requires a `mediaProjection` foreground service to exist before `getMediaProjection()`),
+> `jni_bridge` hands the jobject to `HWEncoderSetMediaProjection`, and `XrealShared`
+> requests consent on the first capture that wants app audio. The pushed-PCM path (`XrealAudioTap`,
+> `stream_push_audio`) is **gone**, not kept as a fallback: it cannot coexist with the native mic.
+> The same RE did find an undocumented `"audioUseExternalData":true` switch that starts the AAC path
+> with neither native recorder, if an external-PCM route is ever wanted again.
+
 `stream_start(..., with_mic, with_internal_audio)`: **`with_mic`** sets `addMicphoneAudio` — the encoder
 captures the mic natively. This needs the **`RECORD_AUDIO` runtime permission**: the export plugin
 declares it in the manifest, but as a *dangerous* permission it must also be **granted at runtime**, which
@@ -132,10 +152,9 @@ and `set_enabled` only passes `addMicphoneAudio=true` once `OS.get_granted_permi
 (else it re-requests and streams video-only that once). Verified: **AAC 16 kHz mono, non-silent
 (-40 dB RMS / -21 dB peak), plays with sound in Windows Media Player.**
 
-**`with_internal_audio`** sets `addInternalAudio` and is fed by `stream_push_audio(...)` →
-`HWEncoderNotifyAudioData`. It is **left off everywhere**, and the video recorder passes no audio at
-all — see "App audio does not work on Android" below for why. The mic path above is unaffected: the
-encoder captures it natively, with no Godot audio involvement.
+**`with_internal_audio`** sets `addInternalAudio`, which is what makes the encoder open its own
+playback capture from the MediaProjection. Nothing is pushed in from Godot. The measurements under
+"App audio does not work on Android" below describe the abandoned pushed-PCM route.
 
 The wire format, read from the SDK's own C# (`com.xreal.xr`,
 `AudioRecordTool.ConvertToSinChaAndWrite` + `NativeEncoder.UpdateAudioData`) rather than guessed:
@@ -146,7 +165,11 @@ wrong-length audio tracks. The encoder also **does not resample** — the config
 what the track is written at, so it must equal the rate passed per push. Unity never hits that because
 Android runs its mixer at 48000, matching the SDK's own constant.
 
-### App audio does not work on Android (engine limitation, measured 2026-07-22)
+### ~~App audio does not work on Android (engine limitation)~~ — superseded, measured 2026-07-22
+The numbers here are sound; the conclusion drawn from them was not. Kept so the ruled-out hypotheses
+are not re-tested. Note in particular that `audio/driver/output_latency` was "tried and rejected"
+without effect because the OpenSL driver never reads it (`_get_configured_output_latency` is not
+referenced there), so buffer depth was in fact never varied.
 
 Capturing Godot's own output for a recording or stream is implemented and correct — and still unusable,
 because Godot's Android audio driver cannot deliver frames at a steady rate while a capture is running.
@@ -186,8 +209,8 @@ throughput.
 
 A real fix is engine-side: patch `audio_driver_opensl.cpp` to open at the device's native rate and
 enlarge the buffer, or add an AAudio/Oboe driver. Until then app audio in captures stays off. The
-work-in-progress implementation (an `XrealShared.AudioState` enum, `XrealAudioTap`, and the silence
-padding) is parked on the **`wip/audio-state`** branch with all of the above measurements in its
+work-in-progress implementation (the `XrealShared.AudioState` enum survived; `XrealAudioTap` and its
+silence padding did not) is parked on the **`wip/audio-state`** branch with all of the above measurements in its
 commit messages.
 
 **Known-benign warnings** (not playback problems — WMP plays fine): ffmpeg reports an `Input buffer
