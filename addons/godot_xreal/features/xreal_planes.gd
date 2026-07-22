@@ -38,32 +38,38 @@ func _ready() -> void:
 ## this device, so a UI toggle can flip itself back off). Planes then stream in via the shared
 ## XrealAR (which may take a moment / need a live 6DoF session).
 func set_enabled(on: bool) -> bool:
+	# OFF tears down unconditionally, ahead of the _system guard: losing the system handle must never
+	# be able to strand the plane boxes in the scene. The scene-side teardown also runs BEFORE the
+	# native call, so an SDK call that errors out cannot leave the boxes behind either.
+	if not on:
+		_enabled = false
+		_clear_boxes()
+		if _ar:
+			_ar.set(&"planes", false)  # stop the shared XrealAR polling the plane stream
+		if _system and _system.has_method(&"set_plane_detection_mode"):
+			_system.set_plane_detection_mode(PLANE_NONE)
+		enabled = false
+		return false
 	if _system == null:
 		enabled = false
 		return false
-	if on:
-		# Gate on the ABI being resolved (not on set_plane_detection_mode's return — the SDK
-		# discards that value, and it reads false even when the mode takes; XREALPlaneSubsystem.cs).
-		# Enable optimistically and let the plane stream surface whatever the SDK detects.
-		if _system.has_method(&"is_plane_detection_available") and not _system.is_plane_detection_available():
-			_fail("[xreal-planes] plane detection ABI unavailable on this device")
-			enabled = false
-			return false
-		_ensure_ar()
-		if switch_to_6dof and _system.has_method(&"switch_tracking_type"):
-			_system.switch_tracking_type(TRACKING_6DOF)
-		if _system.has_method(&"set_plane_detection_mode"):
-			_system.set_plane_detection_mode(PLANE_BOTH)
-		_enabled = true
-	else:
-		_enabled = false
-		if _system.has_method(&"set_plane_detection_mode"):
-			_system.set_plane_detection_mode(PLANE_NONE)
-		_clear_boxes()
+	# Gate on the ABI being resolved (not on set_plane_detection_mode's return — the SDK discards
+	# that value, and it reads false even when the mode takes; XREALPlaneSubsystem.cs). Enable
+	# optimistically and let the plane stream surface whatever the SDK detects.
+	if _system.has_method(&"is_plane_detection_available") and not _system.is_plane_detection_available():
+		_fail("[xreal-planes] plane detection ABI unavailable on this device")
+		enabled = false
+		return false
+	_ensure_ar()
+	if switch_to_6dof and _system.has_method(&"switch_tracking_type"):
+		_system.switch_tracking_type(TRACKING_6DOF)
+	if _system.has_method(&"set_plane_detection_mode"):
+		_system.set_plane_detection_mode(PLANE_BOTH)
+	_enabled = true
 	if _ar:
-		_ar.set(&"planes", _enabled)  # only let the shared XrealAR poll the plane stream while on
-	enabled = _enabled
-	return _enabled
+		_ar.set(&"planes", true)
+	enabled = true
+	return true
 
 ## Resolve the shared XrealAR and connect its plane signals once — BEFORE the stream switch goes
 ## on, so no change event is ever polled without a listener.

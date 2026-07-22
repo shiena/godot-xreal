@@ -5,8 +5,9 @@ extends Node3D
 ## poller; its "mesh" stream is gated on this toggle so it only polls while meshing is on.
 ##
 ## World-locked: add this component under a world-fixed node (e.g. the scene root, NOT the head
-## rig) so the mesh stays registered to the real room as the head moves. OFF hides the meshes but
-## keeps meshing running so ON restores them.
+## rig) so the mesh stays registered to the real room as the head moves. OFF drops every block mesh
+## from the scene but leaves the SDK meshing, so ON repopulates from the next poll (GetMeshBlockInfo
+## reports the whole current block set each time, not just what changed) without a rescan.
 
 ## Emitted when the feature is unavailable (e.g. meshing unsupported on this device), so the load
 ## site can react — show UI, log, flip a toggle.
@@ -31,25 +32,28 @@ func _ready() -> void:
 ## Toggle meshing. Returns the resulting state (false if unsupported — non-Air-2-Ultra — so a UI
 ## toggle can flip itself back off).
 func set_enabled(on: bool) -> bool:
+	# OFF tears down unconditionally, ahead of the capability probe: a probe that reads false (or a
+	# missing _system) must never be able to strand the block meshes in the scene.
+	if not on:
+		_enabled = false
+		_clear_meshes()
+		if _ar:
+			_ar.set(&"mesh", false)  # stop the shared XrealAR polling the mesh stream
+		enabled = false
+		return false
 	if not _system or not _system.has_method(&"is_meshing_supported") or not _system.is_meshing_supported():
 		enabled = false
-		if on:
-			error.emit("[xreal-mesh] depth meshing unsupported on this device (Air 2 Ultra only)")
+		error.emit("[xreal-mesh] depth meshing unsupported on this device (Air 2 Ultra only)")
 		return false
-	if on:
-		_ensure_ar()
-		if not _initialized:
-			_system.set_meshing_enabled(true)
-			_initialized = true
-		_enabled = true
-		visible = true
-	else:
-		_enabled = false
-		visible = false  # keep meshing running; just hide the overlay
+	_ensure_ar()
+	if not _initialized:
+		_system.set_meshing_enabled(true)
+		_initialized = true
+	_enabled = true
 	if _ar:
-		_ar.set(&"mesh", _enabled)  # only let the shared XrealAR poll the mesh stream while on
-	enabled = _enabled
-	return _enabled
+		_ar.set(&"mesh", true)
+	enabled = true
+	return true
 
 ## Resolve the shared XrealAR and connect its mesh signals once — BEFORE the stream switch goes
 ## on, so no change event is ever polled without a listener.
@@ -106,6 +110,11 @@ func _remove_block(id: String) -> void:
 	if mi:
 		mi.queue_free()
 		_meshes.erase(id)
+
+func _clear_meshes() -> void:
+	for id in _meshes:
+		(_meshes[id] as MeshInstance3D).queue_free()
+	_meshes.clear()
 
 ## Shared translucent unshaded material (double-sided) — reads as a light tint over the real room.
 func _material() -> StandardMaterial3D:
