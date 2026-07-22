@@ -27,6 +27,7 @@
   <span id="status">connecting…</span>
   <button id="resync">resync</button>
   <label><input type="checkbox" id="mute" checked> mute</label>
+  <span id="diag"></span>
 </header>
 <main><video id="v" autoplay muted playsinline></video></main>
 
@@ -36,6 +37,7 @@ const video = document.getElementById('v');
 const status = document.getElementById('status');
 const url = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/live';
 let player = null;
+let retryTimer = 0;
 
 function say(text, isError) {
   status.textContent = text;
@@ -54,16 +56,85 @@ function start() {
     // buffer grows every time the tab is backgrounded.
     { enableStashBuffer: false, liveBufferLatencyChasing: true, liveBufferLatencyMaxLatency: 1.5 }
   );
-  player.on(mpegts.Events.ERROR, (type, detail) => say(`${type}: ${detail}`, true));
+  // The server disconnects everyone when the app restarts its stream, so a lost connection is
+  // routine rather than fatal - come back and pick up the new session.
+  player.on(mpegts.Events.ERROR, (type, detail) => {
+    say(`${type}: ${detail} - reconnecting…`, true);
+    retry();
+  });
+  // A closed connection is not an error to mpegts.js - it reports LOADING_COMPLETE and calls
+  // endOfStream(), after which the element plays out the stale buffer and never comes back. For a
+  // live stream that is always a disconnection, so treat it the same as an error.
+  player.on(mpegts.Events.LOADING_COMPLETE, () => { say('stream ended - reconnecting…'); retry(); });
   player.on(mpegts.Events.MEDIA_INFO, info => say(`${info.width}x${info.height} - ${info.audioCodec || 'no audio'}`));
   player.attachMediaElement(video);
   player.load();
-  video.play().catch(() => say('click the video to start playback'));
   say('waiting for the app to stream…');
+  // Do not just play() once here: at this point the element has no data, and a play() that lands on
+  // an empty buffer can be left paused when frames finally arrive — which looks exactly like a
+  // frozen first frame. Ask again whenever the element says it has something.
+  tryPlay();
 }
+
+function retry() {
+  clearTimeout(retryTimer);
+  retryTimer = setTimeout(start, 1000);
+}
+
+// Last resort: if the picture is frozen while the stream is supposed to be live, rebuild. Covers
+// the cases neither event catches - a MediaSource that ended quietly, or playback wedged behind an
+// unreachable buffer.
+let lastSeen = -1, stalledFor = 0;
+setInterval(() => {
+  if (!player || !video.buffered.length) { stalledFor = 0; return; }
+  const ms = player._msectl && player._msectl._mediaSource;
+  const stuck = video.currentTime === lastSeen && !video.paused;
+  lastSeen = video.currentTime;
+  stalledFor = stuck ? stalledFor + 1 : 0;
+  if (stalledFor >= 5 || (ms && ms.readyState === 'ended')) {
+    stalledFor = 0;
+    say('stalled - reconnecting…', true);
+    retry();
+  }
+}, 1000);
+
+function tryPlay() {
+  if (!video.paused) return;
+  video.play().catch(err => {
+    if (err && err.name === 'NotAllowedError') say('click the video to start playback', true);
+  });
+}
+
+['loadeddata', 'canplay', 'progress', 'stalled', 'waiting'].forEach(
+  ev => video.addEventListener(ev, tryPlay));
+video.addEventListener('click', tryPlay);
+
+// mpegts.js defers everything until the MediaSource opens (deferLoadAfterSourceOpen), and Chrome
+// will not open one for a hidden tab — so a page opened in the background, or backgrounded before
+// the app started streaming, sits there forever with nothing buffered. Rebuild when it comes back.
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden || !player) return;
+  const ms = player._msectl && player._msectl._mediaSource;
+  if (ms && ms.readyState !== 'open') start();
+});
+
+// The picture freezing while data keeps arriving is the failure worth naming, so report the numbers
+// that distinguish it: currentTime stuck with buffered growing means playback never advanced, while
+// buffered stuck at 0 means nothing was ever demuxed.
+setInterval(() => {
+  const end = video.buffered.length ? video.buffered.end(video.buffered.length - 1) : 0;
+  const ms = player && player._msectl && player._msectl._mediaSource;
+  document.getElementById('diag').textContent =
+    `t=${video.currentTime.toFixed(1)}s buffered=${end.toFixed(1)}s ready=${video.readyState}` +
+    ` mse=${ms ? ms.readyState : '-'}${video.paused ? ' PAUSED' : ''}`;
+}, 500);
 
 function stop() {
   if (!player) return;
+  // mpegts.js wants the full teardown, in this order. Calling destroy() alone leaves the old
+  // MediaSource attached to the element, and the next attachMediaElement() then quietly does
+  // nothing — which is why "resync" did not recover a stalled stream.
+  try { player.pause(); player.unload(); player.detachMediaElement(); } catch (e) { /* already gone */ }
   player.destroy();
   player = null;
 }

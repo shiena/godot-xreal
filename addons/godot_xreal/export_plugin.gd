@@ -44,6 +44,7 @@ func _get_android_manifest_element_contents(_platform: EditorExportPlatform, _de
 <uses-permission android:name="android.permission.REORDER_TASKS" />
 <uses-permission android:name="android.permission.ACTIVITY_EMBEDDING" tools:ignore="ProtectedPermissions" />
 <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+<uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
 <uses-permission android:name="android.permission.CAMERA" />
 <uses-permission android:name="android.permission.RECORD_AUDIO" />
 <uses-permission android:name="android.permission.VIBRATE" />"""
@@ -56,7 +57,9 @@ func _get_android_manifest_application_element_contents(_platform: EditorExportP
 <meta-data android:name="nr_features" android:value="multiResume" />
 <meta-data android:name="autoLog" android:value="0" />
 <activity android:name="com.godot.game.XrealCompanionActivity" android:autoRemoveFromRecents="true" android:excludeFromRecents="true" android:exported="false" android:hardwareAccelerated="true" android:launchMode="singleTask" android:resizeableActivity="true" android:screenOrientation="reverseLandscape" android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen" android:configChanges="layoutDirection|locale|orientation|keyboardHidden|screenSize|smallestScreenSize|density|keyboard|navigation|screenLayout|uiMode" />
-<activity android:name="ai.nreal.activitylife.NRFakeActivity" android:autoRemoveFromRecents="true" android:excludeFromRecents="true" android:exported="false" android:hardwareAccelerated="false" android:launchMode="singleTask" android:resizeableActivity="true" android:screenOrientation="reverseLandscape" android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale|layoutDirection|density" />"""
+<activity android:name="ai.nreal.activitylife.NRFakeActivity" android:autoRemoveFromRecents="true" android:excludeFromRecents="true" android:exported="false" android:hardwareAccelerated="false" android:launchMode="singleTask" android:resizeableActivity="true" android:screenOrientation="reverseLandscape" android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale|layoutDirection|density" />
+<activity android:name="com.godot.game.XrealProjectionActivity" android:excludeFromRecents="true" android:exported="false" android:noHistory="true" android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+<service android:name="com.godot.game.XrealProjectionService" android:exported="false" android:foregroundServiceType="mediaProjection" />"""
 
 ## Local .aar the plugin ships (XREAL/NR runtime archives). nr_spatial_anchor / nr_image_tracking
 ## carry the libnr_spatial_anchor.so / libnr_image_tracking.so backends for the anchor / image-tracking

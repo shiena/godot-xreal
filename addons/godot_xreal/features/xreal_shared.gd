@@ -41,6 +41,51 @@ static func resolution_preset(level: int) -> Vector3i:
 		_:
 			return Vector3i(1280, 720, 8_000_000)
 
+## Audio sources mixed into a recording/stream, mirroring the SDK VideoCapture sample's Audio State.
+## Both are captured natively by the SDK and mixed by its encoder: `MIC` from a config flag plus
+## RECORD_AUDIO, `APP` from a config flag plus an Android MediaProjection (see
+## [method request_app_audio_consent]). Godot's own mixer is not involved in either.
+enum AudioState { NONE, APP, MIC, APP_AND_MIC }
+
+static func audio_wants_app(state: int) -> bool:
+	return state == AudioState.APP or state == AudioState.APP_AND_MIC
+
+## RECORD_AUDIO, which the SDK's native mic capture needs. True off-Android so editor runs behave.
+static func is_mic_granted() -> bool:
+	if not OS.has_feature("android"):
+		return true
+	return "android.permission.RECORD_AUDIO" in OS.get_granted_permissions()
+
+static func audio_wants_mic(state: int) -> bool:
+	return state == AudioState.MIC or state == AudioState.APP_AND_MIC
+
+## The Java side of app-audio consent, or null off-device.
+static func _projection_class() -> Object:
+	if not is_native_runtime():
+		return null
+	return JavaClassWrapper.wrap("com.godot.game.XrealProjection")
+
+## Ask the user for screen-capture consent, which is what app ("internal") audio needs.
+##
+## Android will only let an app capture playback audio through a MediaProjection, and the XREAL
+## encoder builds its own AudioPlaybackCaptureConfiguration from the one we hand it — so without
+## consent a recording carries the microphone only. Returns immediately; the system dialog is
+## asynchronous, so poll [method is_app_audio_ready]. Calling it again while a dialog is up, or once
+## consent is held, does nothing.
+static func request_app_audio_consent() -> void:
+	var projection := _projection_class()
+	if projection == null:
+		return
+	var activity = Engine.get_singleton(&"AndroidRuntime").getActivity()
+	if activity != null:
+		projection.request(activity)
+
+## Whether app audio can be captured right now. False until consent is granted, and again if the
+## user revokes it from the status bar.
+static func is_app_audio_ready() -> bool:
+	var projection := _projection_class()
+	return projection.isReady() if projection != null else false
+
 static func is_native_runtime() -> bool:
 	return OS.get_name() == "Android" and ClassDB.class_exists(&"XrealSystem")
 

@@ -25,8 +25,10 @@ signal error(message: String)
 ## toggle can reflect the real state.
 signal active_changed(active: bool)
 
-## Include the microphone in the stream (captured natively by the encoder; needs RECORD_AUDIO).
-@export var with_mic := true
+## Which audio goes out with the stream (SDK VideoCapture's Audio State). MIC is captured natively by
+## the encoder and needs RECORD_AUDIO; APP is captured natively too, via a MediaProjection. Replaces the
+## old `with_mic` bool — MIC is the same behaviour as `with_mic = true`.
+@export var audio_state: XrealShared.AudioState = XrealShared.AudioState.MIC
 ## Target the receiver's ObserverView page (MRC composite) instead of FirstPersonView. Default OFF —
 ## FirstPersonView is the useful mode on XREAL One (its RGB camera does an aligned on-device blend).
 ## ObserverView is a niche/incomplete path (mainly for camera-less glasses): when true the stream
@@ -54,9 +56,6 @@ enum BlendMode { BLEND, RGB_ONLY, VIRTUAL_ONLY }
 @export_flags_3d_render var stream_cull_mask := 0xFFFFF
 
 const RTP_PORT := 5555
-## Include app audio (fed via stream_push_audio from an AudioEffectCapture). Off by default — feed
-## it yourself if your app plays sound that should be cast.
-const STREAM_WITH_INTERNAL_AUDIO := false
 
 var _system: Object                 # XrealSystem (this feature's own stateless instance)
 var _ar_vp: SubViewport             # head-POV AR, transparent bg (holograms only)
@@ -77,7 +76,7 @@ func _ready() -> void:
 	# RECORD_AUDIO is a runtime (dangerous) permission: the export plugin declares it in the
 	# manifest, but the native encoder's mic capture stays silent until it's granted at runtime.
 	# Request it proactively at startup so the one-time dialog is dealt with before streaming.
-	if with_mic and OS.has_feature("android") and not _mic_granted():
+	if XrealShared.audio_wants_mic(audio_state) and OS.has_feature("android") and not _mic_granted():
 		OS.request_permission("android.permission.RECORD_AUDIO")
 	# LAN-discovery pairing with the StreamingReceiver PC app.
 	_pairing = Node.new()
@@ -91,9 +90,7 @@ func _ready() -> void:
 
 ## True once RECORD_AUDIO is granted (always true off Android, where the encoder mic isn't used).
 func _mic_granted() -> bool:
-	if not OS.has_feature("android"):
-		return true
-	return "android.permission.RECORD_AUDIO" in OS.get_granted_permissions()
+	return XrealShared.is_mic_granted()
 
 ## Toggle streaming. Pairing is async, so turning on only *starts* discovery; the actual stream
 ## starts on the `paired` signal (or active_changed(false) reports the failure).
@@ -124,7 +121,7 @@ func set_enabled(on: bool) -> void:
 		return
 	# Only announce/capture the mic if RECORD_AUDIO is granted — otherwise the encoder's AudioRecord
 	# stays silent. If wanted but not granted, (re)request it and stream video-only this time.
-	_mic_now = with_mic
+	_mic_now = XrealShared.audio_wants_mic(audio_state)
 	if _mic_now and OS.has_feature("android") and not _mic_granted():
 		OS.request_permission("android.permission.RECORD_AUDIO")
 		_mic_now = false
@@ -146,7 +143,15 @@ func _on_paired(server_ip: String) -> void:
 	_ensure_viewport()
 	_apply_fov()  # in case the receiver's UpdateCameraParam arrived before the viewport existed
 	# ObserverView streams the virtual-only AR with alpha (useAlpha) for the PC-webcam composite.
-	if not _system.stream_start(url, stream_width, stream_height, stream_bitrate, stream_fps, _mic_now, STREAM_WITH_INTERNAL_AUDIO, observer_mode):
+	# See xreal_video_recorder.gd: app audio is native too, gated on a MediaProjection whose consent
+	# dialog is asynchronous, so the first stream that wants it triggers consent and goes mic-only.
+	var want_app := XrealShared.audio_wants_app(audio_state)
+	if want_app and not XrealShared.is_app_audio_ready():
+		XrealShared.request_app_audio_consent()
+		push_warning("[xreal-stream] app audio needs screen-capture consent; "
+			+ "this stream carries the microphone only")
+		want_app = false
+	if not _system.stream_start(url, stream_width, stream_height, stream_bitrate, stream_fps, _mic_now, want_app, observer_mode):
 		_fail("[xreal-stream] stream_start failed for %s" % url)
 		_pairing.stop()
 		active_changed.emit(false)

@@ -51,15 +51,15 @@ VIDEO_CLOCK = 90000  # RTP clock for H.264, fixed by RFC 6184
 # RTP
 # --------------------------------------------------------------------------------------------
 
-def rtp_payload(pkt: bytes) -> "tuple[int, int, bool, bytes] | None":
-    """-> (payload_type, timestamp, marker, payload), or None if this is not RTP v2."""
+def rtp_payload(pkt: bytes) -> "tuple[int, int, bool, int, bytes] | None":
+    """-> (payload_type, timestamp, marker, ssrc, payload), or None if this is not RTP v2."""
     if len(pkt) < 12 or (pkt[0] >> 6) != 2:
         return None
     csrc = pkt[0] & 0x0F
     has_ext = (pkt[0] >> 4) & 1
     marker = bool(pkt[1] >> 7)
     ptype = pkt[1] & 0x7F
-    ts = struct.unpack_from("!I", pkt, 4)[0]
+    ts, ssrc = struct.unpack_from("!II", pkt, 4)
     off = 12 + csrc * 4
     if has_ext:
         if len(pkt) < off + 4:
@@ -68,7 +68,7 @@ def rtp_payload(pkt: bytes) -> "tuple[int, int, bool, bytes] | None":
         off += 4 + ext_words * 4
     if off > len(pkt):
         return None
-    return ptype, ts, marker, pkt[off:]
+    return ptype, ts, marker, ssrc, pkt[off:]
 
 
 class Timeline:
@@ -84,6 +84,19 @@ class Timeline:
         self._origin: float | None = None
         self._base: dict[str, tuple[int, float]] = {}
         self._lock = threading.Lock()
+
+    def restart(self, stream: str) -> None:
+        """Forget one stream's RTP anchor, keeping the shared origin.
+
+        The app restarts its RTP timestamps from a fresh random base every time streaming is
+        toggled, so an anchor from a previous session makes every new stamp land far in the past -
+        video then advances 1 ms per frame (the duplicate-timestamp nudge firing every time) and
+        audio is dropped entirely for being older than the viewer's start. Keeping the origin means
+        the new session continues on the same wall-clock timeline, so viewers see a gap rather than
+        time going backwards, and need no reconnection.
+        """
+        with self._lock:
+            self._base.pop(stream, None)
 
     def stamp(self, stream: str, rtp_ts: int, clock: int) -> int:
         now = time.monotonic()
@@ -201,7 +214,16 @@ def latm_aus(payload: bytes) -> "list[bytes]":
 # FLV
 # --------------------------------------------------------------------------------------------
 
-FLV_HEADER = b"FLV\x01\x05\x00\x00\x00\x09" + b"\x00\x00\x00\x00"  # flags 5 = audio + video
+def flv_header(has_audio: bool) -> bytes:
+    """Signature, version 1, track flags, header size, then PreviousTagSize0.
+
+    The flags must tell the truth. Claiming an audio track that never produces data leaves Media
+    Source Extensions waiting for it forever: the browser shows the first decoded picture and then
+    freezes, because playback cannot advance past a declared track's (empty) buffered range. ffmpeg
+    happily ignores such a track, which is why a byte-level capture looks fine while a browser does
+    not play - so this is decided per viewer, once we have actually seen what the app is sending.
+    """
+    return b"FLV\x01" + bytes([0x01 | (0x04 if has_audio else 0)]) + b"\x00\x00\x00\x09\x00\x00\x00\x00"
 
 AAC_SAMPLE_RATES = [96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050,
                     16000, 12000, 11025, 8000, 7350]
@@ -230,9 +252,11 @@ def _amf_prop(key: str, value: float) -> bytes:
     return len(raw).to_bytes(2, "big") + raw + b"\x00" + struct.pack("!d", value)
 
 
-def script_tag() -> bytes:
+def script_tag(has_audio: bool) -> bytes:
     """onMetaData. Dimensions are left to the SPS; this just declares the codecs and 'live'."""
-    props = [_amf_prop("duration", 0.0), _amf_prop("videocodecid", 7.0), _amf_prop("audiocodecid", 10.0)]
+    props = [_amf_prop("duration", 0.0), _amf_prop("videocodecid", 7.0)]
+    if has_audio:
+        props.append(_amf_prop("audiocodecid", 10.0))
     body = _amf_string("onMetaData") + b"\x08" + len(props).to_bytes(4, "big") + b"".join(props) + b"\x00\x00\x09"
     return flv_tag(18, 0, body)
 
@@ -298,12 +322,20 @@ class Client:
         # starts at ~0 instead of handing MSE a one-hour gap.
         self.t0: int | None = None
         self.armed = False  # forward nothing until a keyframe gives the decoder a starting point
+        self.behind = False  # queue overflowed; skip ahead to the next keyframe
+        self.resyncs = 0
+        self.opened_with_audio = False  # the FLV header it got is not rewritable afterwards
 
     def send(self, data: bytes) -> None:
         try:
             self.q.put_nowait(data)
         except queue.Full:
-            self.alive = False  # hopelessly behind; let it reconnect
+            # Do not disconnect. Turning the RGB camera on takes the stream from ~300 kbit/s to
+            # ~11 Mbit/s (measured), and a browser demuxing FLV in JavaScript can fall behind that
+            # for a second or two. Dropping the viewer made a transient overload permanent - the
+            # picture stopped and never came back. A live stream should shed the backlog and rejoin
+            # at the next keyframe instead, which arrives about once a second here.
+            self.behind = True
 
     def pump(self) -> None:
         try:
@@ -323,18 +355,21 @@ class Client:
 
 
 class Hub:
-    def __init__(self, audio_rate: int, channels: int) -> None:
+    def __init__(self, channels: int) -> None:
         self.clients: list[Client] = []
         self.lock = threading.Lock()
         self.avc_header: bytes | None = None
-        self.aac_header = aac_sequence_header(audio_rate, channels)
+        self.aac_header: bytes | None = None
+        # True while the audio clock is still being measured. A viewer armed during that window
+        # would be handed a video-only FLV header and could never be given sound afterwards.
+        self.audio_pending = False
+        self._aac_rate = AAC_SAMPLE_RATES[8]  # 16000 until measure_audio_clock says otherwise
+        self._aac_channels = channels
 
     def add(self, client: Client) -> None:
-        client.send(FLV_HEADER)
-        client.send(script_tag())
-        if self.avc_header:
-            client.send(self.avc_header)
-        client.send(self.aac_header)
+        # Deliberately nothing sent yet: the FLV header has to declare which tracks exist, and that
+        # is only known once frames are flowing. The client is served its header block by
+        # _open_stream below, at its first keyframe.
         with self.lock:
             self.clients.append(client)
         print(f"[web] viewer connected: {client.addr} ({len(self.clients)} total)", flush=True)
@@ -345,7 +380,49 @@ class Hub:
         self.avc_header = tag
         with self.lock:
             for c in self.clients:
-                c.send(tag)
+                if c.armed:
+                    c.send(tag)
+
+    def set_audio_rate(self, rate: int) -> None:
+        """Adopt the measured sample rate before any audio is announced."""
+        self._aac_rate = rate
+
+    def note_audio(self) -> None:
+        """First audio access unit seen; from now on viewers are told the stream has sound."""
+        if self.aac_header is None:
+            self.aac_header = aac_sequence_header(self._aac_rate, self._aac_channels)
+
+    def _open_stream(self, client: Client) -> None:
+        has_audio = self.aac_header is not None
+        client.opened_with_audio = has_audio
+        client.send(flv_header(has_audio))
+        client.send(script_tag(has_audio))
+        if self.avc_header:
+            client.send(self.avc_header)
+        if has_audio:
+            client.send(self.aac_header)
+
+    def reset_session(self) -> None:
+        """The app restarted its stream; drop every viewer so each rebuilds from scratch.
+
+        Re-anchoring alone is not enough for viewers already watching: their timeline would jump by
+        however long the server has been up, and a Media Source that is handed a gap of that size
+        simply stops. An FLV header cannot be re-sent mid-stream either. Disconnecting is the honest
+        move - the page reconnects on its own and starts clean.
+        """
+        self.avc_header = None
+        self.aac_header = None
+        self.audio_pending = False
+        with self.lock:
+            victims, self.clients = self.clients, []
+        for c in victims:
+            c.alive = False
+            try:
+                c.q.put_nowait(None)  # wake the pump so it closes the socket promptly
+            except queue.Full:
+                pass
+        if victims:
+            print(f"[web] stream restarted; dropped {len(victims)} viewer(s) to resync", flush=True)
 
     def broadcast(self, tag: bytes, timestamp: int, keyframe: bool, is_video: bool) -> None:
         with self.lock:
@@ -353,12 +430,38 @@ class Hub:
             dropped = len(self.clients) - len(live)
             self.clients = live
         if dropped:
-            print(f"[web] dropped {dropped} viewer(s) that fell behind", flush=True)
+            print(f"[web] {dropped} viewer(s) disconnected", flush=True)
         for c in live:
+            if not is_video and c.armed and not c.opened_with_audio:
+                continue  # its FLV header promised video only
             if not c.armed:
-                if not (is_video and keyframe):
+                # Start each viewer on a keyframe, so its decoder has something to decode from.
+                if not (is_video and keyframe) or self.audio_pending:
                     continue
                 c.armed = True
+                self._open_stream(c)
+            elif c.behind:
+                if not is_video:
+                    # Audio is not held back. AAC frames stand alone, so there is no reason to wait
+                    # for a keyframe, and dropping a second of sound every time the camera pushes
+                    # the bitrate up is exactly the break-up this was supposed to avoid. Letting the
+                    # small audio tags through while the large video ones are skipped also drains
+                    # the queue faster.
+                    c.send(_retime(tag, timestamp - c.t0) if c.t0 is not None else tag)
+                    continue
+                if not keyframe:
+                    continue  # video before the next keyframe is undecodable anyway
+                # Throw away what it never managed to read, then rejoin here. Timestamps keep
+                # running, so the viewer sees a gap rather than time going backwards.
+                try:
+                    while True:
+                        c.q.get_nowait()
+                except queue.Empty:
+                    pass
+                c.behind = False
+                c.resyncs += 1
+                print(f"[web] {c.addr} fell behind; resumed at a keyframe "
+                      f"({c.resyncs} so far)", flush=True)
             if c.t0 is None:
                 c.t0 = timestamp
             rel = timestamp - c.t0
@@ -390,11 +493,20 @@ def receive_video(port: int, hub: Hub, timeline: Timeline) -> None:
     depack = H264Depacketizer()
     seen = False
     last_ms = -1
+    ssrc_seen: int | None = None
     while True:
         parsed = rtp_payload(sock.recv(65535))
         if not parsed:
             continue
-        _pt, ts, marker, payload = parsed
+        _pt, ts, marker, ssrc, payload = parsed
+        if ssrc != ssrc_seen:
+            if ssrc_seen is not None:
+                print("[rtp] video: new RTP session, re-anchoring", flush=True)
+                timeline.restart("v")
+                depack = H264Depacketizer()
+                last_ms = -1
+                hub.reset_session()
+            ssrc_seen = ssrc
         for au_ts, nals in depack.push(ts, marker, payload):
             if depack.sps and depack.pps:
                 hub.set_avc_header(avc_sequence_header(depack.sps, depack.pps))
@@ -415,19 +527,79 @@ def receive_video(port: int, hub: Hub, timeline: Timeline) -> None:
             hub.broadcast(avc_frame(nals, 0, keyframe), ms, keyframe, True)
 
 
-def receive_audio(port: int, hub: Hub, timeline: Timeline, clock: int) -> None:
+def measure_audio_clock(rtp_delta: int, elapsed: float) -> "int | None":
+    """Nearest standard AAC rate to the observed RTP-timestamp advance, or None if it is not close.
+
+    The rate cannot be read off the wire: LATM with cpresent=0 carries no StreamMuxConfig, so a
+    receiver has to be told — and being told wrongly is silent and ruinous. Assuming 16000 while the
+    app sent 44100 made audio time run 2.756x fast, putting the audio track 86 s ahead of video after
+    a minute; the browser showed one frame and froze. The RTP clock *is* the sample rate, so measure
+    it instead of trusting a default.
+    """
+    # Five seconds, measured after a warm-up, because 44100 and 48000 are only 8.8 % apart. A two
+    # second window that included the encoder's start-up burst snapped 44100 to 48000, and stamping
+    # audio 8.8 % fast made the browser's audio run out ahead of its content - audible as constant
+    # break-up while the video looked fine.
+    if elapsed < 5.0 or rtp_delta <= 0:
+        return None
+    observed = rtp_delta / elapsed
+    best = min(AAC_SAMPLE_RATES, key=lambda r: abs(r - observed))
+    if abs(best - observed) >= best * 0.05:
+        return None  # nowhere near a real rate; keep measuring rather than guess
+    return best
+
+
+def receive_audio(port: int, hub: Hub, timeline: Timeline, forced_clock: "int | None") -> None:
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind(("0.0.0.0", port))
     seen = False
+    clock = forced_clock
+    base_ts: int | None = None
+    base_wall = 0.0
+    warmup_until = 0.0
+    ssrc_seen: int | None = None
     while True:
         parsed = rtp_payload(sock.recv(65535))
         if not parsed:
             continue
-        _pt, ts, _marker, payload = parsed
+        _pt, ts, _marker, ssrc, payload = parsed
+        if ssrc != ssrc_seen:
+            if ssrc_seen is not None:
+                print("[rtp] audio: new RTP session, re-anchoring", flush=True)
+                timeline.restart("a")
+                # The rate is per-session too: streaming runs at 48000, a recording with app audio
+                # at Godot's mixer rate. Measure again rather than carry the old one over.
+                clock, base_ts, warmup_until = forced_clock, None, 0.0
+            ssrc_seen = ssrc
         aus = latm_aus(payload)
-        if aus and not seen:
+        if not aus:
+            continue
+        if not seen:
             print(f"[rtp] audio: first access unit ({len(aus[0])} bytes)", flush=True)
             seen = True
+        if clock is None:
+            # Hold the audio back until the rate is known: one badly-stamped tag is enough to strand
+            # a viewer's audio buffer far from its video.
+            now = time.monotonic()
+            if warmup_until == 0.0:
+                # The first packets arrive in a burst as the encoder starts, which reads as a far
+                # higher clock than the real one. Let that settle before anchoring.
+                warmup_until = now + 1.0
+                hub.audio_pending = True
+                continue
+            if now < warmup_until:
+                continue
+            if base_ts is None:
+                base_ts, base_wall = ts, now
+                continue
+            clock = measure_audio_clock((ts - base_ts) & 0xFFFFFFFF, now - base_wall)
+            if clock is None:
+                continue
+            observed = ((ts - base_ts) & 0xFFFFFFFF) / (now - base_wall)
+            print(f"[rtp] audio clock measured: {clock} Hz (observed {observed:.0f})", flush=True)
+            hub.set_audio_rate(clock)
+            hub.audio_pending = False
+        hub.note_audio()
         stamp = timeline.stamp("a", ts, clock)
         for i, au in enumerate(aus):
             # Sub-frames within one payload are 1024 samples apart; there is normally just one.
@@ -487,8 +659,8 @@ def main() -> int:
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--video-port", type=int, default=5555, help="RTP video port (default 5555)")
     ap.add_argument("--audio-port", type=int, default=0, help="RTP audio port (default: video + 2)")
-    ap.add_argument("--audio-rate", type=int, default=16000,
-                    help="AAC sample rate the encoder was configured with (default 16000)")
+    ap.add_argument("--audio-rate", type=int, default=0,
+                    help="AAC sample rate; 0 (default) measures it from the RTP clock")
     ap.add_argument("--audio-channels", type=int, default=1, help="AAC channel count (default 1)")
     ap.add_argument("--http-port", type=int, default=8080, help="web port (default 8080)")
     ap.add_argument("--control-port", type=int, default=pair_server.CONTROL_PORT,
@@ -497,11 +669,11 @@ def main() -> int:
     args = ap.parse_args()
 
     audio_port = args.audio_port or args.video_port + 2
-    if args.audio_rate not in AAC_SAMPLE_RATES:
+    if args.audio_rate and args.audio_rate not in AAC_SAMPLE_RATES:
         print(f"[fpv] --audio-rate {args.audio_rate} is not an AAC sample rate", file=sys.stderr)
         return 2
 
-    hub = Hub(args.audio_rate, args.audio_channels)
+    hub = Hub(args.audio_channels)
     timeline = Timeline()
 
     try:
@@ -512,11 +684,12 @@ def main() -> int:
 
     threading.Thread(target=receive_video, args=(args.video_port, hub, timeline), daemon=True).start()
     threading.Thread(target=receive_audio,
-                     args=(audio_port, hub, timeline, args.audio_rate), daemon=True).start()
+                     args=(audio_port, hub, timeline, args.audio_rate or None), daemon=True).start()
     threading.Thread(target=http_server.serve_forever, daemon=True).start()
 
+    rate_note = f"{args.audio_rate} Hz" if args.audio_rate else "rate measured from the stream"
     print(f"[fpv] RTP video {args.video_port}, audio {audio_port} "
-          f"(AAC {args.audio_rate} Hz x{args.audio_channels})", flush=True)
+          f"(AAC {rate_note}, x{args.audio_channels})", flush=True)
     print(f"[fpv] open http://localhost:{args.http_port} in a browser, then hit Stream in the app",
           flush=True)
     return pair_server.run(args.ip, hint="[pair] pairing runs in-process; no second server needed.",

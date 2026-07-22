@@ -54,8 +54,11 @@ marker_material = SubResource("ShaderMaterial_marker")
 [node name="XrealBlendCapture" parent="." instance=ExtResource("11_blend")]
 
 [node name="XrealStream" parent="." instance=ExtResource("12_stream")]
+resolution_level = 0
+audio_state = 3
 
 [node name="XrealVideoRecorder" parent="." instance=ExtResource("14_recorder")]
+audio_state = 3
 
 [node name="UI" type="CanvasLayer" parent="." unique_id=1039389148]
 

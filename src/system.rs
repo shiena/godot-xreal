@@ -688,6 +688,12 @@ impl XrealSystem {
         with_internal_audio: bool,
         with_alpha: bool,
     ) -> bool {
+        // The encoder writes the track at the *config* rate and does not resample what we push, so
+        // when we are the audio source the two must agree — see video_encoder::AUDIO_SAMPLE_RATE for
+        // the measurement. Godot's mixer is 44100 by default; the SDK's 48000 constant only works for
+        // Unity because Android runs its mixer at 48000 as well.
+        let app_audio_rate = with_internal_audio
+            .then(|| godot::classes::AudioServer::singleton().get_mix_rate() as i32);
         crate::video_encoder::start(
             &output.to_string(),
             width as i32,
@@ -697,30 +703,8 @@ impl XrealSystem {
             with_mic,
             with_internal_audio,
             with_alpha,
+            app_audio_rate,
         )
-    }
-
-    /// Feed app ("internal") audio to the running stream (the mic, if enabled in `stream_start`, is
-    /// captured natively). `samples` is raw PCM; `fmt` 0 = s16 / 8 = float. Source it from an
-    /// `AudioEffectCapture` on the master bus. Returns the encoder status (`-1` if not streaming).
-    #[func]
-    fn stream_push_audio(
-        &self,
-        samples: PackedByteArray,
-        n_samples: i64,
-        bytes_per_sample: i64,
-        channels: i64,
-        sample_rate: i64,
-        fmt: i64,
-    ) -> i64 {
-        crate::video_encoder::push_audio(
-            samples.as_slice(),
-            n_samples as i32,
-            bytes_per_sample as i32,
-            channels as i32,
-            sample_rate as i32,
-            fmt as i32,
-        ) as i64
     }
 
     /// Feed one frame to the running stream: `gl_texture_id` from `RenderingServer.texture_get_native_handle`
