@@ -1,0 +1,9 @@
+# Recordings produced by receive.ps1 / receive.sh --record, plus hand-run ffmpeg probes.
+# Godot scans scripts/ too, so stray media here would also pull in .import files.
+fpv_*.mp4
+*.ts
+*.mkv
+*.wav
+*.png
+*.import
+__pycache__/
