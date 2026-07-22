@@ -5,7 +5,9 @@ the encoder-start crash and the empty-mp4 (no frames reaching the encoder) are f
 recorded 396 frames @ ~30 fps, 1280×720 H.264, decoding clean and showing the real head-POV scene.
 Ports the XREAL `FirstPersonViewStreamingCast` sample's streaming path — the native hardware encoder —
 to Godot. **Microphone audio also works** (2026-07-19, `fffb241`): the mic is captured as a non-silent
-AAC track and the mp4 plays with sound in Windows Media Player — see the "Audio" section below.
+AAC track and the mp4 plays with sound in Windows Media Player. **App ("internal") audio does not** —
+Godot's Android audio driver cannot deliver capture frames at a steady rate under recording load; see
+the "Audio" section below.
 **Live RTP also works** (2026-07-19): the Camera tab has a stream-destination field (empty = local mp4,
 `rtp://<PC>:5555` = live RTP); a device test streamed `codecType 2` to a PC where ffmpeg received clean
 1280×720 H.264 with the correct head-POV content. Caveat: the RTP path's audio is **proprietary**, so
@@ -115,7 +117,7 @@ EGL context**, so the call must be on the render thread.
    `StreamingReceiver.exe` (`demo/stream_pairing.gd`, FIND-SERVER) and streams to `rtp://<ip>:5555`.
 2. Confirm the config fields the encoder needs (bitrate/fps), the timestamp unit, and that a
    `useLinnerTexture`/`useAlpha` mismatch doesn't garble the frame.
-## Audio — **WORKING, device-verified 2026-07-19 (`fffb241`)**
+## Audio — mic **works**; app audio is **blocked by a Godot Android limitation**
 `stream_start(..., with_mic, with_internal_audio)`: **`with_mic`** sets `addMicphoneAudio` — the encoder
 captures the mic natively. This needs the **`RECORD_AUDIO` runtime permission**: the export plugin
 declares it in the manifest, but as a *dangerous* permission it must also be **granted at runtime**, which
@@ -124,11 +126,63 @@ and `set_enabled` only passes `addMicphoneAudio=true` once `OS.get_granted_permi
 (else it re-requests and streams video-only that once). Verified: **AAC 16 kHz mono, non-silent
 (-40 dB RMS / -21 dB peak), plays with sound in Windows Media Player.**
 
-**`with_internal_audio`** sets `addInternalAudio` and is fed by `stream_push_audio(bytes, nSamples,
-bytesPerSample, channels, sampleRate, fmt)` → `HWEncoderNotifyAudioData` (mono s16, `fmt` 0 — from an
-`AudioEffectCapture` on the master bus, the Godot analog of the SDK's `AudioRecordTool`
-`OnAudioFilterRead`). The demo enables the mic (`STREAM_WITH_MIC`) and leaves internal audio off (it
-plays no sound).
+**`with_internal_audio`** sets `addInternalAudio` and is fed by `stream_push_audio(...)` →
+`HWEncoderNotifyAudioData`. It is **left off everywhere**, and the video recorder passes no audio at
+all — see "App audio does not work on Android" below for why. The mic path above is unaffected: the
+encoder captures it natively, with no Godot audio involvement.
+
+The wire format, read from the SDK's own C# (`com.xreal.xr`,
+`AudioRecordTool.ConvertToSinChaAndWrite` + `NativeEncoder.UpdateAudioData`) rather than guessed:
+**mono signed 16-bit, first channel only**, `bytesPerSample = 2`, `channels = 1`, **`fmt = 1`**, and
+`nSamples` counted in *samples* (`audioData.Length / bytePerSample`), **not frames**. An earlier
+version of this doc said `fmt 0` and implied frames; both were wrong and cost a day of chasing
+wrong-length audio tracks. The encoder also **does not resample** — the config's `audioSampleRate` is
+what the track is written at, so it must equal the rate passed per push. Unity never hits that because
+Android runs its mixer at 48000, matching the SDK's own constant.
+
+### App audio does not work on Android (engine limitation, measured 2026-07-22)
+
+Capturing Godot's own output for a recording or stream is implemented and correct — and still unusable,
+because Godot's Android audio driver cannot deliver frames at a steady rate while a capture is running.
+
+Measured with an `AudioEffectCapture` on the master bus, reporting delivered frames per wall-clock
+second, in one run (BGM playing throughout):
+
+| phase | delivered | nominal |
+|---|---|---|
+| idle | 43991 / 44367 Hz | 44100 |
+| camera on | 43317 / 42657 Hz | 44100 |
+| **recording** | **37393 / 40431 / 40953 Hz** | 44100 |
+| after stop | 43902 / 43106 Hz | 44100 |
+
+`AudioEffectCapture.get_discarded_frames()` never moved, so nothing overflows — the frames are simply
+never produced. The encoder times its track purely by the sample count it receives, so the audio runs
+7–20 % short against the video and drifts out of sync. Padding the deficit with silence restores sync
+(measured audio/video 0.9933) but leaves that fraction of the track silent.
+
+The cause is in `platform/android/audio_driver_opensl.cpp` (checked against 4.7):
+
+- `get_mix_rate()` is **`return 44100; // hardcoded for Android`**, and the stream is opened with
+  `SL_SAMPLINGRATE_44_1` — while this device's audio HAL runs at **48000** (`dumpsys
+  media.audio_flinger`). Every block is resampled by the HAL. `audio/driver/mix_rate` is ignored.
+- `buffer_size = 1024` with `BUFFER_COUNT = 2` — about 46 ms of slack, and **fixed**:
+  `audio/driver/output_latency` is honoured by the ALSA / CoreAudio / PulseAudio drivers but not by
+  OpenSL, so it cannot be raised. Setting it to 50 ms made no difference (measured).
+- There is **no AAudio / Oboe driver** on this platform in 4.7 — OpenSL ES is the only path.
+
+So under recording load the OpenSL callback thread falls behind and Godot mixes fewer blocks per
+wall-second. Ruled out along the way, each by measurement: ring-buffer overflow (`discarded` flat),
+silence-skipping (`AudioEffectCaptureInstance::process_silence()` returns `true`), the per-sample
+GDScript conversion loop that `godot-demo-projects`' audio/generator demo warns about (moving it to
+Rust changed nothing), source-rate resampling (the test asset is already 44100), and capture
+resolution — **LOW (640×360) measured the same as HIGH**, so it is thread scheduling, not pixel
+throughput.
+
+A real fix is engine-side: patch `audio_driver_opensl.cpp` to open at the device's native rate and
+enlarge the buffer, or add an AAudio/Oboe driver. Until then app audio in captures stays off. The
+work-in-progress implementation (an `XrealShared.AudioState` enum, `XrealAudioTap`, and the silence
+padding) is parked on the **`wip/audio-state`** branch with all of the above measurements in its
+commit messages.
 
 **Known-benign warnings** (not playback problems — WMP plays fine): ffmpeg reports an `Input buffer
 exhausted` on ~2/307 AAC frames (the truncated final frame at stop) and non-monotonic video DTS

@@ -49,6 +49,7 @@ XREAL のネイティブは **Android arm64 のみ** のため、対応端末（
 | **スマホ 3D ポインター**（ホスト IMU） | ✅（デモ） | スマホを傾けてグラス内に 3D レイを飛ばす（`demo/phone_pointer.gd`）。姿勢は `XrealSystem.poll_controller()` が露出する NRController の生 IMU（`accel`→ピッチ/ロール, `gyro`→ヨー）を GDScript で融合。本機では NRController の**融合ポーズ**も Godot 内蔵 `Input.get_gyroscope()` も空だったため。レイキャストで当たったオブジェクトをハイライト・トリガーで選択、オンスクリーンの左右手切替でレイの原点を切替、gyro ドリフトはバイアス学習+デッドゾーンで抑制。`recenter` で正面リセット。 |
 | **マルチレジューム** — スマホを別アプリに切替えてもグラスのアプリが継続（描画も） | ✅ | **Unity SDK がフローティングウインドウ（復帰ボタン）で行う所を、本移植では代わりに auto-enter Picture-in-Picture で実装。** 背景化するとアプリはスマホ隅の小タイル（pause だが可視）になり、Godot の GL スレッド + Surface が生存 → グラスがライブ描画継続。タイルタップで全画面復帰。`XrealBridge.enableAutoEnterPiP`（`demo/main.gd` から駆動）、manifest 足場 `nr_features=multiResume`+`NRFakeActivity`。**実機検証済み**: submit カウンタが背景化後も進行。なぜ PiP か（フローティングウインドウ / foreground service / SurfaceView 付け替えでない理由）は `docs/plans/background-render-plan.md`。 |
 | **平面検出** → GDScript | ✅（Air 2 Ultra） | 水平/垂直の平面検出を `XrealSystem.set_plane_detection_mode()` + `poll_planes()`（追加/更新/削除、ポーズ・サイズ・alignment 付き）+ `get_plane_boundary()` で提供。`libXREALXRPlugin.so` のフラット C export（追加 AAR 不要）、6DoF 必須。4 つの AR 機能の C ABI は RE 確定済み — [`docs/plans/ar-features-plan.md`](docs/plans/ar-features-plan.md)。 |
+| **キャプチャの音声** — マイク ✅ / アプリ音声 ❌ | ⚠️ 一部 | FPV 配信は**マイク**音声を載せられます（SDK のエンコーダが native に録音。実行時に `RECORD_AUDIO` の許可が必要）。**アプリ自身の音（内部音声）は利用できず**、動画録画には音声が一切入りません。移植漏れではなく Godot 側の制約です: Android の `audio_driver_opensl.cpp` は 44.1kHz 固定・バッファ 1024×2 固定で AAudio/Oboe 経路が無く、録画の負荷がかかると `AudioEffectCapture` が公称の 85〜93% しかフレームを受け取れません（実測。破棄されているのではなく**そもそも生成されない**）。結果として音声トラックが映像より短くなります。`audio/driver/mix_rate` も `output_latency` もこのドライバは参照しません。詳細 [`docs/plans/fpv-streaming-plan.md`](docs/plans/fpv-streaming-plan.md#app-audio-does-not-work-on-android-engine-limitation-measured-2026-07-22)。 |
 | **空間アンカー** → GDScript | ✅（Air 2 Ultra） | ワールドアンカーの作成/永続化/復元を `XrealSystem.acquire_anchor()` / `poll_anchors()` / `save_anchor()` / `load_anchor()` / `estimate_anchor_quality()` 等で提供。フラット C export（`XRTrackedAnchor` レイアウトは実機確定）+ 同梱の `nr_spatial_anchor.aar` バックエンド、6DoF 必須。併せて `is_camera_supported()` / `is_hmd_feature_supported()`（SDK のデバイス別判定 — Air 2 Ultra は RGB カメラ非搭載）も追加。 |
 
 このほか画像トラッキング・マーカートラッキング・深度メッシュ・写真/合成キャプチャ・FPV 配信も
@@ -200,7 +201,9 @@ API:
 ### FPV 配信: 受信アプリ
 
 デモの **Stream** ボタンは一人称視点 — AR シーン、RGB カメラ ON 時はカメラ + AR の合成 — を H.264/RTP で
-配信します。受信側は XREAL の **StreamingReceiver**（PC アプリ）です。XREAL の
+配信します。**マイク音声は載ります**（初回に `RECORD_AUDIO` の許可を与えてください）が、
+**アプリ自身の音は載りません** — 理由は[対応機能](#対応機能)の「キャプチャの音声」行を参照。
+受信側は XREAL の **StreamingReceiver**（PC アプリ）です。XREAL の
 [First Person View](https://docs.xreal.com/Tools/First%20Person%20View) ページからダウンロードし、**同一 LAN**
 の PC で起動してください。アプリが受信側を自動検出（LAN ブロードキャスト + ハンドシェイク）して配信を開始する
 ため、アドレス入力は不要です。カメラではなく自前のレンダーターゲットを配信するので RGB カメラは不要で、
