@@ -1030,20 +1030,30 @@ fn image_to_dict(im: &crate::native::ImageSample) -> VarDictionary {
     d
 }
 
-/// A depth-mesh block → a GDScript `Dictionary`. Vertices/normals get the same `(x, -y, -z)` flip the
-/// poses use (on-device-verify-pending); indices are copied as-is.
+/// A depth-mesh block → a GDScript `Dictionary`.
+///
+/// Unlike the poses, mesh vertices come out of `MeshBlockInfo` in **raw NR space** (the SDK's
+/// `AcquireMesh` is what negates Z on the way into Unity), so the flip is one step short of the pose
+/// path: raw → Unity is `(x, y, -z)` and Unity → this port's Godot is `(x, -y, -z)`, which composes to
+/// `(x, -y, z)`.
+///
+/// That leaves our space a pure 180°-about-X *rotation* of Unity's, so triangles keep Unity's
+/// clockwise-front winding — the opposite of Godot's counter-clockwise-front rule. Emit each triangle
+/// reversed so front faces stay front.
 fn mesh_block_to_dict(b: &crate::depth_mesh::MeshBlock) -> VarDictionary {
     let mut verts = PackedVector3Array::new();
     for v in &b.vertices {
-        verts.push(Vector3::new(v[0], -v[1], -v[2]));
+        verts.push(Vector3::new(v[0], -v[1], v[2]));
     }
     let mut norms = PackedVector3Array::new();
     for n in &b.normals {
-        norms.push(Vector3::new(n[0], -n[1], -n[2]));
+        norms.push(Vector3::new(n[0], -n[1], n[2]));
     }
     let mut idx = PackedInt32Array::new();
-    for i in &b.indices {
-        idx.push(*i as i32);
+    for t in b.indices.chunks_exact(3) {
+        idx.push(t[0] as i32);
+        idx.push(t[2] as i32);
+        idx.push(t[1] as i32);
     }
     let mut d = VarDictionary::new();
     d.set(

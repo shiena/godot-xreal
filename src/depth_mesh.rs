@@ -29,13 +29,19 @@ const NP_STARTED: usize = 0x18; // NativePerception + 0x18 (non-zero once start 
 const NP_SESSION: usize = 0x28; // NativePerception + 0x28 (NR session handle)
 const NP_CONFIG: usize = 0x38; // NativePerception + 0x38 (NR config handle)
 
-// --- MeshBlockInfo layout (128-byte block, device-confirmed from the AcquireMesh copy loop). Each
-//     std::vector is {begin, end, cap} (24 B); count = (end-begin)/elem_size. ---
+// --- MeshBlockInfo layout (128-byte block). Confirmed from BOTH ends: the producer
+//     `NativePerception::GetMeshBlockInfo` (`vector<NRVector3f>::__append` on `block_end-0x60` /
+//     `-0x48`, `vector<u32>::__append` on `-0x30`) and the consumer `InputManager::AcquireMesh`
+//     (whose `x21` is the *hash node*, so its `+0x38/+0x50/+0x68` are block `+0x20/+0x38/+0x50` —
+//     the libc++ node header puts the mapped `MeshBlockInfo` at node+0x18). `MeshBlockInfo::operator=`
+//     shows a 28-byte POD head then exactly four vectors. Each std::vector is {begin, end, cap}
+//     (24 B); count = (end-begin)/elem_size. ---
 const MB_ID: usize = 0x00; // u64 (TrackableId.subId2)
-const MB_STATE: usize = 0x08; // i32 NRMeshingBlockState (2 = removed)
-const MB_VERTICES: usize = 0x38; // vector<Vector3> (12 B/elem)
-const MB_NORMALS: usize = 0x50; // vector<Vector3> (12 B/elem)
-const MB_INDICES: usize = 0x68; // vector<u32> (4 B/elem)
+const MB_STATE: usize = 0x08; // i32 Unity MeshChangeState (Added0/Updated1/Removed2/Unchanged3)
+const MB_VERTICES: usize = 0x20; // vector<NRVector3f> (12 B/elem)
+const MB_NORMALS: usize = 0x38; // vector<NRVector3f> (12 B/elem)
+const MB_INDICES: usize = 0x50; // vector<u32> (4 B/elem)
+const MB_LABELS: usize = 0x68; // vector<u8> NRMeshingVertexSemanticLabel — freed, not surfaced
 const MESH_BLOCK_STRIDE: usize = 0x80; // 128 bytes
 
 /// Sanity caps against a garbage vector length driving an OOB read (the SDK vectors are transient).
@@ -61,8 +67,10 @@ struct CppVec {
     _cap: *mut u8,
 }
 
-/// One meshing block copied out of the SDK. `vertices`/`normals`/`indices` are **raw backend space**;
-/// the Godot side applies the coordinate flip. `state == 2` means the block was removed.
+/// One meshing block copied out of the SDK. `vertices`/`normals` are **raw NR backend space**, i.e.
+/// *before* the SDK's Unity conversion — `AcquireMesh` negates Z on its way into Unity's buffers, so
+/// raw is right-handed and Unity-space is `(x, y, -z)` of these values. The Godot side applies the
+/// flip. `state == 2` means the block was removed.
 pub struct MeshBlock {
     pub id: u64,
     pub state: i32,
@@ -146,10 +154,12 @@ pub fn poll_mesh_blocks() -> Vec<MeshBlock> {
                 normals,
                 indices,
             });
-            // Free the block's three vector storages (libc++-allocated).
+            // Free the block's four vector storages (libc++-allocated). Labels are freed without
+            // being copied out — nothing consumes them yet.
             free_op(v_begin);
             free_op(n_begin);
             free_op(i_begin);
+            free_op((block.add(MB_LABELS) as *const *mut u8).read_unaligned());
         }
         // Free the block array itself.
         free_op(vec.begin);
