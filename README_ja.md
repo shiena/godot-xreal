@@ -203,11 +203,17 @@ API:
 デモの **Stream** ボタンは一人称視点 — AR シーン、RGB カメラ ON 時はカメラ + AR の合成 — を H.264/RTP で
 配信します。**マイク音声は載ります**（初回に `RECORD_AUDIO` の許可を与えてください）が、
 **アプリ自身の音は載りません** — 理由は[対応機能](#対応機能)の「キャプチャの音声」行を参照。
-受信側は XREAL の **StreamingReceiver**（PC アプリ）です。XREAL の
-[First Person View](https://docs.xreal.com/Tools/First%20Person%20View) ページからダウンロードし、**同一 LAN**
-の PC で起動してください。アプリが受信側を自動検出（LAN ブロードキャスト + ハンドシェイク）して配信を開始する
-ため、アドレス入力は不要です。カメラではなく自前のレンダーターゲットを配信するので RGB カメラは不要で、
-カメラ非搭載の Air 2 Ultra でも動作します。
+受信側は**同一 LAN** の PC で起動します。アプリが受信側を自動検出（LAN ブロードキャスト + ハンドシェイク）
+して配信を開始するため、アドレス入力は不要です。次のどちらでも受信できます。
+
+- **[`scripts/stream_server/`](scripts/stream_server/)** — 自前の受信サーバー。python 3 と ffmpeg だけで
+  動きます。映像（RFC 6184 H.264）も音声（RFC 3016 LATM、AAC-LC 16 kHz モノラル）も標準形式なので、
+  ベンダー製ソフトは不要です。**Stream を押す前に**起動してください。
+- XREAL の **StreamingReceiver**（PC アプリ）。XREAL の
+  [First Person View](https://docs.xreal.com/Tools/First%20Person%20View) ページから入手できます。
+
+カメラではなく自前のレンダーターゲットを配信するので RGB カメラは不要で、カメラ非搭載の Air 2 Ultra でも
+動作します。
 
 ## 構成
 

@@ -10,8 +10,9 @@ Godot's Android audio driver cannot deliver capture frames at a steady rate unde
 the "Audio" section below.
 **Live RTP also works** (2026-07-19): the Camera tab has a stream-destination field (empty = local mp4,
 `rtp://<PC>:5555` = live RTP); a device test streamed `codecType 2` to a PC where ffmpeg received clean
-1280×720 H.264 with the correct head-POV content. Caveat: the RTP path's audio is **proprietary**, so
-standard receivers get **video only** — see "Audio over RTP" below.
+1280×720 H.264 with the correct head-POV content. **Audio over RTP is standard too** (corrected
+2026-07-22 — it was mis-called proprietary): `scripts/stream_server/` receives video *and* audio with
+nothing but python and ffmpeg. See "Audio over RTP" below.
 
 ## Device verification (2026-07-18) — crash fixed; frame feeding is the open item (codex handoff)
 
@@ -105,10 +106,12 @@ EGL context**, so the call must be on the render thread.
   AR-only view): renders the head-locked view into a SubViewport,
   gets its GL id via `RenderingServer.texture_get_native_handle`, and each frame pushes it inside a
   `RenderingServer.call_on_render_thread` callback (so `HWEncoderUpdateSurface` runs on the render thread).
-- **Receiving side**: XREAL's official **`StreamingReceiver.exe`** (Unity + FFmpeg), paired via
-  `demo/stream_pairing.gd` (FIND-SERVER discovery + TCP handshake). It decodes video + audio. (An earlier
-  ffmpeg-based receiver under `scripts/stream_server/` was removed once pairing worked — a plain SDP
-  couldn't decode the proprietary RTP audio anyway; see "Audio over RTP".)
+- **Receiving side**: either XREAL's official **`StreamingReceiver.exe`** (Unity + FFmpeg), paired via
+  `demo/stream_pairing.gd` (FIND-SERVER discovery + TCP handshake), or — since 2026-07-22 — our own
+  **`scripts/stream_server/`**, which needs only python and ffmpeg and gets video *and* audio. It
+  answers the same FIND-SERVER handshake, because the app discovers its peer rather than being told
+  an address. (This receiver was briefly deleted on the mistaken belief that the RTP audio was
+  proprietary; see "Audio over RTP".)
 
 ## On-device TODO (the real unknowns)
 1. **GL-context/thread correctness of `UpdateSurface`** — the encoder must read Godot's SubViewport GL
@@ -191,29 +194,48 @@ players use PTS to display). **Open polish**: the encoder logs `Request requires
 MODIFY_AUDIO_SETTINGS` (a *normal* permission it uses to set audio params); recording works without it,
 but declaring `MODIFY_AUDIO_SETTINGS` in the export plugin would silence it.
 
-### Audio over RTP — proprietary, not standard-decodable (RE'd 2026-07-19)
-The encoder DOES send mic audio over RTP, but in a **non-standard framing** a plain SDP can't decode.
-A UDP capture of a live `rtp://<PC>:5555` stream (`codecType 2`, `addMicphoneAudio:true`) showed four
-flows — the encoder puts audio on **video-port + 2**, RTP convention:
+### Audio over RTP — standard LATM AAC (**corrected 2026-07-22; earlier "proprietary" call was wrong**)
+The encoder puts audio on **video-port + 2**, RTP convention. A UDP capture of a live
+`rtp://<PC>:5555` stream (`codecType 2`, `addMicphoneAudio:true`) shows four flows:
 
 | port | RTP payload type | what |
 |------|------------------|------|
-| 5555 | 96 | H.264 video (fragmented, len 17–1472, matches our `stream.sdp`) |
+| 5555 | 96 | H.264 video — RFC 6184, FU-A, in-band SPS/PPS |
 | 5556 | 72 | RTCP for video |
-| 5557 | 97 | **audio** — fixed **772-byte** payloads, ~1024-sample RTP-timestamp step |
+| 5557 | 97 | **audio** — RFC 3016 MP4A-LATM, AAC-LC 16 kHz mono |
 | 5558 | 72 | RTCP for audio |
 
-So adding `m=audio 5557 RTP/AVP 97` to the SDP finds the packets — but they don't decode. Every audio
-payload is a **constant 772 bytes** = a 4-byte magic **`ff ff ff 03`** + 768 bytes of opaque data (not
-RFC 3640 AAC-hbr / not ADTS / not LATM — those sync words don't match, and constant-size frames aren't
-natural AAC). This is XREAL's own packetization; their receiver decodes it, ffmpeg/ffplay/VLC can't.
-Writing a custom `ff ff ff 03` depacketizer would be significant, uncertain effort — **so instead we
-pair with XREAL's official receiver, which already decodes the full A/V (RESOLVED — see the FIND-SERVER
-section above; audio is device-verified there).** That receiver, `StreammingReceiver_v1.2.0`, is a Unity
-Windows app ("StreamingReceiver" by Nreal) bundling **FFmpeg** (`avcodec/avformat/swresample`) + **AVPro
-Video** + `Audio360.dll` + `media_enc.dll`, with a `StreammingEncoder` (`Play,useAudio:`) pipeline and
-LAN discovery (`FIND-SERVER`). (The **local mp4** path also carries the mic AAC directly.) (Capture tooling
-used: a Python multi-port UDP sniffer — not committed.)
+**Both are plain standards and ffmpeg decodes both.** `scripts/stream_server/` is a working OSS-only
+receiver (python stdlib + ffmpeg, no vendor DLL); see its README for the recipe.
+
+The earlier reading of the audio as proprietary came from treating `ff ff ff 03` as a magic number. It
+is not — it is LATM's `PayloadLengthInfo`: `0xff` bytes each add 255, the first byte < 255 terminates,
+so `ff ff ff 03` = 255·3+3 = **768**, and 4 + 768 = the observed 772-byte payload. It looked
+"constant-size" only because that capture happened to sit at a steady bitrate; a later capture on a
+different config gave `ff 57` = 342 in 344-byte payloads, same rule. Unwrapping the AUs by hand and
+re-wrapping them in ADTS decodes with **zero** errors (60 AUs → 61,440 samples = 60 × 1024), which is
+what settled it. The SDP needs `MP4A-LATM/16000/1` with `cpresent=0` and
+`config=400028103fc0` — a `StreamMuxConfig` whose AudioSpecificConfig is AAC-LC / 16 kHz / mono /
+1024-sample frames.
+
+Two traps a receiver must know about, both measured:
+- The video and audio RTP streams start from **unrelated random timestamps** and no RTCP SR ever
+  correlates them, so ffmpeg's own clock cuts the audio short (3.9 s kept out of an 8 s capture).
+  `-use_wallclock_as_timestamps 1` fixes it (7.99 s of 8).
+- Depacketized LATM packets reach the muxer **without usable timestamps**. Both mp4 and mkv then
+  write an audio track header with **zero packets** in it — a file that looks correct in `ffprobe`
+  until you decode it. The same AAC copied from an ADTS file muxes fine, so it is the RTP path, not
+  the container. Re-encoding audio (`-c:v copy -c:a aac`) sidesteps it.
+
+The network itself is clean: 125 audio packets over 8.0 s, **0 % loss**, RTP timestamp advancing
+1024.5/packet.
+
+Pairing with XREAL's own receiver still works and remains an option — `StreammingReceiver_v1.2.0` is a
+Unity Windows app ("StreamingReceiver" by Nreal) bundling **FFmpeg** (`avcodec/avformat/swresample`) +
+**AVPro Video** + `Audio360.dll` + `media_enc.dll`, with a `StreammingEncoder` (`Play,useAudio:`)
+pipeline and LAN discovery (`FIND-SERVER`). That it bundles FFmpeg was itself the hint that the wire
+format had to be standard. (The **local mp4** path also carries the mic AAC directly.) Full RE writeup:
+`docs/archive/codex-rtp-receive-analysis.md`.
 
 NB: "Nebula" (`com.xreal.evapro.nebula`) is XREAL's **Android** launcher on the host device, NOT this
 PC receiver — an earlier note conflated them.

@@ -228,11 +228,19 @@ set via `XrealSystem.init_image_database`.
 The demo's **Stream** button streams the first-person view — the AR scene, or the camera + AR blend when
 the RGB camera is on — as H.264 over RTP. **Microphone audio is included** (grant `RECORD_AUDIO` when
 asked); **app audio is not** — see the capture-audio row in [Supported features](#supported-features)
-for why. The receiver is XREAL's **StreamingReceiver** desktop app:
-download it from XREAL's [First Person View](https://docs.xreal.com/Tools/First%20Person%20View) page and
-run it on a PC on the **same LAN**. The app finds the receiver automatically (LAN broadcast + handshake)
-and starts streaming — there is no address to enter. It streams our own render target rather than the
-camera, so no RGB camera is required (it works on the camera-less Air 2 Ultra too).
+for why.
+
+Run a receiver on a PC on the **same LAN**; the app finds it automatically (LAN broadcast + handshake)
+and starts streaming — there is no address to enter. Either works:
+
+- **[`scripts/stream_server/`](scripts/stream_server/)** — ours, needing only python 3 and ffmpeg. Both
+  the video (RFC 6184 H.264) and the audio (RFC 3016 LATM, AAC-LC 16 kHz mono) are standard, so no
+  vendor software is involved. Start it *before* pressing Stream.
+- XREAL's **StreamingReceiver** desktop app, from XREAL's
+  [First Person View](https://docs.xreal.com/Tools/First%20Person%20View) page.
+
+Streaming uses our own render target rather than the camera, so no RGB camera is required (it works on
+the camera-less Air 2 Ultra too).
 
 ## Layout
 
