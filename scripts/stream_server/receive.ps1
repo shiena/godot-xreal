@@ -17,22 +17,53 @@
     change this only if the app changes.
 
 .PARAMETER Record
-    Record to an .mp4 in this folder instead of live-playing.
+    Record to an .mkv in this folder instead of live-playing.
+
+.PARAMETER Stop
+    Stop a receiver that is already running — this script's, or fpv_server.py — and exit. Useful when
+    it was started in another window or in the background, and necessary before starting a second
+    one: two servers can bind the same port on Windows and then split the app's discovery reply
+    between them, which looks like the app timing out for no reason.
+
+    This asks the server to stop rather than killing it, which is what lets an in-progress -Record
+    capture be finalised: the server hands ffmpeg a Ctrl+Break and waits for it. Nothing outside
+    that process can do the same on Windows.
+
+.PARAMETER ControlPort
+    Loopback port the running server listens on for the shutdown request (default 6004).
 
 .EXAMPLE
     pwsh scripts/stream_server/receive.ps1
 .EXAMPLE
     pwsh scripts/stream_server/receive.ps1 -Record
+.EXAMPLE
+    pwsh scripts/stream_server/receive.ps1 -Stop
 #>
 param(
     [int]$Port = 5555,
-    [switch]$Record
+    [switch]$Record,
+    [switch]$Stop,
+    [int]$ControlPort = 6004
 )
 
 $ErrorActionPreference = 'Stop'
 $here = Split-Path $PSCommandPath -Parent
 $sdp = Join-Path $here 'stream.sdp'
 $pair = Join-Path $here 'pair_server.py'
+
+if ($Stop) {
+    try {
+        # The server closes the connection as it exits, so a transport-level error here can still
+        # mean success. Treat only "nothing answered" as failure.
+        Invoke-WebRequest -Uri "http://127.0.0.1:$ControlPort/shutdown" -Method Post `
+                          -TimeoutSec 10 -UseBasicParsing | Out-Null
+        Write-Host "Receiver stopped." -ForegroundColor Green
+    } catch [System.Net.WebException], [System.Net.Http.HttpRequestException] {
+        Write-Host "No receiver answered on 127.0.0.1:$ControlPort." -ForegroundColor Yellow
+        Write-Host "It may not be running, or was started with a different -ControlPort." -ForegroundColor DarkGray
+    }
+    return
+}
 
 # Rewrite both media ports so -Port takes effect. The encoder puts audio on video+2.
 $audioPort = $Port + 2
@@ -76,5 +107,7 @@ if ($Record) {
     Write-Host "Will open a live window once the app starts streaming." -ForegroundColor Yellow
 }
 
-Write-Host "Waiting for the app's FIND-SERVER broadcast — hit Stream in the app (Ctrl+C to stop) ..." -ForegroundColor Cyan
-& $python $pair --then @recv
+Write-Host "Waiting for the app's FIND-SERVER broadcast — hit Stream in the app." -ForegroundColor Cyan
+Write-Host "Stop with Ctrl+C here, or 'receive.ps1 -Stop' from anywhere." -ForegroundColor DarkGray
+# --then must stay last: it swallows the rest of the command line.
+& $python $pair --control-port $ControlPort --then @recv

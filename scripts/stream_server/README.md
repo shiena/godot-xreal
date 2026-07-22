@@ -35,7 +35,8 @@ do the rest, via [mpegts.js](https://github.com/xqq/mpegts.js/) (Apache-2.0) and
 Extensions. `fpv_player.html` loads mpegts.js from a CDN; to run offline, vendor it next to the page.
 
 Options: `--http-port`, `--video-port` (audio is `+2`), `--audio-rate` / `--audio-channels` (must
-match the encoder's `audioSampleRate`, default 16000 mono), `--ip` to force the advertised address.
+match the encoder's `audioSampleRate`, default 16000 mono), `--ip` to force the advertised address,
+`--control-port` (see [Stopping a receiver](#stopping-a-receiver)).
 
 ### ffplay / ffmpeg: `receive.ps1` / `receive.sh`
 
@@ -55,6 +56,36 @@ The ordering is not cosmetic. The app finds this PC itself, and ffmpeg fed an SD
 immediately and gives up long before a hand-driven app gets around to sending. So `pair_server.py`
 holds the handshake and launches ffplay/ffmpeg (`--then`) at the moment the app actually starts
 sending.
+
+## Stopping a receiver
+
+Ctrl+C in its own window works. From anywhere else:
+
+```
+pwsh scripts/stream_server/receive.ps1 -Stop     # Windows
+scripts/stream_server/receive.sh --stop          # mac / Linux
+```
+
+That stops either receiver — `fpv_server.py` too, since both share the same code. Stop one before
+starting another: two servers can bind the same port and then split the app's discovery reply
+between them, which looks like the app timing out for no reason.
+
+It **asks** the server to stop rather than killing it, and that distinction is the whole reason it
+exists. The server owns the ffmpeg it launched, so it can hand it a Ctrl+Break and wait — ffmpeg
+then finalises the file (`Exiting normally, received signal 2`). Nothing outside that process can do
+the same on Windows, which has no way to deliver a console interrupt to another process's group; a
+receiver torn down with `Stop-Process` mid-record leaves an unplayable file. Measured: 0 bytes when
+killed, a complete 12.09 s recording when stopped this way.
+
+The server listens for that request on **loopback only** (`127.0.0.1:6004`, `--control-port` to
+change). It is deliberately not reachable from the LAN — whoever stops a receiver is sitting at the
+machine running it, and an unauthenticated stop endpoint open to the network would be a gift. By
+hand:
+
+```
+curl -X POST http://127.0.0.1:6004/shutdown      # stop
+curl http://127.0.0.1:6004/                      # "running", if one is
+```
 
 ## How the app finds you
 

@@ -35,7 +35,10 @@ Standard library only — no pip install.
 from __future__ import annotations
 
 import argparse
+import http.server
 import json
+import os
+import signal
 import socket
 import struct
 import subprocess
@@ -43,6 +46,7 @@ import sys
 import threading
 
 DISCOVERY_PORT = 6001
+CONTROL_PORT = 6004
 FIND_MSG = b"FIND-SERVER"
 
 # Set by --then: the receiver to launch once the app is actually streaming.
@@ -57,9 +61,83 @@ def _launch_then() -> None:
         return
     print("[pair] launching: %s" % " ".join(_then_cmd), flush=True)
     try:
-        _then_proc = subprocess.Popen(_then_cmd)
+        # A new process group on Windows is what makes CTRL_BREAK_EVENT deliverable below. The cost
+        # is that the child no longer receives the console's Ctrl+C, so main() forwards it.
+        flags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
+        _then_proc = subprocess.Popen(_then_cmd, creationflags=flags)
     except OSError as e:
         print("[pair] cannot launch receiver: %s" % e, file=sys.stderr, flush=True)
+
+
+def stop_then(timeout: float = 6.0) -> None:
+    """Ask the --then child to finish, and only kill it if it will not.
+
+    This is the reason shutdown goes through the server rather than an outside `kill`: ffmpeg
+    finalises the file it is writing when it is interrupted, but nothing outside this process can
+    hand it that interrupt on Windows. A recording torn down from outside is simply truncated.
+    """
+    proc = _then_proc
+    if proc is None or proc.poll() is not None:
+        return
+    try:
+        proc.send_signal(signal.CTRL_BREAK_EVENT if os.name == "nt" else signal.SIGINT)
+    except (OSError, ValueError):
+        pass
+    try:
+        proc.wait(timeout)
+        print("[pair] receiver exited cleanly", flush=True)
+    except subprocess.TimeoutExpired:
+        print("[pair] receiver did not exit; killing it", flush=True)
+        proc.kill()
+
+
+class _ControlHandler(http.server.BaseHTTPRequestHandler):
+    """POST /shutdown. Bound to loopback only - see serve_control_port()."""
+
+    protocol_version = "HTTP/1.1"
+
+    def log_message(self, fmt, *args):  # noqa: A003 - quiet; we print our own lines
+        pass
+
+    def do_POST(self):  # noqa: N802 - name fixed by BaseHTTPRequestHandler
+        if self.path.rstrip("/") != "/shutdown":
+            self.send_error(404)
+            return
+        self._reply(b"stopping\n")
+        print("[pair] shutdown requested on the control port", flush=True)
+        stop_then()
+        # Reply first, exit after: the client should see a response, not a reset connection. The
+        # main loop is parked in recvfrom() with no way to be woken, so leave abruptly - the child
+        # is already dealt with, which is the only cleanup that mattered.
+        threading.Timer(0.2, lambda: os._exit(0)).start()
+
+    def do_GET(self):  # noqa: N802
+        if self.path.rstrip("/") in ("", "/status"):
+            self._reply(b"running\n")
+        else:
+            self.send_error(404)
+
+    def _reply(self, body: bytes) -> None:
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Connection", "close")
+        self.end_headers()
+        self.wfile.write(body)
+        self.wfile.flush()
+
+
+def serve_control_port(port: int = CONTROL_PORT) -> bool:
+    """Listen for shutdown requests. Loopback only, deliberately: whoever stops this runs on this
+    machine, and an unauthenticated stop endpoint reachable from the LAN would be a gift."""
+    try:
+        srv = http.server.ThreadingHTTPServer(("127.0.0.1", port), _ControlHandler)
+    except OSError as e:
+        print(f"[pair] no control port ({e}); stop this with Ctrl+C", file=sys.stderr, flush=True)
+        return False
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    print(f"[pair] control port: POST http://127.0.0.1:{port}/shutdown to stop", flush=True)
+    return True
 
 # MessageType, from the SDK sample's enum.
 NONE, CONNECTED, DISCONNECT, HEARTBEAT, ENTER_ROOM, EXIT_ROOM, UPDATE_CAMERA, MSG_SYNC = range(8)
@@ -137,7 +215,8 @@ def _serve_one(conn: socket.socket) -> None:
                 print(f"[pair] {name} ({len(payload)} bytes) - ignored", flush=True)
 
 
-def run(ip: "str | None" = None, tcp_port: int = 6002, hint: str = "") -> int:
+def run(ip: "str | None" = None, tcp_port: int = 6002, hint: str = "",
+        control_port: int = CONTROL_PORT) -> int:
     """Answer discovery forever. Importable so fpv_server.py can pair without shelling out."""
     # Deliberately no SO_REUSEADDR. On Windows it lets a second instance bind the same port, and
     # the two then split the app's discovery reply and control connection between them: pairing
@@ -157,6 +236,7 @@ def run(ip: "str | None" = None, tcp_port: int = 6002, hint: str = "") -> int:
     print(f"[pair] waiting for FIND-SERVER on UDP {DISCOVERY_PORT} (control TCP {tcp_port})", flush=True)
     if hint:
         print(hint, flush=True)
+    serve_control_port(control_port)
 
     threading.Thread(target=serve_control, args=(tcp,), daemon=True).start()
 
@@ -175,6 +255,8 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--ip", help="address to advertise (default: whichever NIC faces the app)")
     ap.add_argument("--tcp-port", type=int, default=6002, help="control port to advertise (default 6002)")
+    ap.add_argument("--control-port", type=int, default=CONTROL_PORT,
+                    help=f"loopback shutdown port (default {CONTROL_PORT})")
     ap.add_argument("--then", nargs=argparse.REMAINDER, metavar="CMD",
                     help="command to run once the app starts streaming (must be the last option)")
     args = ap.parse_args()
@@ -183,11 +265,14 @@ def main() -> int:
         _then_cmd.extend(args.then)
 
     return run(args.ip, args.tcp_port,
-               hint="[pair] hit Stream in the app, then start ffplay/ffmpeg on stream.sdp.")
+               hint="[pair] hit Stream in the app, then start ffplay/ffmpeg on stream.sdp.",
+               control_port=args.control_port)
 
 
 if __name__ == "__main__":
     try:
         sys.exit(main())
     except KeyboardInterrupt:
-        pass
+        # The child is in its own process group on Windows, so the console's Ctrl+C never reached
+        # it. Hand it one, or a -Record capture is abandoned mid-write.
+        stop_then()

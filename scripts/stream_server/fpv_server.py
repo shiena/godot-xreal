@@ -491,6 +491,8 @@ def main() -> int:
                     help="AAC sample rate the encoder was configured with (default 16000)")
     ap.add_argument("--audio-channels", type=int, default=1, help="AAC channel count (default 1)")
     ap.add_argument("--http-port", type=int, default=8080, help="web port (default 8080)")
+    ap.add_argument("--control-port", type=int, default=pair_server.CONTROL_PORT,
+                    help=f"loopback shutdown port (default {pair_server.CONTROL_PORT})")
     ap.add_argument("--ip", help="address to advertise to the app (default: the NIC facing it)")
     args = ap.parse_args()
 
@@ -517,7 +519,8 @@ def main() -> int:
           f"(AAC {args.audio_rate} Hz x{args.audio_channels})", flush=True)
     print(f"[fpv] open http://localhost:{args.http_port} in a browser, then hit Stream in the app",
           flush=True)
-    return pair_server.run(args.ip, hint="[pair] pairing runs in-process; no second server needed.")
+    return pair_server.run(args.ip, hint="[pair] pairing runs in-process; no second server needed.",
+                           control_port=args.control_port)
 
 
 if __name__ == "__main__":
