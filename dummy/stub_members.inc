@@ -97,7 +97,6 @@ static const StubArg _a_XrealSystem_image_reference_count[] = {{2,"","handle"},}
 static const StubArg _a_XrealSystem_release_image_database[] = {{2,"","handle"},};
 static const StubArg _a_XrealSystem_set_meshing_enabled[] = {{1,"","on"},};
 static const StubArg _a_XrealSystem_stream_start[] = {{4,"","output"},{2,"","width"},{2,"","height"},{2,"","bitrate"},{2,"","fps"},{1,"","with_mic"},{1,"","with_internal_audio"},{1,"","with_alpha"},};
-static const StubArg _a_XrealSystem_stream_push_audio[] = {{29,"","samples"},{2,"","n_samples"},{2,"","bytes_per_sample"},{2,"","channels"},{2,"","sample_rate"},{2,"","fmt"},};
 static const StubArg _a_XrealSystem_stream_push_frame[] = {{2,"","gl_texture_id"},{2,"","timestamp_ns"},};
 static const StubArg _a_XrealSystem_set_stereo_mode[] = {{2,"","mode"},};
 static const StubArg _a_XrealSystem_set_tracking_type[] = {{2,"","mode"},};
@@ -153,7 +152,6 @@ static const StubMethod _m_XrealSystem[] = {
   {"set_meshing_enabled",1,"",1,_a_XrealSystem_set_meshing_enabled},
   {"poll_mesh_blocks",28,"",0,0},
   {"stream_start",1,"",8,_a_XrealSystem_stream_start},
-  {"stream_push_audio",2,"",6,_a_XrealSystem_stream_push_audio},
   {"stream_push_frame",2,"",2,_a_XrealSystem_stream_push_frame},
   {"stream_stop",0,"",0,0},
   {"is_stream_active",1,"",0,0},
@@ -195,7 +193,7 @@ static const StubMembers stub_members[] = {
   {"XrealCameraFeed",_m_XrealCameraFeed,5,0,0,0,0},
   {"XrealHandTracker",0,0,0,0,0,0},
   {"XrealHeadTracker",_m_XrealHeadTracker,3,_s_XrealHeadTracker,10,_c_XrealHeadTracker,9},
-  {"XrealSystem",_m_XrealSystem,68,0,0,_c_XrealSystem,16},
+  {"XrealSystem",_m_XrealSystem,67,0,0,_c_XrealSystem,16},
 };
 enum { STUB_MEMBERS_COUNT = sizeof(stub_members) / sizeof(stub_members[0]) };
-#define STUB_SN_POOL 533
+#define STUB_SN_POOL 517
