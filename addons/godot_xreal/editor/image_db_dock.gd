@@ -93,7 +93,10 @@ func _build_ui() -> void:
 
 	var scroll := ScrollContainer.new()
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	scroll.custom_minimum_size = Vector2(0, 160)
+	# Floor only (~2 rows) — EXPAND_FILL takes whatever height the dock really has. A dock slot is a
+	# TabContainer whose minimum is the max over *all* its tabs, so a tall minimum here would push the
+	# dock below it (FileSystem) out of view.
+	scroll.custom_minimum_size = Vector2(0, 64)
 	_list = VBoxContainer.new()
 	_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	scroll.add_child(_list)
@@ -111,8 +114,14 @@ func _build_ui() -> void:
 	add_child(buttons)
 
 	_status = RichTextLabel.new()
-	_status.fit_content = true
-	_status.custom_minimum_size = Vector2(0, 60)
+	# Floor only, and deliberately no fit_content: fit_content makes the minimum height the *content*
+	# height measured at the current width, and a dock tab that has never been active was never laid
+	# out (~17px wide), so the build summary asks for thousands of px — which the editor's dock slot
+	# honours for hidden tabs, pushing the dock below it (FileSystem) off-screen. It shares the
+	# leftover height with the image list instead (half its share) and scrolls internally.
+	_status.custom_minimum_size = Vector2(0, 48)
+	_status.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_status.size_flags_stretch_ratio = 0.5
 	_status.bbcode_enabled = true
 	add_child(_status)
 
