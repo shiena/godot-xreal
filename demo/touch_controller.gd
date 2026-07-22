@@ -27,7 +27,8 @@ signal touchpad_released()
 signal hand_selected(is_right: bool)
 ## Camera preview toggle flipped (true = on). Independent of the plane toggle.
 signal camera_toggled(on: bool)
-## Plane-detection toggle flipped (true = on). Independent of the camera toggle.
+## Plane-detection toggle flipped (true = on). Independent of the camera toggle. Draws the SDK's
+## boundary polygon over each detected plane.
 signal plane_toggled(on: bool)
 ## Spatial-anchor mode toggle flipped (true = on).
 signal anchor_toggled(on: bool)
@@ -102,9 +103,9 @@ const _tabs := [
 ]
 
 # Adjacent item pairs (left name first) laid out as one 2-column row instead of two stacked rows, for
-# tightly-related controls: hand_l/hand_r (pointer-origin hand), anchor/place (anchor mode + drop-at-
-# fingertip), and image/image_cycle (image-tracking mode + set cycle). Both names of a pair must sit
-# next to each other, in this order, in the tab's `items`.
+# tightly-related controls: hand_l/hand_r (pointer-origin hand), anchor/place (anchor mode +
+# drop-at-fingertip), and image/image_cycle (image-tracking mode + set cycle). Both names of a pair
+# must sit next to each other, in this order, in the tab's `items`.
 const _paired_rows := [["hand_l", "hand_r"], ["anchor", "place"], ["image", "image_cycle"]]
 
 var _theme: Theme
