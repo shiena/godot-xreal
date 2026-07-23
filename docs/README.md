@@ -9,6 +9,7 @@ Documentation, grouped by genre. Archived investigation logs are kept verbatim �
 |---|---|
 | [android-setup.md](guides/android-setup.md) | Android/manifest scaffolding required to enter the XREAL glasses display mode (vs. gray mirror). |
 | [build-and-release.md](guides/build-and-release.md) | Full command reference: cargo-ndk, Godot export, Gradle, signing, release packaging. |
+| [sdk-update-checklist.md](guides/sdk-update-checklist.md) | What to re-check when bumping the vendored `com.xreal.xr` package — the port depends on RE'd native internals, so an unchanged public API is not a safety guarantee. Re-vendor, re-verify offsets on device, version gate, symbols, file lists, manifest. |
 
 ## reference/ — settled reference material
 
