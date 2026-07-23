@@ -10,6 +10,9 @@
 #                                                        also merges each .aar's jni/arm64-v8a/*.so
 #                                                        — the NR libs — into the APK, so they are
 #                                                        NOT extracted separately)
+#   - nr_plugins.json  -> addons/godot_xreal/android/  (NR perception manifest; makes the loader
+#                                                        load libnr_image_tracking.so — staged into
+#                                                        the APK's assets/ by export_plugin.gd)
 #   - trackableImageTools -> addons/godot_xreal/tools/ (host build tool, NOT in the APK: generates
 #                                                        the image-tracking DB blob from PNGs)
 #
@@ -129,19 +132,22 @@ for aar in "${aars[@]}"; do
     echo "aar  $aar"
 done
 
+# nr_plugins.json (NR perception manifest) -> addons/godot_xreal/android. Lives under Marker~/ in the
+# package but is the image-tracking backend manifest (loads libnr_image_tracking.so); staged into the
+# APK's assets/ by export_plugin.gd. SDK-derived + may change across SDK versions, so vendor it (do NOT
+# commit) alongside the .aar.
+nr_plugins_src="$pkg/Marker~/nr_plugins.json"
+if [ -f "$nr_plugins_src" ]; then
+    cp -f "$nr_plugins_src" "$addon_dir/nr_plugins.json"
+    echo "json nr_plugins.json"
+else
+    warn "Missing in package: Marker~/nr_plugins.json"
+fi
+
 # --- 3) Host build tool -> addons/godot_xreal/tools/ (NOT shipped in the APK): trackableImageTools
 #        generates the image-tracking reference-image DB blob from PNGs at build time (see
 #        docs/plans/ar-features-plan.md). Only a MacOS binary exists in the POSIX package layout; on
 #        Linux there is no prebuilt tool (build the blob on a Mac/Windows host, or skip image tracking).
-# Pre-baked AR-marker DB for the image-tracking demo's marker set (InterMarker.bin — same format as a
-# built image blob; ships as-is, no trackableImageTools). Copied to the demo (gitignored) if present.
-marker_db_src="$pkg/Marker~/InterMarker.bin"
-if [ -f "$marker_db_src" ]; then
-    mkdir -p "$repo_root/demo/image_tracking"
-    cp -f "$marker_db_src" "$repo_root/demo/image_tracking/markers.bin"
-    echo "asset markers.bin (AR-marker DB)"
-fi
-
 tools_dir="$repo_root/addons/godot_xreal/tools"
 mkdir -p "$tools_dir"
 case "$(uname -s)" in
@@ -166,6 +172,7 @@ done
 for f in "${aars[@]}"; do
     [ -f "$addon_dir/$f" ] || missing+=("addons/godot_xreal/android/$f")
 done
+[ -f "$addon_dir/nr_plugins.json" ] || missing+=("addons/godot_xreal/android/nr_plugins.json")
 
 echo ""
 if [ ${#missing[@]} -gt 0 ]; then
@@ -173,5 +180,5 @@ if [ ${#missing[@]} -gt 0 ]; then
     printf '  - %s\n' "${missing[@]}"
     exit 1
 fi
-echo -e "\033[32mDone: 3 core .so -> jniLibs/arm64-v8a, 7 .aar -> addons/godot_xreal/android, trackableImageTools -> addons/godot_xreal/tools.\033[0m"
+echo -e "\033[32mDone: 3 core .so -> jniLibs/arm64-v8a, 7 .aar + nr_plugins.json -> addons/godot_xreal/android, trackableImageTools -> addons/godot_xreal/tools.\033[0m"
 echo "(NR .so ship via the .aar; nractivitylife*.aar deliberately excluded — Unity-only launcher.)"

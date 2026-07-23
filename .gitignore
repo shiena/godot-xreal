@@ -40,6 +40,11 @@ Thumbs.db
 # (see docs/plans/android-export-plugin-migration.md), like jniLibs/*.so.
 /addons/godot_xreal/android/*.aar
 
+# XREAL NR perception manifest — SDK-derived and may change across SDK versions, so it is vendored
+# locally by scripts/vendor_xreal_libs.* (like the .aar), not committed. Staged into the APK's
+# assets/ by export_plugin.gd; loads libnr_image_tracking.so for image tracking.
+/addons/godot_xreal/android/nr_plugins.json
+
 # XREAL host build tools (trackableImageTools — the image-tracking DB blob generator), vendored
 # locally by scripts/vendor_xreal_libs.*; large SDK binaries, not committed.
 /addons/godot_xreal/tools/

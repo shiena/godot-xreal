@@ -306,7 +306,7 @@ addons/godot_xreal/      the installable addon
   export_plugin.gd       Android export: manifest, permissions, .aar/assets staging
   xreal_rig.tscn         XrealHeadTracker + Camera3D rig
   editor/                docks: vendor_import_dock.gd (SDK import), image_db_dock.gd
-  android/               bridge Java source + nr_plugins.json (vendored .aar git-ignored)
+  android/               bridge Java source (nr_plugins.json + .aar vendored, git-ignored)
   bin/                   built libs (git-ignored): android/libgodot_xreal.so + desktop dummy stubs
 src/                     the Rust GDExtension
   lib.rs                 ExtensionLibrary entry

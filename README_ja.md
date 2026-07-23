@@ -279,7 +279,7 @@ addons/godot_xreal/      インストール可能なアドオン
   export_plugin.gd       Android エクスポート: manifest・権限・.aar/assets ステージング
   xreal_rig.tscn         XrealHeadTracker + Camera3D リグ
   editor/                dock: vendor_import_dock.gd（SDK 取込）, image_db_dock.gd
-  android/               ブリッジ Java ソース + nr_plugins.json（vendoring した .aar は git 管理外）
+  android/               ブリッジ Java ソース（nr_plugins.json と .aar は vendoring・git 管理外）
   bin/                   ビルド済みライブラリ（git 管理外）: android/libgodot_xreal.so + デスクトップ dummy スタブ
 src/                     Rust GDExtension 本体
   lib.rs                 ExtensionLibrary エントリ

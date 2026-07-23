@@ -74,7 +74,7 @@ $RequiredLibs = @(
 )
 $RequiredAddonFiles = @(
     'nr_loader.aar', 'nr_api.aar', 'nr_common.aar', 'nr_spatial_anchor.aar', 'nr_image_tracking.aar',
-    'GlassesDisplayPlugEvent-2.4.2.aar', 'Log-Control-1.2.aar'
+    'GlassesDisplayPlugEvent-2.4.2.aar', 'Log-Control-1.2.aar', 'nr_plugins.json'
 )
 function Require-VendoredLibs {
     $jniDir = Join-Path $repoRoot 'jniLibs\arm64-v8a'

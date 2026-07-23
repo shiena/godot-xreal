@@ -7,8 +7,8 @@ extends VBoxContainer
 ##
 ##   3 core .so + libmedia_codec.so -> jniLibs/arm64-v8a/        (dlopen'd; packed via .gdextension)
 ##   7 .aar                         -> addons/godot_xreal/android/ (shipped by export_plugin.gd)
+##   nr_plugins.json                -> addons/godot_xreal/android/ (NR perception manifest → assets/)
 ##   trackableImageTools            -> addons/godot_xreal/tools/   (host image-DB build tool)
-##   Marker~/InterMarker.bin        -> demo/image_tracking/markers.bin (AR-marker demo set)
 ##
 ## This only vendors XREAL's proprietary libs. The addon's own libgodot_xreal.so comes from the Rust
 ## build (cargo-ndk) or a prebuilt release — see docs/guides/build-and-release.md. All destinations are
@@ -30,6 +30,10 @@ const AARS := [
 	"nr_loader.aar", "nr_api.aar", "nr_common.aar", "nr_spatial_anchor.aar",
 	"nr_image_tracking.aar", "GlassesDisplayPlugEvent-2.4.2.aar", "Log-Control-1.2.aar",
 ]
+# NR perception manifest -> addons/godot_xreal/android/. Under Marker~/ in the package but it is the
+# image-tracking backend manifest (loads libnr_image_tracking.so); staged into the APK's assets/ by
+# export_plugin.gd. SDK-derived + may change across SDK versions, so it is vendored, not committed.
+const NR_PLUGINS_REL := "Marker~/nr_plugins.json"
 
 var _status: RichTextLabel
 var _file_dialog: EditorFileDialog
@@ -140,8 +144,7 @@ func _import(path: String) -> void:
 	var jni := ProjectSettings.globalize_path("res://jniLibs/arm64-v8a")
 	var addon := ProjectSettings.globalize_path("res://addons/godot_xreal/android")
 	var tools := ProjectSettings.globalize_path("res://addons/godot_xreal/tools")
-	var demo := ProjectSettings.globalize_path("res://demo/image_tracking")
-	for d in [jni, addon, tools, demo]:
+	for d in [jni, addon, tools]:
 		DirAccess.make_dir_recursive_absolute(d)
 
 	var missing := PackedStringArray()
@@ -154,6 +157,8 @@ func _import(path: String) -> void:
 	# 2) 7 .aar -> addons/godot_xreal/android
 	for aar in AARS:
 		_copy(src_android.path_join(aar), addon.path_join(aar), "aar  " + aar, log, missing)
+	# nr_plugins.json (NR perception manifest) -> addons/godot_xreal/android
+	_copy(pkg.path_join(NR_PLUGINS_REL), addon.path_join("nr_plugins.json"), "json nr_plugins.json", log, missing)
 
 	# 3) host image-DB tool -> addons/godot_xreal/tools (OS-specific; Linux has no prebuilt tool)
 	var tool_rel := ""
@@ -169,11 +174,6 @@ func _import(path: String) -> void:
 		log.append("skip trackableImageTools (no tool bundled for this OS)")
 	elif _copy(pkg.path_join(tool_rel), tool_dst, "tool " + tool_dst.get_file(), log, missing) and OS.get_name() != "Windows":
 		OS.execute("chmod", ["+x", tool_dst])  # copy drops the exec bit on Unix
-
-	# 4) AR-marker demo set (optional).
-	var marker_src := pkg.path_join("Marker~/InterMarker.bin")
-	if FileAccess.file_exists(marker_src):
-		_copy(marker_src, demo.path_join("markers.bin"), "asset markers.bin (AR-marker DB)", log, [])
 
 	if temp:
 		_rmtree(temp)

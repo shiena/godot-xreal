@@ -11,6 +11,9 @@
                                                           also merges each .aar's jni/arm64-v8a/*.so
                                                           — the NR libs — into the APK, so they are
                                                           NOT extracted separately)
+      - nr_plugins.json  -> addons/godot_xreal/android/  (NR perception manifest; makes the loader
+                                                          load libnr_image_tracking.so — staged into
+                                                          the APK's assets/ by export_plugin.gd)
       - trackableImageTools -> addons/godot_xreal/tools/ (host build tool, NOT in the APK: generates
                                                           the image-tracking DB blob from PNGs)
 
@@ -149,19 +152,21 @@ try {
         Write-Host "aar  $aar"
     }
 
+    # nr_plugins.json (NR perception manifest) -> addons/godot_xreal/android. Lives under Marker~/ in the
+    # package but is the image-tracking backend manifest (loads libnr_image_tracking.so); staged into the
+    # APK's assets/ by export_plugin.gd. SDK-derived + may change across SDK versions, so vendor it (do
+    # NOT commit) alongside the .aar.
+    $nrPluginsSrc = Join-Path $XrealPackage 'Marker~/nr_plugins.json'
+    if (Test-Path $nrPluginsSrc) {
+        Copy-Item -Path $nrPluginsSrc -Destination (Join-Path $addonDir 'nr_plugins.json') -Force
+        Write-Host "json nr_plugins.json"
+    } else {
+        Write-Warning "Missing in package: Marker~/nr_plugins.json"
+    }
+
     # --- 3) Host build tool -> addons/godot_xreal/tools/ (NOT shipped in the APK): trackableImageTools
     #        generates the image-tracking reference-image DB blob from PNGs at build time (see
     #        docs/plans/ar-features-plan.md).
-    # Pre-baked AR-marker DB for the image-tracking demo's marker set (InterMarker.bin — same format as
-    # a built image blob; ships as-is). Copied to the demo (gitignored) if present.
-    $markerDbSrc = Join-Path $XrealPackage 'Marker~/InterMarker.bin'
-    if (Test-Path $markerDbSrc) {
-        $demoDir = Join-Path $repo 'demo/image_tracking'
-        New-Item -ItemType Directory -Force -Path $demoDir | Out-Null
-        Copy-Item -Path $markerDbSrc -Destination (Join-Path $demoDir 'markers.bin') -Force
-        Write-Host "asset markers.bin (AR-marker DB)"
-    }
-
     $toolsDir = Join-Path $repo 'addons/godot_xreal/tools'
     New-Item -ItemType Directory -Force -Path $toolsDir | Out-Null
     $toolSrc = Join-Path $XrealPackage 'Tools~/Windows/trackableImageTools.exe'
@@ -180,6 +185,7 @@ try {
     foreach ($f in $aars) {
         if (-not (Test-Path (Join-Path $addonDir $f))) { $missing += "addons/godot_xreal/android/$f" }
     }
+    if (-not (Test-Path (Join-Path $addonDir 'nr_plugins.json'))) { $missing += "addons/godot_xreal/android/nr_plugins.json" }
 
     Write-Host ""
     if ($missing) {
@@ -187,7 +193,7 @@ try {
         $missing | ForEach-Object { Write-Host "  - $_" }
         exit 1
     }
-    Write-Host "Done: 3 core .so -> jniLibs/arm64-v8a, 7 .aar -> addons/godot_xreal/android, trackableImageTools -> addons/godot_xreal/tools." -ForegroundColor Green
+    Write-Host "Done: 3 core .so -> jniLibs/arm64-v8a, 7 .aar + nr_plugins.json -> addons/godot_xreal/android, trackableImageTools -> addons/godot_xreal/tools." -ForegroundColor Green
     Write-Host "(NR .so ship via the .aar; nractivitylife*.aar deliberately excluded — Unity-only launcher.)"
 }
 finally {
