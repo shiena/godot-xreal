@@ -56,6 +56,8 @@ type FnCopyImageSubData =
 // texture's internal format (gates the direct same-format layer copy).
 type FnGetTexLevelParameteriv = unsafe extern "C" fn(u32, i32, u32, *mut i32);
 type FnGetIntegerv = unsafe extern "C" fn(u32, *mut i32);
+/// `glGetFloatv`, for the one piece of state we touch that is not an integer: the clear colour.
+type FnGetFloatv = unsafe extern "C" fn(u32, *mut f32);
 type FnIsEnabled = unsafe extern "C" fn(u32) -> u8;
 type FnEnable = unsafe extern "C" fn(u32);
 type FnDisable = unsafe extern "C" fn(u32);
@@ -88,6 +90,7 @@ const GL_DRAW_FRAMEBUFFER_BINDING: u32 = 0x8CA6;
 const GL_READ_FRAMEBUFFER_BINDING: u32 = 0x8CAA;
 const GL_FRAMEBUFFER_COMPLETE: u32 = 0x8CD5;
 const GL_SCISSOR_TEST: u32 = 0x0C11;
+const GL_COLOR_CLEAR_VALUE: u32 = 0x0C22;
 const GL_TEXTURE_BINDING_2D: u32 = 0x8069;
 const GL_TEXTURE_INTERNAL_FORMAT: u32 = 0x1003;
 const GL_RGB10_A2: i32 = 0x8059;
@@ -129,6 +132,7 @@ struct Gl {
     get_tex_level_parameteriv: Option<FnGetTexLevelParameteriv>,
     framebuffer_texture_layer: FnFramebufferTextureLayer,
     get_integerv: FnGetIntegerv,
+    get_floatv: FnGetFloatv,
     is_enabled: FnIsEnabled,
     enable: FnEnable,
     disable: FnDisable,
@@ -197,6 +201,7 @@ impl Gl {
                     FnFramebufferTextureLayer
                 ),
                 get_integerv: sym!("glGetIntegerv", FnGetIntegerv),
+                get_floatv: sym!("glGetFloatv", FnGetFloatv),
                 is_enabled: sym!("glIsEnabled", FnIsEnabled),
                 enable: sym!("glEnable", FnEnable),
                 disable: sym!("glDisable", FnDisable),
@@ -832,8 +837,13 @@ pub fn fill_texture(tex: u32, r: f32, g_: f32, b: f32) {
             if scissor_was_on {
                 (g.disable)(GL_SCISSOR_TEST);
             }
+            // The clear colour is global state: leaving ours behind would tint whatever Godot
+            // clears next with this diagnostic colour, so put the old one back afterwards.
+            let mut prev_clear = [0.0_f32; 4];
+            (g.get_floatv)(GL_COLOR_CLEAR_VALUE, prev_clear.as_mut_ptr());
             (g.clear_color)(r, g_, b, 1.0);
             (g.clear)(GL_COLOR_BUFFER_BIT);
+            (g.clear_color)(prev_clear[0], prev_clear[1], prev_clear[2], prev_clear[3]);
             if scissor_was_on {
                 (g.enable)(GL_SCISSOR_TEST);
             }
