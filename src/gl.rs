@@ -807,9 +807,11 @@ pub fn delete_texture(id: u32) {
 
 /// Clear the given texture to a solid RGBA colour via the scratch framebuffer.
 ///
-/// This is the option-(a) validation fill: proving the XREAL compositor displays an
-/// engine-owned texture at all. Preserves the previously bound draw framebuffer and the
-/// scissor-test enable so Godot's own rendering is left undisturbed.
+/// Started life as the bring-up validation fill (proving the XREAL compositor displays an
+/// engine-owned texture at all); it now serves the frame-tick's last-resort branch, which clears the
+/// eye textures to black before Godot has published a source size. Preserves the previously bound
+/// draw framebuffer, the scissor-test enable and the clear colour, so Godot's own rendering is left
+/// undisturbed.
 static FILL_LOG_COUNT: AtomicU32 = AtomicU32::new(0);
 
 pub fn fill_texture(tex: u32, r: f32, g_: f32, b: f32) {
