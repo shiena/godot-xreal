@@ -108,6 +108,11 @@ func set_enabled(on: bool) -> void:
 		push_warning("[xreal-record] app audio needs screen-capture consent; "
 			+ "this recording carries the microphone only")
 		want_app = false
+	# Request the mic lazily (like the camera / FPV stream): if it is wanted but not yet granted, fire
+	# the dialog now and record video-only this time; the next recording has audio.
+	if XrealShared.audio_wants_mic(audio_state) and OS.has_feature("android") and not XrealShared.is_mic_granted():
+		OS.request_permission("android.permission.RECORD_AUDIO")
+		push_warning("[xreal-record] mic not granted yet -- recording video-only; grant RECORD_AUDIO, then record again for audio")
 	var want_mic := XrealShared.audio_wants_mic(audio_state) and XrealShared.is_mic_granted()
 	if not _system.stream_start(_path, record_width, record_height, record_bitrate, record_fps, want_mic, want_app, false):
 		_fail("[xreal-record] recorder start failed")
