@@ -51,8 +51,13 @@ VIDEO_CLOCK = 90000  # RTP clock for H.264, fixed by RFC 6184
 # RTP
 # --------------------------------------------------------------------------------------------
 
-def rtp_payload(pkt: bytes) -> "tuple[int, int, bool, int, bytes] | None":
-    """-> (payload_type, timestamp, marker, ssrc, payload), or None if this is not RTP v2."""
+def rtp_payload(pkt: bytes) -> "tuple[int, int, int, bool, int, bytes] | None":
+    """-> (payload_type, sequence, timestamp, marker, ssrc, payload), or None if not RTP v2.
+
+    The sequence number is what lets the depacketizer notice loss and reordering; UDP gives no
+    other signal, and FU-A reassembly would otherwise splice fragments across a gap into a NAL
+    that never existed.
+    """
     if len(pkt) < 12 or (pkt[0] >> 6) != 2:
         return None
     csrc = pkt[0] & 0x0F
@@ -60,6 +65,7 @@ def rtp_payload(pkt: bytes) -> "tuple[int, int, bool, int, bytes] | None":
     has_ext = (pkt[0] >> 4) & 1
     marker = bool(pkt[1] >> 7)
     ptype = pkt[1] & 0x7F
+    seq = struct.unpack_from("!H", pkt, 2)[0]
     ts, ssrc = struct.unpack_from("!II", pkt, 4)
     off = 12 + csrc * 4
     if has_ext:
@@ -75,7 +81,7 @@ def rtp_payload(pkt: bytes) -> "tuple[int, int, bool, int, bytes] | None":
         end = len(pkt) - pkt[-1]
         if end <= off:
             return None
-    return ptype, ts, marker, ssrc, pkt[off:end]
+    return ptype, seq, ts, marker, ssrc, pkt[off:end]
 
 
 class Timeline:
@@ -142,14 +148,33 @@ class H264Depacketizer:
     def __init__(self) -> None:
         self.sps: bytes | None = None
         self.pps: bytes | None = None
+        self.lost = 0
         self._nals: list[bytes] = []
         self._ts: int | None = None
         self._fu: bytearray | None = None
+        self._expect_seq: int | None = None
 
-    def push(self, ts: int, marker: bool, payload: bytes) -> "list[tuple[int, list[bytes]]]":
+    def push(
+        self, seq: int, ts: int, marker: bool, payload: bytes
+    ) -> "list[tuple[int, list[bytes]]]":
         out: list[tuple[int, list[bytes]]] = []
         if not payload:
             return out
+        if self._expect_seq is not None and seq != self._expect_seq:
+            # Lost or reordered packet. FU-A reassembly appends fragments in arrival order, so
+            # carrying on across the gap would hand the decoder a NAL spliced from two different
+            # ones. Drop the partial; NALs already completed for this access unit are kept, since
+            # each is self-contained and a player rides out a missing slice better than a corrupt
+            # one. A reorder costs one NAL, which the next keyframe repairs.
+            self.lost += 1
+            if self.lost <= 3 or self.lost % 100 == 0:
+                print(
+                    f"[rtp] video: sequence gap (expected {self._expect_seq}, got {seq}); "
+                    f"dropping the partial NAL - {self.lost} so far",
+                    flush=True,
+                )
+            self._fu = None
+        self._expect_seq = (seq + 1) & 0xFFFF
         if self._ts is not None and ts != self._ts and self._nals:
             out.append((self._ts, self._nals))
             self._nals = []
@@ -513,16 +538,18 @@ def receive_video(sock: socket.socket, hub: Hub, timeline: Timeline) -> None:
         parsed = rtp_payload(sock.recv(65535))
         if not parsed:
             continue
-        _pt, ts, marker, ssrc, payload = parsed
+        _pt, seq, ts, marker, ssrc, payload = parsed
         if ssrc != ssrc_seen:
             if ssrc_seen is not None:
                 print("[rtp] video: new RTP session, re-anchoring", flush=True)
                 timeline.restart("v")
+                # A fresh depacketizer also drops the old sequence expectation, which the new
+                # sender's numbering has nothing to do with.
                 depack = H264Depacketizer()
                 last_ms = -1
                 hub.reset_session()
             ssrc_seen = ssrc
-        for au_ts, nals in depack.push(ts, marker, payload):
+        for au_ts, nals in depack.push(seq, ts, marker, payload):
             if depack.sps and depack.pps:
                 hub.set_avc_header(avc_sequence_header(depack.sps, depack.pps))
             if not nals or hub.avc_header is None:
@@ -575,7 +602,7 @@ def receive_audio(sock: socket.socket, hub: Hub, timeline: Timeline, forced_cloc
         parsed = rtp_payload(sock.recv(65535))
         if not parsed:
             continue
-        _pt, ts, _marker, ssrc, payload = parsed
+        _pt, _seq, ts, _marker, ssrc, payload = parsed
         if ssrc != ssrc_seen:
             if ssrc_seen is not None:
                 print("[rtp] audio: new RTP session, re-anchoring", flush=True)
