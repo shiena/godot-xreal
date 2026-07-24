@@ -32,7 +32,9 @@ This stages (all git-ignored): 3 core `.so` + `libmedia_codec.so` → `jniLibs/a
 
 The **silent** failure mode: no compile error, no API diff — just crashes or wrong data (the
 depth-mesh block-offset / winding bug was exactly this class). Recompilation can move:
-- struct field offsets (e.g. `MeshBlockInfo` in `src/depth_mesh.rs`, pose offsets, `InputManager+0x60`)
+- struct field offsets (e.g. `MeshBlockInfo` in `src/depth_mesh.rs`, pose offsets, `InputManager+0x60`,
+  the RGB latest-frame holder mutex `SessionManager+0x1C0` borrowed by `rgb_holder_mutex` in
+  `src/native.rs` — a wrong offset there re-opens the camera double-free race, not a clean crash)
 - internal-call offsets / function-table indices (e.g. the meshing/image-tracking entry points).
 
 Exercise each RE-dependent feature on hardware and watch for crashes and garbage:

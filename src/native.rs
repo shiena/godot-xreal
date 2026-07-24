@@ -490,6 +490,82 @@ unsafe fn borrow_plane<'a>(
     ))
 }
 
+/// Address of the SDK's RGB "latest frame" `std::mutex` (layout-compatible with `pthread_mutex_t`),
+/// which guards the `shared_ptr<RGBCameraDataFrame>` holder inside the `SessionManager` singleton.
+/// `None` until `lib_base` is published. The two constants come from disassembling
+/// `libXREALXRPlugin.so`: the singleton is the fixed global `lib_base + 0xDB400` (the same base the
+/// other REs in this crate use), and the receive/start/stop paths (`GetRGBCameraData`,
+/// `Start`/`StopRGBCameraDataCapture`) all lock the same mutex at `singleton + 0x1C0` — it is the
+/// single lock guarding the RGB camera state, so holding it serialises us against every writer.
+/// (`TryGetRGBCameraFrame`, the destructive new-frame gate, also reads `+0x188`/`+0x140` unlocked;
+/// we do not use it, but adopting it would need this same lock.)
+///
+/// # Why this exists — the RGB-camera double-free crash
+/// `TryAcquireLatestImage` (the poll API we call from the GL thread) reads that holder **without
+/// taking any lock**, bumps the `shared_ptr` control block's refcount, and copies it into its handle
+/// map. Meanwhile the SDK's camera receive thread runs `SessionManager::GetRGBCameraData`, which
+/// — *under this mutex* — swaps the holder to a new frame and releases the old `shared_ptr`
+/// (refcount 0 → `delete`). Racing the two lets us latch a control block the receive thread is
+/// freeing; the later `DisposeRGBCameraDataHandle` then double-frees it and Scudo aborts the GL
+/// thread with "invalid chunk state when deallocating" (tombstone_29 / tombstone_30, both the same
+/// stack). Holding this mutex across the acquire serialises us against the receive thread: the
+/// `shared_ptr` we latch is valid, and from then on its refcount keeps the frame alive — a frame we
+/// still reference is not returned to the `ObjectPool`, so its planes stay stable too (this also
+/// removes tearing), which is why only the acquire — not the plane reads or the dispose — needs the
+/// lock.
+///
+/// This is a **stopgap** that borrows an SDK-internal `std::mutex`; the offsets are hard-coded and
+/// must be re-checked on an SDK update. The root-cause fix is **callback mode**
+/// (`StartRGBCameraDataCapture` with a non-null callback → receive the `RGBCameraDataFrameToUnity`
+/// on the receive thread and never touch the poll API off-thread, which is what Unity does). That
+/// was not done here because it needs the callback struct's ABI reversed and the zero-copy
+/// direct-upload path redesigned — a mid-sized change with a wider on-device test surface — whereas
+/// this stopgap is local and reuses existing REs, so it ships first and the callback migration is
+/// tracked as separate work.
+#[cfg(target_os = "android")]
+fn rgb_holder_mutex() -> Option<*mut libc::pthread_mutex_t> {
+    let base = crate::signal_guard::lib_base();
+    (base != 0).then(|| (base + 0xDB400 + 0x1C0) as *mut libc::pthread_mutex_t)
+}
+
+/// Call `TryAcquireLatestImage` serialised against the SDK camera receive thread — see
+/// [`rgb_holder_mutex`] for the race this closes. Falls back to an unguarded call only if `lib_base`
+/// is not yet published, which cannot happen once the camera has started.
+///
+/// # Safety
+/// `acquire` must be the live `TryAcquireLatestImage` export and the three out-pointers valid.
+#[cfg(target_os = "android")]
+unsafe fn rgb_acquire_latest_locked(
+    acquire: FnTryAcquireLatestImage,
+    frame_handle: &mut i32,
+    resolution: &mut NrSize2i,
+    timestamp: &mut u64,
+) -> bool {
+    match rgb_holder_mutex() {
+        Some(m) => {
+            libc::pthread_mutex_lock(m);
+            let ok = acquire(frame_handle, resolution, timestamp);
+            libc::pthread_mutex_unlock(m);
+            ok
+        }
+        None => acquire(frame_handle, resolution, timestamp),
+    }
+}
+
+/// Desktop fallback: no SDK library, no receive thread, nothing to serialise against.
+///
+/// # Safety
+/// As [`rgb_acquire_latest_locked`] on Android.
+#[cfg(not(target_os = "android"))]
+unsafe fn rgb_acquire_latest_locked(
+    acquire: FnTryAcquireLatestImage,
+    frame_handle: &mut i32,
+    resolution: &mut NrSize2i,
+    timestamp: &mut u64,
+) -> bool {
+    acquire(frame_handle, resolution, timestamp)
+}
+
 /// Interleave the I420 chroma planes into the `[Cb, Cr, Cb, Cr, …]` RG8 layout a YCbCr shader
 /// samples, reusing `out`'s allocation.
 ///
@@ -2108,7 +2184,9 @@ impl XrealNative {
             let mut frame_handle: i32 = 0;
             let mut resolution = NrSize2i::default();
             let mut timestamp: u64 = 0;
-            if !acquire(&mut frame_handle, &mut resolution, &mut timestamp) {
+            // Serialise the acquire against the SDK camera receive thread — see `rgb_holder_mutex`.
+            if !rgb_acquire_latest_locked(acquire, &mut frame_handle, &mut resolution, &mut timestamp)
+            {
                 return None;
             }
             // Best-effort dispose on every exit path once we hold a valid handle.
@@ -2198,7 +2276,10 @@ impl XrealNative {
         let mut resolution = NrSize2i::default();
         let mut timestamp: u64 = 0;
         let t_acquire = std::time::Instant::now();
-        if !unsafe { acquire(&mut frame_handle, &mut resolution, &mut timestamp) } {
+        // Serialise the acquire against the SDK camera receive thread — see `rgb_holder_mutex`.
+        if !unsafe {
+            rgb_acquire_latest_locked(acquire, &mut frame_handle, &mut resolution, &mut timestamp)
+        } {
             return None;
         }
         timings.acquire_us = t_acquire.elapsed().as_micros() as u32;
