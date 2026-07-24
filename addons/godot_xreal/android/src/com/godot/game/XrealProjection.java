@@ -1,6 +1,7 @@
 package com.godot.game;
 
 import android.app.Activity;
+import android.content.Context;
 import android.content.Intent;
 import android.media.projection.MediaProjection;
 import android.os.Handler;
@@ -29,6 +30,11 @@ public final class XrealProjection {
 
 	private static volatile MediaProjection projection;
 	private static volatile boolean requestInFlight = false;
+	/// Application context captured when a projection is requested, so the MediaProjection.Callback's
+	/// onStop (a status-bar / system revoke, which carries no Activity) can stop the foreground
+	/// XrealProjectionService. The application context is a process-global singleton, so holding it
+	/// statically leaks nothing.
+	private static volatile Context appContext;
 
 	private XrealProjection() {}
 
@@ -40,6 +46,9 @@ public final class XrealProjection {
 		if (activity == null || projection != null || requestInFlight) {
 			return;
 		}
+		// Capture the application context now so onStop (fired by a status-bar revoke, with no Activity
+		// in hand) can tear down the foreground service.
+		appContext = activity.getApplicationContext();
 		requestInFlight = true;
 		Intent intent = new Intent(activity, XrealProjectionActivity.class);
 		intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
@@ -84,6 +93,16 @@ public final class XrealProjection {
 					Log.i(TAG, "media projection stopped by the system or the user");
 					projection = null;
 					nativeClearMediaProjection();
+					// A status-bar / system revoke tears down the projection but not the foreground
+					// service that startForeground'd for it — stop it here (mirrors release(activity)).
+					Context ctx = appContext;
+					if (ctx != null) {
+						try {
+							ctx.stopService(new Intent(ctx, XrealProjectionService.class));
+						} catch (Throwable t) {
+							Log.w(TAG, "stopService after projection stop failed", t);
+						}
+					}
 				}
 			}, new Handler(Looper.getMainLooper()));
 		} catch (Throwable t) {

@@ -189,11 +189,21 @@ struct XrTexture {
     /// then shows a fixed cleared gray. See docs/archive/codex-righteye-analysis.md.
     color_format: u32,
     flags: u32,
+    /// Whether WE allocated `gl_id` (the engine-allocated GLES path, `desc.color == 0`) and are
+    /// therefore responsible for `glDeleteTextures`. When the SDK handed us an existing native
+    /// texture (`desc.color != 0`, the adopted-swapchain path) the SDK owns it — we must NOT delete
+    /// it. See `xr_create_texture` / `xr_destroy_texture`.
+    owned: bool,
 }
 
 static XR_TEXTURES: Mutex<Vec<XrTexture>> = Mutex::new(Vec::new());
 static XR_TEXTURE_NEXT_ID: AtomicU32 = AtomicU32::new(1);
 static XR_QUERY_LOG: AtomicU32 = AtomicU32::new(0);
+/// GL texture names queued for deletion by `xr_destroy_texture` (which may run off the render
+/// thread during teardown, where our EGL context is not current). Drained at the top of
+/// `run_render_thread_tick`, which runs on the render thread with the context current. Only
+/// engine-allocated (owned) textures are queued; SDK-adopted textures are the SDK's to free.
+static PENDING_TEX_DELETES: Mutex<Vec<u32>> = Mutex::new(Vec::new());
 
 /// Per-eye projection + eye pose, read from `UnityXRNextFrameDesc.renderPasses[k].renderParams[0]`
 /// by the frame tick and consumed by `XrealHeadTracker` to set the eye cameras. `l/r/t/b` are the
@@ -789,6 +799,9 @@ extern "C" fn xr_create_texture(
             layers,
             color_format: desc.color_format,
             flags: desc.flags,
+            // color == 0 → we allocated the GL texture (alloc_texture / alloc_texture_array) and
+            // own it; color != 0 → the SDK handed us its own swapchain texture, which it frees.
+            owned: desc.color == 0,
         });
         textures.len()
     };
@@ -861,12 +874,21 @@ extern "C" fn xr_query_texture_desc(
     0
 }
 
-/// `IUnityXRDisplay::DestroyTexture` (+0x28). Drop our record; GL deletion is deferred (this can
-/// be called off the render thread during teardown, where our context is not current).
+/// `IUnityXRDisplay::DestroyTexture` (+0x28). Drop our record and queue the GL texture for deletion.
+/// Deletion is deferred (this can be called off the render thread during teardown, where our EGL
+/// context is not current): we push the GL name into `PENDING_TEX_DELETES`, which the render thread
+/// drains in `run_render_thread_tick` with the context current. Only textures we allocated (`owned`)
+/// are queued — an SDK-adopted swapchain texture (`color != 0` at creation) belongs to the SDK.
 extern "C" fn xr_destroy_texture(_handle: *mut c_void, tex_id: u32) -> i32 {
     let mut textures = XR_TEXTURES.lock().expect("xr textures mutex");
     if let Some(pos) = textures.iter().position(|t| t.id == tex_id) {
-        textures.remove(pos);
+        let removed = textures.remove(pos);
+        if removed.owned && removed.gl_id != 0 {
+            PENDING_TEX_DELETES
+                .lock()
+                .expect("pending tex deletes mutex")
+                .push(removed.gl_id);
+        }
     }
     0
 }
@@ -1348,6 +1370,19 @@ pub fn populate_registered_display_frame_desc_with_ptr(desc: *mut c_void) -> i32
 /// On subsequent calls: drives `PopulateNextFrameDesc` so the SDK's GLThread always has
 /// a fresh frame handle for `SubmitCurrentFrame`.
 pub fn run_render_thread_tick() {
+    // Drain textures queued by `xr_destroy_texture` (which may run off this thread during teardown,
+    // where our EGL context is not current). We are on the render thread with the context current,
+    // so `glDeleteTextures` is safe here — this is the deferred deletion the destroy path promises,
+    // and it frees the ~8 MB eye texture (or 2-layer array) each display re-init would otherwise leak.
+    let pending: Vec<u32> = std::mem::take(
+        &mut *PENDING_TEX_DELETES
+            .lock()
+            .expect("pending tex deletes mutex"),
+    );
+    for gl_id in pending {
+        crate::gl::delete_texture(gl_id);
+    }
+
     if !GFX_THREAD_STARTED.swap(true, Ordering::SeqCst) {
         if let Some(provider) = *GFX_THREAD_PROVIDER
             .lock()
