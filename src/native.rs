@@ -60,6 +60,11 @@ const EGL_LIB: &str = "libEGL.so";
 /// read. Real scenes have at most a handful of planes/anchors, so anything past this is treated as 0.
 const MAX_TRACKABLES: i32 = 1024;
 
+/// Upper bound on a plane's boundary vertex count. The count and the data write are two separate SDK
+/// calls, so an out-of-range count is refused rather than driving a huge alloc / letting the write
+/// overrun. Real boundary polygons have at most a handful of vertices.
+const MAX_BOUNDARY_VERTS: i32 = 1 << 16;
+
 /// Clamp a change-array count to a sane range (`0..=MAX_TRACKABLES`); negative/oversized → 0 + warn.
 fn sane_count(count: i32, what: &str) -> i32 {
     if (0..=MAX_TRACKABLES).contains(&count) {
@@ -1899,11 +1904,15 @@ impl XrealNative {
                     bounded_plane::ELEMENT_SIZE
                 );
             }
-            // Removed ids are just TrackableIds (16 B), still safe to read.
+            // Removed ids are just TrackableIds (16 B), still parseable -- but clamp the count with
+            // sane_count() like the normal path, so a corrupt removed_count cannot read out of bounds.
             return Some(PlaneChanges {
                 added: Vec::new(),
                 updated: Vec::new(),
-                removed: read_removed_ids(changes.removed_ptr, changes.removed_count),
+                removed: read_removed_ids(
+                    changes.removed_ptr,
+                    sane_count(changes.removed_count, "plane removed"),
+                ),
             });
         }
         Some(PlaneChanges {
@@ -1934,6 +1943,14 @@ impl XrealNative {
         };
         let n = unsafe { count_fn(id) };
         if n <= 0 {
+            return Vec::new();
+        }
+        // Refuse an out-of-range count rather than clamping: count-fetch and data-write are separate
+        // SDK calls, so a partial buffer would just let data_fn overrun.
+        if n > MAX_BOUNDARY_VERTS {
+            godot::global::godot_warn!(
+                "[xreal] plane boundary vertex count {n} out of range; skipping"
+            );
             return Vec::new();
         }
         let mut verts = vec![[0.0_f32; 2]; n as usize];
@@ -1994,7 +2011,10 @@ impl XrealNative {
             return Some(AnchorChanges {
                 added: Vec::new(),
                 updated: Vec::new(),
-                removed: read_removed_ids(changes.removed_ptr, changes.removed_count),
+                removed: read_removed_ids(
+                    changes.removed_ptr,
+                    sane_count(changes.removed_count, "anchor removed"),
+                ),
             });
         }
         Some(AnchorChanges {
@@ -2144,9 +2164,14 @@ impl XrealNative {
 
     /// Whether the RGB-camera C ABI is available (libXREALXRPlugin.so present + symbols resolved).
     pub fn rgb_camera_available(&self) -> bool {
+        // Require stop and dispose too: without them a partially-resolved build could start a capture
+        // it cannot stop, and would leak every acquired frame handle (the grab paths only dispose
+        // `if let Some(d) = dispose`).
         self.rgb_start_capture.is_some()
+            && self.rgb_stop_capture.is_some()
             && self.rgb_try_acquire_latest.is_some()
             && self.rgb_get_data_plane.is_some()
+            && self.rgb_dispose_handle.is_some()
     }
 
     /// Start RGB-camera capture in **poll mode** (null callback). Returns the capture handle for

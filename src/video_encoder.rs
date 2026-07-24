@@ -81,6 +81,9 @@ fn config_json(
     with_alpha: bool,
     audio_rate: Option<i32>,
 ) -> String {
+    // Escape the path/URL for JSON: a `"` or `\` in `output` would otherwise break the config.
+    // codec_type() still sees the raw string (it matches on scheme/extension, unaffected by escaping).
+    let output_json = output.replace('\\', "\\\\").replace('"', "\\\"");
     format!(
         concat!(
             "{{\"width\":{},\"height\":{},\"bitRate\":{},\"fps\":{},\"codecType\":{},",
@@ -93,7 +96,7 @@ fn config_json(
         bitrate,
         fps,
         codec_type(output),
-        output,
+        output_json,
         with_alpha,
         with_mic,
         with_internal,
