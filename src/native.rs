@@ -2185,8 +2185,12 @@ impl XrealNative {
             let mut resolution = NrSize2i::default();
             let mut timestamp: u64 = 0;
             // Serialise the acquire against the SDK camera receive thread — see `rgb_holder_mutex`.
-            if !rgb_acquire_latest_locked(acquire, &mut frame_handle, &mut resolution, &mut timestamp)
-            {
+            if !rgb_acquire_latest_locked(
+                acquire,
+                &mut frame_handle,
+                &mut resolution,
+                &mut timestamp,
+            ) {
                 return None;
             }
             // Best-effort dispose on every exit path once we hold a valid handle.
