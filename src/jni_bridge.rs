@@ -87,10 +87,31 @@ pub extern "system" fn Java_com_godot_game_XrealBridge_nativeRegisterActivity<'l
 /// (see `docs/archive/codex-audio-mix-analysis.md`), so a null one leaves app-audio capture unstarted
 /// and the encoder's mixer with nothing to add to the microphone.
 ///
-/// Stored as a leaked global ref: the encoder keeps the pointer across the capture, and Java-side
-/// ownership ends the moment `onProjectionReady` returns.
+/// Backed by a global ref we own (see [`MEDIA_PROJECTION_OWNER`]), because Java-side ownership ends
+/// the moment `onProjectionReady` returns and the encoder needs the object for the whole capture.
 static MEDIA_PROJECTION: std::sync::atomic::AtomicPtr<c_void> =
     std::sync::atomic::AtomicPtr::new(std::ptr::null_mut());
+
+/// Owns the global ref behind [`MEDIA_PROJECTION`] so it can be released instead of leaked.
+///
+/// The release rule is deliberate and narrow: **the ref is dropped only when a new projection
+/// replaces it, and only after the new ref has been created** — never on a revoke. Two facts from
+/// disassembling `libmedia_codec.so` force that shape:
+///
+/// * `HWEncoderSetMediaProjection` takes its **own** `NewGlobalRef` on the object (the holder it
+///   builds stores `JNIEnv*`, that new ref, and our raw `jobject`). So releasing our ref cannot
+///   dangle the encoder's copy — the leak this replaces was never protecting it.
+/// * That holder keeps **our raw `jobject` value** and compares it against the next projection it
+///   is handed, skipping the call when they are equal. If we released our ref first, JNI could hand
+///   the same handle value back for the next grant and the encoder would silently keep using the
+///   revoked projection. Creating the new ref while the old one is still alive makes that
+///   impossible: JNI cannot reuse a live handle.
+///
+/// Holding the ref past a revoke costs one live global ref until the next grant, which is bounded,
+/// unlike the unbounded one-per-grant leak this replaces.
+#[cfg(target_os = "android")]
+static MEDIA_PROJECTION_OWNER: std::sync::Mutex<Option<jni::objects::GlobalRef>> =
+    std::sync::Mutex::new(None);
 
 /// Raw `jobject` of the consented `MediaProjection`, or null. Null on desktop.
 pub fn media_projection_ptr() -> *mut c_void {
@@ -108,6 +129,8 @@ pub extern "system" fn Java_com_godot_game_XrealProjection_nativeSetMediaProject
     use std::sync::atomic::Ordering;
 
     if projection.is_null() {
+        // Revoked: readers must stop handing this to the encoder immediately, but the ref itself
+        // stays alive until a new projection replaces it — see MEDIA_PROJECTION_OWNER.
         MEDIA_PROJECTION.store(std::ptr::null_mut(), Ordering::Release);
         return;
     }
@@ -115,10 +138,14 @@ pub extern "system" fn Java_com_godot_game_XrealProjection_nativeSetMediaProject
         return;
     };
     let raw = global.as_raw() as *mut c_void;
-    // Leaked on purpose, as with the Activity above: the encoder may hold this pointer for the
-    // length of a capture, and there is at most one projection per app run.
-    std::mem::forget(global);
+    // Order matters: the new ref already exists here, so the previous one (dropped below, which is
+    // what actually calls DeleteGlobalRef) cannot have its handle value recycled into `raw`.
+    let previous = MEDIA_PROJECTION_OWNER
+        .lock()
+        .expect("media projection owner mutex")
+        .replace(global);
     MEDIA_PROJECTION.store(raw, Ordering::Release);
+    drop(previous);
 }
 
 /// Glasses hot-plug event counters. The JNI callbacks below run on the Android UI thread
