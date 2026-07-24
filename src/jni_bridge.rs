@@ -49,7 +49,9 @@ pub extern "system" fn Java_com_godot_game_XrealBridge_nativeRegisterActivity<'l
     use std::sync::atomic::{AtomicBool, Ordering};
 
     static REGISTERED: AtomicBool = AtomicBool::new(false);
-    if REGISTERED.swap(true, Ordering::SeqCst) {
+    // Fast path: already registered. The real claim is the CAS below, AFTER both JNI handles
+    // succeed — so a transient failure here never permanently blocks a later registration attempt.
+    if REGISTERED.load(Ordering::SeqCst) {
         return;
     }
 
@@ -57,6 +59,15 @@ pub extern "system" fn Java_com_godot_game_XrealBridge_nativeRegisterActivity<'l
     let Ok(global) = env.new_global_ref(&activity) else {
         return;
     };
+
+    // Both handles are in hand; claim registration now. The CAS makes this the sole winner even if
+    // two threads passed the load above; the loser drops its global ref and returns.
+    if REGISTERED
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .is_err()
+    {
+        return;
+    }
 
     let vm_ptr = vm.get_java_vm_pointer() as *mut c_void;
     let activity_ptr = global.as_raw() as *mut c_void;

@@ -142,23 +142,34 @@ pub fn poll_mesh_blocks() -> Vec<MeshBlock> {
         let total = (vec.end as usize - vec.begin as usize) / MESH_BLOCK_STRIDE;
         let count = total.min(MAX_BLOCKS);
         let mut out = Vec::with_capacity(count);
-        for i in 0..count {
+        // Iterate over EVERY block so each one's inner libc++ vector storages get freed, even the
+        // blocks past MAX_BLOCKS that we do not copy out — otherwise their storage leaks before the
+        // outer array free below.
+        for i in 0..total {
             let block = vec.begin.add(i * MESH_BLOCK_STRIDE);
-            let (vertices, v_begin) = read_vec3(block, MB_VERTICES);
-            let (normals, n_begin) = read_vec3(block, MB_NORMALS);
-            let (indices, i_begin) = read_u32(block, MB_INDICES);
-            out.push(MeshBlock {
-                id: (block.add(MB_ID) as *const u64).read_unaligned(),
-                state: (block.add(MB_STATE) as *const i32).read_unaligned(),
-                vertices,
-                normals,
-                indices,
-            });
-            // Free the block's four vector storages (libc++-allocated). Labels are freed without
-            // being copied out — nothing consumes them yet.
-            free_op(v_begin);
-            free_op(n_begin);
-            free_op(i_begin);
+            if i < count {
+                let (vertices, v_begin) = read_vec3(block, MB_VERTICES);
+                let (normals, n_begin) = read_vec3(block, MB_NORMALS);
+                let (indices, i_begin) = read_u32(block, MB_INDICES);
+                out.push(MeshBlock {
+                    id: (block.add(MB_ID) as *const u64).read_unaligned(),
+                    state: (block.add(MB_STATE) as *const i32).read_unaligned(),
+                    vertices,
+                    normals,
+                    indices,
+                });
+                // Free the block's four vector storages (libc++-allocated). Labels are freed without
+                // being copied out — nothing consumes them yet.
+                free_op(v_begin);
+                free_op(n_begin);
+                free_op(i_begin);
+            } else {
+                // Beyond MAX_BLOCKS: still free the three geometry vector storages (we just skip
+                // copying the geometry out).
+                free_op((block.add(MB_VERTICES) as *const *mut u8).read_unaligned());
+                free_op((block.add(MB_NORMALS) as *const *mut u8).read_unaligned());
+                free_op((block.add(MB_INDICES) as *const *mut u8).read_unaligned());
+            }
             free_op((block.add(MB_LABELS) as *const *mut u8).read_unaligned());
         }
         // Free the block array itself.

@@ -872,6 +872,10 @@ extern "C" fn xr_destroy_texture(_handle: *mut c_void, tex_id: u32) -> i32 {
 }
 
 extern "C" fn xr_get_platform_data(_handle: *mut c_void, _out: *mut *mut c_void) -> i32 {
+    // Never leave the out-pointer uninitialized (mirrors xr_create_occlusion_mesh writing *out = 0).
+    if !_out.is_null() {
+        unsafe { *_out = ptr::null_mut() };
+    }
     0
 }
 extern "C" fn xr_create_occlusion_mesh(
@@ -1430,6 +1434,19 @@ pub fn run_frame_tick() {
             desc.as_mut_ptr() as *mut c_void,
         )
     };
+
+    // If populate failed, `desc` holds no valid render passes: parsing it would read garbage and
+    // submitting a stale/empty frame risks the compositor, so skip both and retry next frame.
+    // Gate the log so a persistent failure does not spam.
+    if pop_status != 0 {
+        if n < 5 || n.is_multiple_of(300) {
+            godot::global::godot_warn!(
+                "[xreal] frame_tick #{n}: PopulateNextFrameDesc failed (status={pop_status}); \
+                 skipping parse + submit"
+            );
+        }
+        return;
+    }
 
     let read_u32 = |offset: usize| -> u32 {
         u32::from_ne_bytes(desc[offset..offset + 4].try_into().expect("desc u32 slice"))

@@ -109,6 +109,11 @@ pub fn start() -> String {
         if cr != 0 || handle == 0 {
             return format!("[xreal] controller Create failed (result={cr})");
         }
+        if sr != 0 {
+            // Start failed: do NOT store a controller that never started (poll_raw would then drive a
+            // dead handle). Bail — the discovery group is already destroyed above.
+            return format!("[xreal] controller Start failed (result={sr})");
+        }
 
         // Characterize the controller (diagnostic only).
         let mut conn_type = -1;
