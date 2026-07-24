@@ -155,8 +155,16 @@ func _process_frames() -> void:
 	while _recv.size() >= 4:
 		var length := _recv[0] | (_recv[1] << 8)
 		var mtype := _recv[2] | (_recv[3] << 8)
-		if length < 4 or _recv.size() < length:
-			break
+		if length < 4:
+			# A frame length shorter than its own 4-byte header can never be consumed — the stream is
+			# desynced. Drop the link instead of wedging here and letting _recv grow unbounded.
+			if _state == State.ACTIVE:
+				_lost()
+			else:
+				_fail("corrupt frame header (length=%d)" % length)
+			return
+		if _recv.size() < length:
+			break  # frame incomplete — await more bytes
 		var payload := _recv.slice(4, length)
 		_recv = _recv.slice(length)
 		_on_frame(mtype, payload)
@@ -188,6 +196,9 @@ func _on_frame(mtype: int, payload: PackedByteArray) -> void:
 				camera_param.emit(data["fov"])
 		MsgType.MSG_SYNC:
 			if _state == State.NEGOTIATE and payload.size() >= 8:
+				# The response echoes the request's leading 8-byte msgid — ignore a reply that isn't ours.
+				if payload.slice(0, 8).decode_u64(0) != _msgid:
+					return
 				var json_str := payload.slice(8).get_string_from_utf8()
 				var data: Variant = JSON.parse_string(json_str)
 				var ok: bool = data is Dictionary and bool(data.get("success", false))

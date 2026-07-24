@@ -156,6 +156,9 @@ func _exit_tree() -> void:
 	# after a crash the camera stays held and must be re-plugged; this only covers clean exits.
 	if _feed and _feed.is_active():
 		_feed.set_active(false)
+	if _feed:
+		CameraServer.remove_feed(_feed)
+		_feed = null
 
 ## Push a warning AND emit `error` so the load site can detect the failure (not just see the log).
 func _fail(msg: String) -> void:

@@ -72,6 +72,7 @@ static func _save(src_path: String, mime: String, is_video: bool) -> bool:
 	# see it (it sits on disk as ".pending-<epoch>-<name>"). Verify the row really updated.
 	var updated = resolver.update(item, values, no_where, no_args)
 	if updated == null or int(updated) < 1:
+		resolver.delete(item, no_where, no_args)
 		push_warning("[demo-gallery] IS_PENDING clear failed for %s — still hidden in the gallery" % src_path.get_file())
 		return false
 	print("[demo-gallery] saved -> %s/%s" % [rel_dir, src_path.get_file()])
