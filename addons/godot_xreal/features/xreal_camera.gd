@@ -92,10 +92,11 @@ func _setup_feed() -> void:
 	if not ClassDB.class_exists(&"XrealCameraFeed"):
 		_failed = true
 		return
-	# Runtime CAMERA permission (also grant via `adb shell pm grant … android.permission.CAMERA`).
-	if OS.has_feature("android"):
-		OS.request_permission("android.permission.CAMERA")
-
+	# No CAMERA permission is requested here on purpose: the glasses camera is a USB (UVC) device the
+	# SDK drives through libusb (libnr_rgb_camera.so imports the libusb API, provided by
+	# libnr_libusb.so), NOT a Camera2/HAL device, so android.permission.CAMERA does not gate it.
+	# Verified on device 2026-07-25: with CAMERA revoked the capture still reported "capture started"
+	# and streamed 2400+ frames, and the app never appeared as a cameraserver client.
 	_feed = ClassDB.instantiate(&"XrealCameraFeed")
 	# Name it so it's identifiable among CameraServer.feeds() — the XREAL glasses camera is NOT an
 	# Android Camera2 device, so it only exists as this feed.
