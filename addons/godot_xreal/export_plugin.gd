@@ -40,7 +40,6 @@ func _get_android_manifest_element_contents(_platform: EditorExportPlatform, _de
 	return """<uses-permission android:name="android.permission.INTERNET" />
 <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 <uses-permission android:name="android.permission.HIGH_SAMPLING_RATE_SENSORS" />
-<uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 <uses-permission android:name="android.permission.REORDER_TASKS" />
 <uses-permission android:name="android.permission.ACTIVITY_EMBEDDING" tools:ignore="ProtectedPermissions" />
 <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
