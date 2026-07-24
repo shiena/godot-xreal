@@ -45,6 +45,17 @@ public final class XrealBridge {
 
 	private XrealBridge() {}
 
+	/**
+	 * Find the connected XREAL glasses display, or null when none is present.
+	 *
+	 * Only a display {@link #isXrealDisplay} positively identifies is returned. There is deliberately
+	 * no "first non-default display" fallback: callers treat the result as the glasses
+	 * (notifyGlassesConnected + companion Activity launch), so an external monitor, a Chromecast/
+	 * screen-cast display or any virtual display would otherwise be mistaken for them.
+	 *
+	 * Every non-default display that was rejected is logged, so a device log shows immediately if the
+	 * real glasses fail the match (e.g. a name or resolution we do not know about yet).
+	 */
 	static Display findXrealDisplay(Context context) {
 		DisplayManager displayManager = (DisplayManager) context.getSystemService(Context.DISPLAY_SERVICE);
 		if (displayManager == null) {
@@ -52,7 +63,7 @@ public final class XrealBridge {
 		}
 
 		Display[] displays = displayManager.getDisplays();
-		Display fallback = null;
+		StringBuilder rejected = null;
 		for (Display display : displays) {
 			if (display.getDisplayId() == Display.DEFAULT_DISPLAY) {
 				continue;
@@ -60,11 +71,20 @@ public final class XrealBridge {
 			if (isXrealDisplay(display)) {
 				return display;
 			}
-			if (fallback == null) {
-				fallback = display;
+			if (rejected == null) {
+				rejected = new StringBuilder();
+			} else {
+				rejected.append("; ");
 			}
+			rejected.append(describeDisplay(display));
 		}
-		return fallback;
+		if (rejected != null) {
+			Log.w(TAG, BRIDGE_VERSION + ": non-default display(s) present but NOT recognised as XREAL: "
+					+ rejected
+					+ " -- match needs the name to contain xreal/nreal, or a 3840x1080 real size; "
+					+ "treating as no glasses (no connect notification, no companion Activity)");
+		}
+		return null;
 	}
 
 	static boolean isXrealDisplay(Display display) {
