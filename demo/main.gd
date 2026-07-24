@@ -207,7 +207,8 @@ func _on_tc_camera(on: bool) -> void:
 	if _camera.set_enabled(on) != on:
 		_set_controller_toggle("camera", false)
 
-## Phone-menu "平面検出" toggle → the XrealPlanes component (switches tracking to 6DoF while on).
+## Phone-menu "Plane" toggle → the XrealPlanes boundary-polygon overlay (switches tracking to 6DoF
+## while on).
 func _on_tc_plane(on: bool) -> void:
 	print("[demo] plane toggle -> %s" % ("on" if on else "off"))
 	if _planes.set_enabled(on) != on:

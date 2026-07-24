@@ -239,7 +239,8 @@ Exports (`XREALImageTrackingSubsystem.cs`): `SetImageTrackingDatabase(u64)` (`0x
 (`0x9a4a8`), `poll_mesh_blocks()` (`GetMeshBlockInfo` `0x9a664` → walk the `vector<MeshBlockInfo>`, copy
 verts/normals/indices, free the C++ storage with libc++ `operator delete`). Exposed on `XrealSystem`
 (`is_meshing_supported` / `set_meshing_enabled` / `poll_mesh_blocks() -> Array` of
-`{id, state, vertices, normals, indices}`); the `(x,-y,-z)` flip is applied Godot-side. Demo
+`{id, state, vertices, normals, indices}`); the `(x,-y,z)` flip + winding reversal is applied
+Godot-side (see the layout note below — the flip is one step short of the pose path). Demo
 `demo/mesh_manager.gd` (phone-menu "メッシュ" toggle, Air2U tab) builds a translucent `ArrayMesh` per block.
 **On-device TODO:** confirm the session-init meshing gate turns blocks on, the coordinate flip, and the
 C++ vector free doesn't corrupt (behind the toggle so any crash is contained).
@@ -261,10 +262,30 @@ base + offset). Ships in `nr_meshing.aar` (backend `libnr_meshing.so` exports on
    `std::vector<MeshBlockInfo>`, backend fn table+152). Walk it (128-byte stride) and free the vectors.
 4. Build a Godot `ArrayMesh` per block.
 
-**`MeshBlockInfo` (128 B, from `AcquireMesh` disasm `0x79a28`+):** `id(=subId2)@0x00`,
-`NRMeshingBlockState@0x08` (`==2` ⇒ removed), `vector<Vector3> vertices@0x38` (12 B ea, SDK writes
-`{x,y,-z}`), `vector<Vector3> normals@0x50` (same Z-flip, count==verts), `vector<u32> indices@0x68`,
-source labels@0x80 → dest labels@0x98 (what `GetMeshLabels` returns).
+**`MeshBlockInfo` (128 B) — CORRECTED 2026-07-23.** The earlier `0x38/0x50/0x68` reading was off by one
+vector slot (`0x18`): `AcquireMesh`'s `x21` is the **libc++ hash node**, not the block. The node header
+(`__next_@0`, `__hash_@8`, key `u64@0x10`) puts the mapped `MeshBlockInfo` at **node+0x18**, so
+`AcquireMesh`'s `[x21,#0x38/#0x50/#0x68]` are block `+0x20/+0x38/+0x50` (and `+0x80` = block `+0x68`,
+the labels it copies to the pair's second member at node+0x98). Confirmed independently from the
+producer `GetMeshBlockInfo`, which `__append`s to `block_end-0x60 / -0x48` (`vector<NRVector3f>`) and
+`-0x30` (`vector<u32>`), and by `MeshBlockInfo::operator=` (28-byte POD head, then exactly four vectors):
+
+    0x00 u64                  id (TrackableId.subId2)
+    0x08 i32                  state — Unity MeshChangeState: Added0/Updated1/Removed2/Unchanged3
+    0x0c..0x1c                POD tail (ctor leaves it untouched; two backend calls write +0x10/+0x18)
+    0x20 vector<NRVector3f>   vertices (12 B ea)
+    0x38 vector<NRVector3f>   normals  (12 B ea, count == verts)
+    0x50 vector<u32>          indices
+    0x68 vector<u8>           labels (NRMeshingVertexSemanticLabel) — what GetMeshLabels returns
+
+**Coordinates.** These are **raw NR space, pre-Unity-conversion**: `AcquireMesh`'s copy loop is what
+does `fneg` on the third float, i.e. Unity gets `{x,y,-z}` of these (indices memcpy'd unreversed). So
+raw → this port's Godot is `(x,-y,-z) ∘ (x,y,-z)` = **`(x,-y,z)`**, one flip short of the pose path.
+That composite is a 180°-about-X rotation of Unity space, so the winding stays Unity's CW-front —
+**reverse each triangle** for Godot's CCW-front rule.
+
+`GetMeshBlockInfo` skips blocks whose vertex or index count is 0, so `state==2` (Removed) blocks
+likely never surface through Path B — removal detection needs a different signal (verify on device).
 
 **Gating (the on-device unknown, same class as hand tracking):** `GetMeshInfos` bails unless
 `NativePerception::GetSupportedFeatures() & (1<<3)` (bit 3 = meshing) and a ready flag at `NativePerception+24`
