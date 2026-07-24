@@ -15,6 +15,7 @@ import android.util.Log;
 import android.util.Rational;
 import android.view.Display;
 import android.util.DisplayMetrics;
+import java.lang.ref.WeakReference;
 
 /**
  * Bridges the host {@link Activity} to the godot-xreal GDExtension's native code.
@@ -34,12 +35,27 @@ public final class XrealBridge {
 	private static boolean nativeLibrariesLoaded = false;
 	private static boolean companionLaunchRequested = false;
 	private static boolean displayListenerRegistered = false;
+	/// The most recently registered Activity, held weakly so the process-static DisplayListener
+	/// (registered once, never unregistered) does not pin an old Activity across recreation and
+	/// does not call runOnUiThread/startActivity on a destroyed one. Updated by every register().
+	private static WeakReference<Activity> currentActivityRef = new WeakReference<>(null);
 	/// Display id of the XREAL glasses while connected (-1 = none); used to recognise its removal,
 	/// since onDisplayRemoved cannot query the (already gone) Display.
 	private static int xrealDisplayId = -1;
 
 	private XrealBridge() {}
 
+	/**
+	 * Find the connected XREAL glasses display, or null when none is present.
+	 *
+	 * Only a display {@link #isXrealDisplay} positively identifies is returned. There is deliberately
+	 * no "first non-default display" fallback: callers treat the result as the glasses
+	 * (notifyGlassesConnected + companion Activity launch), so an external monitor, a Chromecast/
+	 * screen-cast display or any virtual display would otherwise be mistaken for them.
+	 *
+	 * Every non-default display that was rejected is logged, so a device log shows immediately if the
+	 * real glasses fail the match (e.g. a name or resolution we do not know about yet).
+	 */
 	static Display findXrealDisplay(Context context) {
 		DisplayManager displayManager = (DisplayManager) context.getSystemService(Context.DISPLAY_SERVICE);
 		if (displayManager == null) {
@@ -47,7 +63,7 @@ public final class XrealBridge {
 		}
 
 		Display[] displays = displayManager.getDisplays();
-		Display fallback = null;
+		StringBuilder rejected = null;
 		for (Display display : displays) {
 			if (display.getDisplayId() == Display.DEFAULT_DISPLAY) {
 				continue;
@@ -55,11 +71,20 @@ public final class XrealBridge {
 			if (isXrealDisplay(display)) {
 				return display;
 			}
-			if (fallback == null) {
-				fallback = display;
+			if (rejected == null) {
+				rejected = new StringBuilder();
+			} else {
+				rejected.append("; ");
 			}
+			rejected.append(describeDisplay(display));
 		}
-		return fallback;
+		if (rejected != null) {
+			Log.w(TAG, BRIDGE_VERSION + ": non-default display(s) present but NOT recognised as XREAL: "
+					+ rejected
+					+ " -- match needs the name to contain xreal/nreal, or a 3840x1080 real size; "
+					+ "treating as no glasses (no connect notification, no companion Activity)");
+		}
+		return null;
 	}
 
 	static boolean isXrealDisplay(Display display) {
@@ -91,25 +116,40 @@ public final class XrealBridge {
 		// Unity, so without it their JavaVM globals stay null and CreateSession crashes
 		// (NativeAPI::Create -> libnr_loader.so JNI_OnLoad with a null vm). Order: lower
 		// loaders first, then the XREAL wrappers, then our GDExtension.
-		loadNative("nr_loader");
-		loadNative("nr_api");
-		loadNative("XREALNativeSessionManager");
-		loadNative("XREALXRPlugin");
+		//
+		// The nr_* wrappers and our GDExtension are REQUIRED: if any fails, CreateSession would later
+		// crash with a confusing null-vm error, so we leave nativeLibrariesLoaded false and let a later
+		// register() retry. `&=` (not `&&`) so every library is still attempted and its own failure is
+		// logged, rather than short-circuiting at the first miss.
+		boolean allRequiredLoaded = true;
+		allRequiredLoaded &= loadNative("nr_loader");
+		allRequiredLoaded &= loadNative("nr_api");
+		allRequiredLoaded &= loadNative("XREALNativeSessionManager");
+		allRequiredLoaded &= loadNative("XREALXRPlugin");
 		// media_codec (FPV HW encoder) must go through System.loadLibrary too: its JNI_OnLoad, run
 		// with the real JavaVM, creates a global manager singleton the encoder dereferences. Merely
 		// dlopen'ing it from Rust skips JNI_OnLoad, leaving that singleton null → HWEncoderStart /
-		// HWEncoderSetMediaProjection crash (SIGSEGV, null+0x38).
+		// HWEncoderSetMediaProjection crash (SIGSEGV, null+0x38). This one is OPTIONAL: only the FPV
+		// streaming feature needs it, so a load failure must not block the core XREAL session.
 		loadNative("media_codec");
-		loadNative("godot_xreal");
-		nativeLibrariesLoaded = true;
+		allRequiredLoaded &= loadNative("godot_xreal");
+		if (allRequiredLoaded) {
+			nativeLibrariesLoaded = true;
+		} else {
+			Log.e(TAG, "one or more required XREAL native libraries failed to load; "
+					+ "leaving native init incomplete so a later register() can retry");
+		}
 	}
 
-	private static void loadNative(String name) {
+	/** Load one native library. Returns whether it loaded (logging the library name on failure). */
+	private static boolean loadNative(String name) {
 		try {
 			System.loadLibrary(name);
 			Log.i(TAG, "loaded lib" + name + ".so");
+			return true;
 		} catch (Throwable t) {
 			Log.e(TAG, "Unable to load lib" + name + ".so", t);
+			return false;
 		}
 	}
 
@@ -118,6 +158,9 @@ public final class XrealBridge {
 		if (activity == null) {
 			return;
 		}
+		// Refresh the weak Activity reference the (once-registered) DisplayListener reads, so after an
+		// Activity recreation the listener acts on the current Activity instead of a stale/destroyed one.
+		currentActivityRef = new WeakReference<>(activity);
 		try {
 			ensureNativeLibrariesLoaded();
 			nativeRegisterActivity(activity);
@@ -134,7 +177,12 @@ public final class XrealBridge {
 		if (displayListenerRegistered) {
 			return;
 		}
-		DisplayManager displayManager = (DisplayManager)activity.getSystemService(Context.DISPLAY_SERVICE);
+		// Resolve the DisplayManager from the application context, not the Activity: this listener is
+		// registered once for the whole process and never unregistered, so capturing an Activity-bound
+		// service would pin that Activity forever. The application context is a process-global singleton,
+		// and DisplayManager's registration is process-wide regardless of which context wraps it.
+		DisplayManager displayManager =
+				(DisplayManager) activity.getApplicationContext().getSystemService(Context.DISPLAY_SERVICE);
 		if (displayManager == null) {
 			return;
 		}
@@ -148,7 +196,12 @@ public final class XrealBridge {
 				if (isXrealDisplay(display)) {
 					xrealDisplayId = displayId;
 					notifyGlassesConnected(displayId);
-					activity.runOnUiThread(() -> startCompanionOnXrealDisplayIfNeeded(activity));
+					// Read the current Activity from the static (not the captured param) so we never
+					// touch an Activity destroyed since this listener was registered.
+					Activity current = currentActivityRef.get();
+					if (current != null) {
+						current.runOnUiThread(() -> startCompanionOnXrealDisplayIfNeeded(current));
+					}
 				}
 			}
 

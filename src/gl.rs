@@ -56,6 +56,8 @@ type FnCopyImageSubData =
 // texture's internal format (gates the direct same-format layer copy).
 type FnGetTexLevelParameteriv = unsafe extern "C" fn(u32, i32, u32, *mut i32);
 type FnGetIntegerv = unsafe extern "C" fn(u32, *mut i32);
+/// `glGetFloatv`, for the one piece of state we touch that is not an integer: the clear colour.
+type FnGetFloatv = unsafe extern "C" fn(u32, *mut f32);
 type FnIsEnabled = unsafe extern "C" fn(u32) -> u8;
 type FnEnable = unsafe extern "C" fn(u32);
 type FnDisable = unsafe extern "C" fn(u32);
@@ -88,6 +90,7 @@ const GL_DRAW_FRAMEBUFFER_BINDING: u32 = 0x8CA6;
 const GL_READ_FRAMEBUFFER_BINDING: u32 = 0x8CAA;
 const GL_FRAMEBUFFER_COMPLETE: u32 = 0x8CD5;
 const GL_SCISSOR_TEST: u32 = 0x0C11;
+const GL_COLOR_CLEAR_VALUE: u32 = 0x0C22;
 const GL_TEXTURE_BINDING_2D: u32 = 0x8069;
 const GL_TEXTURE_INTERNAL_FORMAT: u32 = 0x1003;
 const GL_RGB10_A2: i32 = 0x8059;
@@ -129,6 +132,7 @@ struct Gl {
     get_tex_level_parameteriv: Option<FnGetTexLevelParameteriv>,
     framebuffer_texture_layer: FnFramebufferTextureLayer,
     get_integerv: FnGetIntegerv,
+    get_floatv: FnGetFloatv,
     is_enabled: FnIsEnabled,
     enable: FnEnable,
     disable: FnDisable,
@@ -197,6 +201,7 @@ impl Gl {
                     FnFramebufferTextureLayer
                 ),
                 get_integerv: sym!("glGetIntegerv", FnGetIntegerv),
+                get_floatv: sym!("glGetFloatv", FnGetFloatv),
                 is_enabled: sym!("glIsEnabled", FnIsEnabled),
                 enable: sym!("glEnable", FnEnable),
                 disable: sym!("glDisable", FnDisable),
@@ -723,6 +728,11 @@ pub fn blit_texture_to_layer(
         let mut prev_read: i32 = 0;
         (g.get_integerv)(GL_DRAW_FRAMEBUFFER_BINDING, &mut prev_draw);
         (g.get_integerv)(GL_READ_FRAMEBUFFER_BINDING, &mut prev_read);
+        // glBlitFramebuffer is clipped by the scissor box. Godot can leave GL_SCISSOR_TEST enabled
+        // with a box covering only part of the target, which would update only part of the layer, so
+        // save the enable state here and disable it around the blit (same pattern as fill_texture).
+        // The copy_image_sub_data paths above are scissor-immune and need no such guard.
+        let scissor_was_on = (g.is_enabled)(GL_SCISSOR_TEST) != 0;
 
         let read_fbo = scratch_fbo(g, 1);
         let draw_fbo = scratch_fbo(g, 0);
@@ -746,6 +756,9 @@ pub fn blit_texture_to_layer(
         let read_ok = (g.check_framebuffer_status)(GL_READ_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
         let draw_ok = (g.check_framebuffer_status)(GL_DRAW_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
         if read_ok && draw_ok {
+            if scissor_was_on {
+                (g.disable)(GL_SCISSOR_TEST);
+            }
             (g.blit_framebuffer)(
                 0,
                 0,
@@ -758,6 +771,9 @@ pub fn blit_texture_to_layer(
                 GL_COLOR_BUFFER_BIT,
                 GL_LINEAR as u32,
             );
+            if scissor_was_on {
+                (g.enable)(GL_SCISSOR_TEST);
+            }
         }
 
         (g.framebuffer_texture_2d)(
@@ -773,7 +789,7 @@ pub fn blit_texture_to_layer(
 
         if LAYER_LOG.fetch_add(1, Ordering::Relaxed) < 8 {
             godot::global::godot_print!(
-                "[xreal] blit_to_layer dst={dst_array} layer={layer} src={src}: read_ok={read_ok} draw_ok={draw_ok}"
+                "[xreal] blit_to_layer dst={dst_array} layer={layer} src={src}: read_ok={read_ok} draw_ok={draw_ok} scissor_was_on={scissor_was_on}"
             );
         }
     }
@@ -791,9 +807,11 @@ pub fn delete_texture(id: u32) {
 
 /// Clear the given texture to a solid RGBA colour via the scratch framebuffer.
 ///
-/// This is the option-(a) validation fill: proving the XREAL compositor displays an
-/// engine-owned texture at all. Preserves the previously bound draw framebuffer and the
-/// scissor-test enable so Godot's own rendering is left undisturbed.
+/// Started life as the bring-up validation fill (proving the XREAL compositor displays an
+/// engine-owned texture at all); it now serves the frame-tick's last-resort branch, which clears the
+/// eye textures to black before Godot has published a source size. Preserves the previously bound
+/// draw framebuffer, the scissor-test enable and the clear colour, so Godot's own rendering is left
+/// undisturbed.
 static FILL_LOG_COUNT: AtomicU32 = AtomicU32::new(0);
 
 pub fn fill_texture(tex: u32, r: f32, g_: f32, b: f32) {
@@ -821,8 +839,13 @@ pub fn fill_texture(tex: u32, r: f32, g_: f32, b: f32) {
             if scissor_was_on {
                 (g.disable)(GL_SCISSOR_TEST);
             }
+            // The clear colour is global state: leaving ours behind would tint whatever Godot
+            // clears next with this diagnostic colour, so put the old one back afterwards.
+            let mut prev_clear = [0.0_f32; 4];
+            (g.get_floatv)(GL_COLOR_CLEAR_VALUE, prev_clear.as_mut_ptr());
             (g.clear_color)(r, g_, b, 1.0);
             (g.clear)(GL_COLOR_BUFFER_BIT);
+            (g.clear_color)(prev_clear[0], prev_clear[1], prev_clear[2], prev_clear[3]);
             if scissor_was_on {
                 (g.enable)(GL_SCISSOR_TEST);
             }
@@ -910,6 +933,11 @@ pub fn blit_texture(src: u32, src_w: i32, src_h: i32, dst: u32, dst_w: i32, dst_
         let mut prev_read: i32 = 0;
         (g.get_integerv)(GL_DRAW_FRAMEBUFFER_BINDING, &mut prev_draw);
         (g.get_integerv)(GL_READ_FRAMEBUFFER_BINDING, &mut prev_read);
+        // glBlitFramebuffer is clipped by the scissor box. Godot can leave GL_SCISSOR_TEST enabled
+        // with a box covering only part of the target, which would update only part of the eye
+        // texture, so save the enable state here and disable it around the blit (same pattern as
+        // fill_texture). The copy_image_sub_data path above is scissor-immune and needs no guard.
+        let scissor_was_on = (g.is_enabled)(GL_SCISSOR_TEST) != 0;
 
         let read_fbo = scratch_fbo(g, 1);
         let draw_fbo = scratch_fbo(g, 0);
@@ -933,6 +961,9 @@ pub fn blit_texture(src: u32, src_w: i32, src_h: i32, dst: u32, dst_w: i32, dst_
         let read_ok = (g.check_framebuffer_status)(GL_READ_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
         let draw_ok = (g.check_framebuffer_status)(GL_DRAW_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
         if read_ok && draw_ok {
+            if scissor_was_on {
+                (g.disable)(GL_SCISSOR_TEST);
+            }
             // Straight copy (no Y-flip): the SubViewport render target and the eye texture share
             // GL bottom-left origin, matching blit_default_framebuffer (flipping showed upside-down).
             (g.blit_framebuffer)(
@@ -946,6 +977,16 @@ pub fn blit_texture(src: u32, src_w: i32, src_h: i32, dst: u32, dst_w: i32, dst_
                 dst_h,
                 GL_COLOR_BUFFER_BIT,
                 GL_LINEAR as u32,
+            );
+            if scissor_was_on {
+                (g.enable)(GL_SCISSOR_TEST);
+            }
+        }
+
+        if BLIT2D_LOG.fetch_add(1, Ordering::Relaxed) < 8 {
+            godot::global::godot_print!(
+                "[xreal] blit_2d dst={dst} src={src} {dst_w}x{dst_h}: read_ok={read_ok} \
+                 draw_ok={draw_ok} scissor_was_on={scissor_was_on}"
             );
         }
 
@@ -981,6 +1022,11 @@ pub fn blit_default_framebuffer(dst: u32, src_w: i32, src_h: i32, dst_w: i32, ds
         let mut prev_read: i32 = 0;
         (g.get_integerv)(GL_DRAW_FRAMEBUFFER_BINDING, &mut prev_draw);
         (g.get_integerv)(GL_READ_FRAMEBUFFER_BINDING, &mut prev_read);
+        // glBlitFramebuffer is clipped by the scissor box. Godot can leave GL_SCISSOR_TEST enabled
+        // with a box covering only part of the target, which would update only part of the eye
+        // texture, so save the enable state here and disable it around the blit (same pattern as
+        // fill_texture).
+        let scissor_was_on = (g.is_enabled)(GL_SCISSOR_TEST) != 0;
 
         (g.bind_framebuffer)(GL_READ_FRAMEBUFFER, 0); // default framebuffer = window back buffer
         let draw_fbo = scratch_fbo(g, 0);
@@ -994,6 +1040,9 @@ pub fn blit_default_framebuffer(dst: u32, src_w: i32, src_h: i32, dst_w: i32, ds
         );
 
         if (g.check_framebuffer_status)(GL_DRAW_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE {
+            if scissor_was_on {
+                (g.disable)(GL_SCISSOR_TEST);
+            }
             // Straight copy (no Y-flip): fbo 0 and the eye texture share GL bottom-left origin, so
             // flipping made it upside-down on the glasses.
             (g.blit_framebuffer)(
@@ -1008,6 +1057,9 @@ pub fn blit_default_framebuffer(dst: u32, src_w: i32, src_h: i32, dst_w: i32, ds
                 GL_COLOR_BUFFER_BIT,
                 GL_LINEAR as u32,
             );
+            if scissor_was_on {
+                (g.enable)(GL_SCISSOR_TEST);
+            }
         }
 
         (g.framebuffer_texture_2d)(

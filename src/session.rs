@@ -454,26 +454,6 @@ impl XrealSession {
             .get_device_type()
     }
 
-    /// Start the lower NRRendering pipeline (swapchain + GL textures + viewports).
-    /// Must be called on the rendering thread (EGL context required for GL texture allocation).
-    #[allow(dead_code)] // dead NR-compositor path, kept for diagnostics/RE
-    pub fn start_nr_rendering(&self) -> Result<(), i32> {
-        self.native
-            .lock()
-            .expect("xreal native mutex")
-            .nr_rendering_start_persistent()
-    }
-
-    /// Submit one frame to the NR compositor.
-    /// Returns the swapchain buffer index (maps to gl_texture_ids[index]).
-    #[allow(dead_code)] // dead NR-compositor path, kept for diagnostics/RE
-    pub fn submit_nr_frame(&self) -> Result<u32, i32> {
-        self.native
-            .lock()
-            .expect("xreal native mutex")
-            .nr_frame_submit()
-    }
-
     /// Whether the direct NR rendering/compositor API was resolved from libnr_loader.so.
     pub fn nr_rendering_available(&self) -> bool {
         self.native

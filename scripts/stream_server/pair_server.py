@@ -191,8 +191,14 @@ def _serve_one(conn: socket.socket) -> None:
         buf += chunk
         while len(buf) >= 4:
             length, mtype = struct.unpack_from("<HH", buf, 0)
-            if length < 4 or len(buf) < length:
-                break
+            if length < 4:
+                # A header shorter than its own 4 bytes can never be consumed: the stream is
+                # desynced, so buf would only grow. Drop the link rather than wedge on it.
+                print(f"[pair] malformed control header (length={length}); dropping the link",
+                      flush=True)
+                return
+            if len(buf) < length:
+                break  # a valid header, but the payload has not all arrived yet
             payload = bytes(buf[4:length])
             del buf[:length]
             name = TYPE_NAMES.get(mtype, f"type{mtype}")

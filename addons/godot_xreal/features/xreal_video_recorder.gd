@@ -64,6 +64,7 @@ var _active := false
 var _path := ""                     # the mp4 being written
 var _rgb_offset := Vector3.ZERO     # RGB camera offset from the head (Godot space), for blend parallax
 var _rgb_geom_done := false         # RGB blend geometry (FOV + offset) applied once — static per device
+var _epoch := 0                     # bumped on every start/stop; a frame captured for a prior session is dropped
 
 func _ready() -> void:
 	_system = XrealShared.make_system()  # null off-device -> inert
@@ -118,6 +119,7 @@ func set_enabled(on: bool) -> void:
 		_fail("[xreal-record] recorder start failed")
 		active_changed.emit(false)
 		return
+	_epoch += 1
 	_active = true
 	print("[xreal-record] recording -> %s (app_audio=%s, mic=%s)" % [_path, want_app, want_mic])
 	active_changed.emit(true)
@@ -126,6 +128,7 @@ func _stop() -> void:
 	if not _active:
 		return
 	_active = false
+	_epoch += 1
 	_system.stream_stop()  # finalizes the mp4
 	print("[xreal-record] recording stopped -> %s" % _path)
 	active_changed.emit(false)
@@ -229,6 +232,7 @@ func _process(_delta: float) -> void:
 		_comp_vp.render_target_update_mode = SubViewport.UPDATE_DISABLED  # idle the blend when unused
 	var viewport_rid := src_vp.get_viewport_rid()
 	var ts := Time.get_ticks_usec() * 1000  # nanoseconds
+	var gen := _epoch  # a stop->restart bumps _epoch, so a frame captured for the old session is dropped
 	# ViewportTexture.get_rid() is a proxy RID. In the Compatibility renderer its copied tex_id can
 	# remain 0, so resolve the viewport's real render-target color texture instead. Resolve the GL
 	# name every frame to follow render-target reallocations, and push while the render EGL context
@@ -236,7 +240,7 @@ func _process(_delta: float) -> void:
 	RenderingServer.call_on_render_thread(func() -> void:
 		var color_texture_rid := RenderingServer.viewport_get_texture(viewport_rid)
 		var gl_tex_id := RenderingServer.texture_get_native_handle(color_texture_rid)
-		if gl_tex_id != 0:
+		if gen == _epoch and gl_tex_id != 0:
 			_system.stream_push_frame(gl_tex_id, ts)
 	)
 

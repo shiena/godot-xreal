@@ -313,6 +313,12 @@ func _show_no_glasses_and_quit() -> void:
 	layer.add_child(label)
 	add_child(layer)
 	await get_tree().create_timer(NO_GLASSES_QUIT_DELAY_S).timeout
+	# Tracking may have come up during the readability delay (e.g. glasses just plugged in) — don't
+	# quit: drop the overlay and re-arm the watchdog, which disarms permanently on the next tracked frame.
+	if _tracker and _tracker.has_method(&"is_tracking") and _tracker.is_tracking():
+		layer.queue_free()
+		_no_glasses = false
+		return
 	get_tree().quit()
 
 ## The active image-tracking set changed — show its name on the phone-menu "Cycle Image" button.

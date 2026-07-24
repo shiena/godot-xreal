@@ -20,7 +20,6 @@ static LAST_ERROR_MESSAGE: Mutex<Option<String>> = Mutex::new(None);
 /// The `extern "C"` callback handed to `SetNativeErrorCallback`. Runs on an SDK thread: no
 /// Godot calls, no logging — just cache the code and copy the message out of the C string.
 pub extern "C" fn on_native_error(code: i32, message: *const c_char) {
-    LAST_ERROR_CODE.store(code, Ordering::Relaxed);
     // Copy the message while the pointer is still valid (it belongs to the caller's frame).
     let text = if message.is_null() {
         None
@@ -31,14 +30,18 @@ pub extern "C" fn on_native_error(code: i32, message: *const c_char) {
                 .into_owned(),
         )
     };
+    // Store the message BEFORE publishing the code: `last_error_code` loads the code with Acquire
+    // and only then reads the message, so releasing the code last guarantees a reader that sees a
+    // new code also sees its matching message (never a new code paired with the previous message).
     if let Ok(mut slot) = LAST_ERROR_MESSAGE.lock() {
         *slot = text;
     }
+    LAST_ERROR_CODE.store(code, Ordering::Release);
 }
 
 /// Latest cached native error code (`-1` if none has arrived). A plain poll — no signal.
 pub fn last_error_code() -> i32 {
-    LAST_ERROR_CODE.load(Ordering::Relaxed)
+    LAST_ERROR_CODE.load(Ordering::Acquire)
 }
 
 /// Message that came with the latest native error (empty if none / null).

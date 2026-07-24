@@ -110,6 +110,9 @@ func _init_set(s: Dictionary) -> int:
 		_fail("[xreal-image] set '%s' blob missing: %s — build it (editor dock / build_image_db)" % [name, blob_path])
 		return 0
 	var bf := FileAccess.open(blob_path, FileAccess.READ)
+	if bf == null:
+		_fail("[xreal-image] set '%s' blob open failed: %s (err=%d)" % [name, blob_path, FileAccess.get_open_error()])
+		return 0
 	var blob := bf.get_buffer(bf.get_length())
 	bf.close()
 	var guids := PackedStringArray()
@@ -146,6 +149,9 @@ func _read_manifest() -> Dictionary:
 		_fail("[xreal-image] manifest missing: %s" % manifest_path)
 		return {}
 	var mf := FileAccess.open(manifest_path, FileAccess.READ)
+	if mf == null:
+		_fail("[xreal-image] manifest open failed: %s (err=%d)" % [manifest_path, FileAccess.get_open_error()])
+		return {}
 	var data = JSON.parse_string(mf.get_as_text())
 	mf.close()
 	return data if typeof(data) == TYPE_DICTIONARY else {}
