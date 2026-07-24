@@ -56,6 +56,7 @@ def rtp_payload(pkt: bytes) -> "tuple[int, int, bool, int, bytes] | None":
     if len(pkt) < 12 or (pkt[0] >> 6) != 2:
         return None
     csrc = pkt[0] & 0x0F
+    has_pad = (pkt[0] >> 5) & 1
     has_ext = (pkt[0] >> 4) & 1
     marker = bool(pkt[1] >> 7)
     ptype = pkt[1] & 0x7F
@@ -68,7 +69,13 @@ def rtp_payload(pkt: bytes) -> "tuple[int, int, bool, int, bytes] | None":
         off += 4 + ext_words * 4
     if off > len(pkt):
         return None
-    return ptype, ts, marker, ssrc, pkt[off:]
+    end = len(pkt)
+    if has_pad:
+        # The padding octet count is the last byte; those trailing bytes are not payload.
+        end = len(pkt) - pkt[-1]
+        if end <= off:
+            return None
+    return ptype, ts, marker, ssrc, pkt[off:end]
 
 
 class Timeline:
@@ -127,6 +134,11 @@ class H264Depacketizer:
     AVCDecoderConfigurationRecord, not per frame.
     """
 
+    # A single NAL reassembled from FU-A fragments never legitimately reaches this size at the
+    # bitrates here; a stream that keeps a fragment "open" past it is malformed or crafted, so the
+    # partial is dropped rather than allowed to grow the buffer without bound.
+    _MAX_FU_BYTES = 512 * 1024
+
     def __init__(self) -> None:
         self.sps: bytes | None = None
         self.pps: bytes | None = None
@@ -141,6 +153,9 @@ class H264Depacketizer:
         if self._ts is not None and ts != self._ts and self._nals:
             out.append((self._ts, self._nals))
             self._nals = []
+            # All fragments of one FU-A NAL share a timestamp; a partial one cannot span the frame
+            # boundary, so discard it rather than splice it into the next frame's NAL.
+            self._fu = None
         self._ts = ts
 
         kind = payload[0] & 0x1F
@@ -153,7 +168,9 @@ class H264Depacketizer:
                 self._fu = bytearray([(payload[0] & 0xE0) | nal_type])
             if self._fu is not None:
                 self._fu += payload[2:]
-                if end:
+                if len(self._fu) > self._MAX_FU_BYTES:
+                    self._fu = None  # runaway reassembly; a valid NAL never gets this large here
+                elif end:
                     self._take(bytes(self._fu))
                     self._fu = None
         elif kind == 24:  # STAP-A
@@ -487,9 +504,7 @@ def _retime(tag: bytes, timestamp: int) -> bytes:
 # Receiving threads
 # --------------------------------------------------------------------------------------------
 
-def receive_video(port: int, hub: Hub, timeline: Timeline) -> None:
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.bind(("0.0.0.0", port))
+def receive_video(sock: socket.socket, hub: Hub, timeline: Timeline) -> None:
     depack = H264Depacketizer()
     seen = False
     last_ms = -1
@@ -549,9 +564,7 @@ def measure_audio_clock(rtp_delta: int, elapsed: float) -> "int | None":
     return best
 
 
-def receive_audio(port: int, hub: Hub, timeline: Timeline, forced_clock: "int | None") -> None:
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.bind(("0.0.0.0", port))
+def receive_audio(sock: socket.socket, hub: Hub, timeline: Timeline, forced_clock: "int | None") -> None:
     seen = False
     clock = forced_clock
     base_ts: int | None = None
@@ -682,9 +695,21 @@ def main() -> int:
         print(f"[fpv] cannot bind HTTP {args.http_port}: {e}", file=sys.stderr)
         return 1
 
-    threading.Thread(target=receive_video, args=(args.video_port, hub, timeline), daemon=True).start()
+    # Bind the RTP UDP ports here, not inside the receiver threads: a bind failure there is only a
+    # stray thread traceback while main() goes on to announce pairing as if it worked. Bound up
+    # front, a busy port fails the launch cleanly, and pairing starts only once both succeed.
+    try:
+        video_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        video_sock.bind(("0.0.0.0", args.video_port))
+        audio_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        audio_sock.bind(("0.0.0.0", audio_port))
+    except OSError as e:
+        print(f"[fpv] cannot bind RTP UDP {args.video_port}/{audio_port}: {e}", file=sys.stderr)
+        return 1
+
+    threading.Thread(target=receive_video, args=(video_sock, hub, timeline), daemon=True).start()
     threading.Thread(target=receive_audio,
-                     args=(audio_port, hub, timeline, args.audio_rate or None), daemon=True).start()
+                     args=(audio_sock, hub, timeline, args.audio_rate or None), daemon=True).start()
     threading.Thread(target=http_server.serve_forever, daemon=True).start()
 
     rate_note = f"{args.audio_rate} Hz" if args.audio_rate else "rate measured from the stream"
