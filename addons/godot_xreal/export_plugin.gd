@@ -52,11 +52,18 @@ func _get_android_manifest_element_contents(_platform: EditorExportPlatform, _de
 ## <application>-level: XREAL markers + the companion / NRFakeActivity declarations. Uses the
 ## fully-qualified com.godot.game.XrealCompanionActivity (matches the .jar class).
 func _get_android_manifest_application_element_contents(_platform: EditorExportPlatform, _debug: bool) -> String:
-	return """<meta-data android:name="nreal_sdk" android:value="true" />
-<meta-data android:name="com.nreal.supportDevices" android:value="1|XrealLight|2|XrealAir" />
-<meta-data android:name="nr_features" android:value="multiResume" />
-<meta-data android:name="autoLog" android:value="0" />
-<activity android:name="com.godot.game.XrealCompanionActivity" android:autoRemoveFromRecents="true" android:excludeFromRecents="true" android:exported="false" android:hardwareAccelerated="true" android:launchMode="singleTask" android:resizeableActivity="true" android:screenOrientation="reverseLandscape" android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen" android:configChanges="layoutDirection|locale|orientation|keyboardHidden|screenSize|smallestScreenSize|density|keyboard|navigation|screenLayout|uiMode" />
+	# multiResume / autoLog are toggleable from Project Settings (registered in plugin.gd's
+	# PROJECT_SETTINGS); the SDK markers, activities and service below are fixed. multiResume keeps the
+	# glasses app live across phone app-switches — when off the nr_features marker is omitted entirely.
+	# autoLog is the NRSDK's verbose native logging, emitted as 0/1.
+	var multi_resume := bool(ProjectSettings.get_setting("xreal/multi_resume", true))
+	var auto_log := bool(ProjectSettings.get_setting("xreal/auto_log", false))
+	var markers := '<meta-data android:name="nreal_sdk" android:value="true" />\n'
+	markers += '<meta-data android:name="com.nreal.supportDevices" android:value="1|XrealLight|2|XrealAir" />\n'
+	if multi_resume:
+		markers += '<meta-data android:name="nr_features" android:value="multiResume" />\n'
+	markers += '<meta-data android:name="autoLog" android:value="%d" />\n' % (1 if auto_log else 0)
+	return markers + """<activity android:name="com.godot.game.XrealCompanionActivity" android:autoRemoveFromRecents="true" android:excludeFromRecents="true" android:exported="false" android:hardwareAccelerated="true" android:launchMode="singleTask" android:resizeableActivity="true" android:screenOrientation="reverseLandscape" android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen" android:configChanges="layoutDirection|locale|orientation|keyboardHidden|screenSize|smallestScreenSize|density|keyboard|navigation|screenLayout|uiMode" />
 <activity android:name="ai.nreal.activitylife.NRFakeActivity" android:autoRemoveFromRecents="true" android:excludeFromRecents="true" android:exported="false" android:hardwareAccelerated="false" android:launchMode="singleTask" android:resizeableActivity="true" android:screenOrientation="reverseLandscape" android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale|layoutDirection|density" />
 <activity android:name="com.godot.game.XrealProjectionActivity" android:excludeFromRecents="true" android:exported="false" android:noHistory="true" android:theme="@android:style/Theme.Translucent.NoTitleBar" />
 <service android:name="com.godot.game.XrealProjectionService" android:exported="false" android:foregroundServiceType="mediaProjection" />"""

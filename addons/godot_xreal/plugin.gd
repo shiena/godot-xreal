@@ -32,11 +32,12 @@ var _export_plugin: EditorExportPlugin
 var _image_db_dock: Control
 var _vendor_import_dock: Control
 
-## The `xreal/*` project settings consumed at runtime (demo/main.gd reads them with these same
-## inline defaults, so a project works with or without them persisted). Registered here so they
-## show up in Project > Project Settings with proper types/hints; only values changed from the
-## default are written to project.godot. Left in place on plugin disable (removing them would
-## drop user-chosen values).
+## The `xreal/*` project settings. Most are consumed at runtime (demo/main.gd reads them with these
+## same inline defaults, so a project works with or without them persisted); `xreal/multi_resume` and
+## `xreal/auto_log` are instead read at EXPORT time by export_plugin.gd to shape the Android manifest.
+## Registered here so they show up in Project > Project Settings with proper types/hints; only values
+## changed from the default are written to project.godot. Left in place on plugin disable (removing
+## them would drop user-chosen values).
 const PROJECT_SETTINGS: Array[Dictionary] = [
 	{
 		# Head-tracking mode applied at boot. "SDK Default" (-1) leaves the native default /
@@ -77,6 +78,21 @@ const PROJECT_SETTINGS: Array[Dictionary] = [
 		"name": "xreal/display_bypass_psensor",
 		"type": TYPE_BOOL,
 		"default": true,
+	},
+	{
+		# Multi-resume: keep the glasses app running live when the phone switches to another app
+		# (Android manifest `nr_features=multiResume`). On by default; off drops the marker so the app
+		# follows normal Android lifecycle. Read at EXPORT time by export_plugin.gd, not at runtime.
+		"name": "xreal/multi_resume",
+		"type": TYPE_BOOL,
+		"default": true,
+	},
+	{
+		# NRSDK verbose native logging (Android manifest `autoLog`, emitted as 0/1). Off by default.
+		# Read at EXPORT time by export_plugin.gd, like xreal/multi_resume.
+		"name": "xreal/auto_log",
+		"type": TYPE_BOOL,
+		"default": false,
 	},
 ]
 
