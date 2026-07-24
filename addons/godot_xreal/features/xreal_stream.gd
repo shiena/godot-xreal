@@ -73,11 +73,8 @@ func _ready() -> void:
 	_system = XrealShared.make_system()
 	if _system == null:
 		return  # off-device -> inert (set_enabled just reports false)
-	# RECORD_AUDIO is a runtime (dangerous) permission: the export plugin declares it in the
-	# manifest, but the native encoder's mic capture stays silent until it's granted at runtime.
-	# Request it proactively at startup so the one-time dialog is dealt with before streaming.
-	if XrealShared.audio_wants_mic(audio_state) and OS.has_feature("android") and not _mic_granted():
-		OS.request_permission("android.permission.RECORD_AUDIO")
+	# Mic permission (RECORD_AUDIO) is requested lazily on the Stream toggle (see set_enabled),
+	# matching the camera: no startup dialog, so the app only asks when you actually start streaming.
 	# LAN-discovery pairing with the StreamingReceiver PC app.
 	_pairing = Node.new()
 	_pairing.name = "StreamPairing"
