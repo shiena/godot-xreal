@@ -9,13 +9,18 @@ extends RefCounted
 ## min_sdk is 29, so only the scoped-storage flow exists: MediaStore insert with RELATIVE_PATH +
 ## IS_PENDING, write through the resolver's OutputStream, then clear IS_PENDING. The app's own
 ## MediaStore inserts need no runtime permission on API 29+.
+##
+## This is a move, not a copy: once the item is published the app-private original is deleted. It
+## used to be left behind, which meant every capture and recording existed twice — invisibly, since
+## user:// is not browsable — and only the gallery copy was ever reachable. On this device that had
+## quietly reached 47 MB of duplicates.
 
-## Copy an image at `src_path` into the phone gallery under Pictures/godot-xreal.
+## Move an image at `src_path` into the phone gallery under Pictures/godot-xreal.
 ## Returns whether it was saved. No-op off Android.
 static func save_image(src_path: String, mime := "image/jpeg") -> bool:
 	return _save(src_path, mime, false)
 
-## Copy a video at `src_path` into the phone gallery under Movies/godot-xreal.
+## Move a video at `src_path` into the phone gallery under Movies/godot-xreal.
 ## Returns whether it was saved. No-op off Android.
 static func save_video(src_path: String, mime := "video/mp4") -> bool:
 	return _save(src_path, mime, true)
@@ -66,6 +71,7 @@ static func _save(src_path: String, mime: String, is_video: bool) -> bool:
 		out.write(src.get_buffer(_CHUNK))  # PackedByteArray -> byte[]
 	out.flush()
 	out.close()
+	src.close()  # closed here, not left to scope: the source is deleted below
 	values.clear()
 	values.put("is_pending", 0)
 	# Clear IS_PENDING to publish the item — while it is pending, other apps (the gallery) can't
@@ -76,4 +82,13 @@ static func _save(src_path: String, mime: String, is_video: bool) -> bool:
 		push_warning("[demo-gallery] IS_PENDING clear failed for %s — still hidden in the gallery" % src_path.get_file())
 		return false
 	print("[demo-gallery] saved -> %s/%s" % [rel_dir, src_path.get_file()])
+	# Published, so the app-private original is now a second copy nobody can see. Dropping it only
+	# here — past every failure return above — is what makes a failed save non-destructive: the
+	# capture stays in user:// and can be retried, which would not be true of a delete-then-verify.
+	# A removal that fails is not a save failure: the item is already in the gallery, so warn and
+	# still report success rather than have the caller think the capture was lost.
+	var err := DirAccess.remove_absolute(src_path)
+	if err != OK:
+		push_warning("[demo-gallery] saved, but could not remove the original %s (err %d)"
+			% [src_path, err])
 	return true
