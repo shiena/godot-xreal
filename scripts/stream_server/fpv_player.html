@@ -18,22 +18,41 @@
   #status { color: #8b8; }
   #status.err { color: #e88; }
   main { flex: 1; display: grid; place-items: center; padding: 0 1rem 1rem; }
-  video { width: 100%; max-width: 1280px; background: #000; aspect-ratio: 16 / 9; }
+  #stage { width: 100%; max-width: 1280px; }
+  /* The ratio is a placeholder until MEDIA_INFO reports the real one. */
+  video { display: block; width: 100%; background: #000; aspect-ratio: var(--ratio, 16 / 9); }
   button { font: inherit; padding: .3rem .8rem; }
+  button[aria-pressed="true"] { outline: 2px solid #8b8; }
+
+  /* Theater: the video takes the whole width, the header stays. Sizing is left to flexbox rather
+     than a calc() against the header height, which would go wrong the moment the header wraps. */
+  body.theater main { padding: 0; place-items: stretch; min-height: 0; }
+  body.theater #stage { max-width: none; display: grid; place-items: center; background: #000; }
+  body.theater video { width: 100%; height: 100%; aspect-ratio: auto; object-fit: contain; }
+
+  /* Fullscreen. Written twice on purpose: one unknown selector invalidates the whole rule, so the
+     prefixed and unprefixed forms cannot share a block. */
+  #stage:fullscreen { max-width: none; display: grid; place-items: center; background: #000; }
+  #stage:fullscreen video { width: 100%; height: 100%; aspect-ratio: auto; object-fit: contain; }
+  #stage:-webkit-full-screen { max-width: none; display: grid; place-items: center; background: #000; }
+  #stage:-webkit-full-screen video { width: 100%; height: 100%; aspect-ratio: auto; object-fit: contain; }
 </style>
 
 <header>
   <h1>XREAL FPV</h1>
   <span id="status">connecting…</span>
-  <button id="resync">resync</button>
-  <label><input type="checkbox" id="mute" checked> mute</label>
+  <button id="resync" title="rebuild the player">resync (r)</button>
+  <button id="theater" aria-pressed="false" title="wide, with the header still visible">theater (t)</button>
+  <button id="fullscreen" title="fill the screen; double-clicking the video does the same">fullscreen (f)</button>
+  <label><input type="checkbox" id="mute" checked> mute (m)</label>
   <span id="diag"></span>
 </header>
-<main><video id="v" autoplay muted playsinline></video></main>
+<main><div id="stage"><video id="v" autoplay muted playsinline></video></div></main>
 
 <script src="https://cdn.jsdelivr.net/npm/mpegts.js@1.7.3/dist/mpegts.js"></script>
 <script>
 const video = document.getElementById('v');
+const stage = document.getElementById('stage');
 const status = document.getElementById('status');
 const url = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/live';
 let player = null;
@@ -66,7 +85,12 @@ function start() {
   // endOfStream(), after which the element plays out the stale buffer and never comes back. For a
   // live stream that is always a disconnection, so treat it the same as an error.
   player.on(mpegts.Events.LOADING_COMPLETE, () => { say('stream ended - reconnecting…'); retry(); });
-  player.on(mpegts.Events.MEDIA_INFO, info => say(`${info.width}x${info.height} - ${info.audioCodec || 'no audio'}`));
+  player.on(mpegts.Events.MEDIA_INFO, info => {
+    say(`${info.width}x${info.height} - ${info.audioCodec || 'no audio'}`);
+    // Adopt the real shape. Until this arrives the element is a 16:9 placeholder, so a stream that
+    // is not 16:9 sits letterboxed inside a box of the wrong size.
+    if (info.width && info.height) stage.style.setProperty('--ratio', `${info.width} / ${info.height}`);
+  });
   player.attachMediaElement(video);
   player.load();
   say('waiting for the app to stream…');
@@ -140,6 +164,91 @@ function stop() {
 }
 
 document.getElementById('resync').onclick = start;
-document.getElementById('mute').onchange = e => { video.muted = e.target.checked; };
+
+const muteBox = document.getElementById('mute');
+
+// Routed through one function so the checkbox and the keyboard cannot disagree: assigning
+// `checked` fires no change event, so a key that only flipped the box would leave the element
+// unmuted while the UI claimed otherwise.
+function setMute(on) {
+  muteBox.checked = on;
+  video.muted = on;
+}
+muteBox.onchange = e => setMute(e.target.checked);
+
+// --------------------------------------------------------------------------------------------
+// Theater and fullscreen
+// --------------------------------------------------------------------------------------------
+
+const theaterBtn = document.getElementById('theater');
+const fsBtn = document.getElementById('fullscreen');
+const THEATER_KEY = 'xreal-fpv-theater';
+
+function setTheater(on) {
+  document.body.classList.toggle('theater', on);
+  theaterBtn.setAttribute('aria-pressed', String(on));
+  // Remembered, because this is a monitor you leave open: having to re-widen it on every reload,
+  // and after every reconnect-driven refresh, gets old fast.
+  try { localStorage.setItem(THEATER_KEY, on ? '1' : '0'); } catch (e) { /* private mode */ }
+}
+
+function isTheater() { return document.body.classList.contains('theater'); }
+
+// Fullscreen is prefixed on older WebKit, and iOS Safari refuses to fullscreen a container at all -
+// only the video element itself, through its own non-standard entry point.
+function fullscreenElement() {
+  return document.fullscreenElement || document.webkitFullscreenElement || null;
+}
+
+function toggleFullscreen() {
+  if (fullscreenElement()) {
+    const exit = document.exitFullscreen || document.webkitExitFullscreen;
+    if (exit) exit.call(document);
+    return;
+  }
+  const request = stage.requestFullscreen || stage.webkitRequestFullscreen;
+  if (request) {
+    const r = request.call(stage);
+    if (r && r.catch) r.catch(() => {});   // rejected without a user gesture; nothing to recover
+  } else if (video.webkitEnterFullscreen) {
+    video.webkitEnterFullscreen();
+  }
+}
+
+theaterBtn.onclick = () => setTheater(!isTheater());
+fsBtn.onclick = toggleFullscreen;
+// Double-click the picture, the way every video site behaves. The single clicks it also fires are
+// harmless: tryPlay() returns immediately unless playback is actually paused.
+video.addEventListener('dblclick', toggleFullscreen);
+
+['fullscreenchange', 'webkitfullscreenchange'].forEach(ev =>
+  document.addEventListener(ev, () => {
+    const on = !!fullscreenElement();
+    fsBtn.textContent = on ? 'exit fullscreen (f)' : 'fullscreen (f)';
+    fsBtn.setAttribute('aria-pressed', String(on));
+  }));
+
+document.addEventListener('keydown', e => {
+  // Let the browser keep its own shortcuts - ctrl+r reloads, ctrl+t opens a tab.
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  // Only text entry is off limits. Excluding every control would mean 'm' stops working the moment
+  // you click the mute box - which is exactly when you are most likely to press it again - and a
+  // letter does nothing to a checkbox or a button anyway. Space still reaches them untouched.
+  const el = e.target;
+  const tag = el && el.tagName;
+  if (tag === 'TEXTAREA' || tag === 'SELECT' ||
+      (tag === 'INPUT' && !/^(checkbox|radio|button|submit|reset)$/i.test(el.type))) return;
+  switch (String(e.key).toLowerCase()) {
+    case 't': setTheater(!isTheater()); break;
+    case 'f': toggleFullscreen(); break;
+    case 'r': start(); break;
+    case 'm': setMute(!muteBox.checked); break;
+    default: return;
+  }
+  e.preventDefault();
+});
+
+try { setTheater(localStorage.getItem(THEATER_KEY) === '1'); } catch (e) { /* private mode */ }
+
 start();
 </script>
