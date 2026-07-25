@@ -169,6 +169,10 @@ XrealHeadTracker (Node3D)   # rotation + position driven by the native head pose
 
 ### Runtime classes (registered by the GDExtension)
 
+The highlights are below; the **[full class reference](docs/api/README.md)** — every class, method,
+signal, property and constant, including the GDScript feature components — is generated from the doc
+comments and lives in [`docs/api/`](docs/api/README.md).
+
 | Class | Member | Description |
 |---|---|---|
 | `XrealHeadTracker` (Node3D) | `is_tracking() -> bool` | A native pose was applied on the last frame. |

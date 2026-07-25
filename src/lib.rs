@@ -44,4 +44,6 @@ pub use node::XrealHeadTracker;
 pub use system::XrealSystem;
 
 #[cfg(test)]
+mod api_docs;
+#[cfg(test)]
 mod doc_gen;

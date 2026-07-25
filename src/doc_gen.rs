@@ -150,7 +150,7 @@ fn constant_value_overrides() -> std::collections::HashMap<&'static str, i64> {
 }
 
 /// Read the value of a `key="..."` attribute out of an opening-tag fragment.
-fn attr(tag: &str, key: &str) -> Option<String> {
+pub(crate) fn attr(tag: &str, key: &str) -> Option<String> {
     let mark = format!("{key}=\"");
     let start = tag.find(&mark)? + mark.len();
     let end = tag[start..].find('"')?;
@@ -287,7 +287,7 @@ fn variant_type(gd: &str) -> (i32, String) {
 }
 
 /// Collect each `<tag …>…</tag>` block (used for method / signal / constant).
-fn blocks<'a>(xml: &'a str, tag: &str) -> Vec<&'a str> {
+pub(crate) fn blocks<'a>(xml: &'a str, tag: &str) -> Vec<&'a str> {
     let open_sp = format!("<{tag} ");
     let open_gt = format!("<{tag}>");
     let close = format!("</{tag}>");
@@ -475,8 +475,21 @@ fn render_stub_members_inc(all: &[ClassMembers]) -> String {
     out
 }
 
-fn manifest_dir() -> PathBuf {
+pub(crate) fn manifest_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+}
+
+/// Every registered class's cleaned reference XML, sorted by class name (deterministic output).
+/// Shared with [`crate::api_docs`], which renders the same XML as the Markdown class reference.
+pub(crate) fn cleaned_classes() -> Vec<(String, String)> {
+    let mut classes: Vec<(String, String)> = godot::docs::gather_xml_docs()
+        .map(|raw| {
+            let xml = clean_xml(&raw);
+            (class_name(&xml), xml)
+        })
+        .collect();
+    classes.sort_by(|a, b| a.0.cmp(&b.0));
+    classes
 }
 
 /// The generated desktop-dummy doc artifacts (both #included by dummy/gdext_dummy.c).
@@ -490,13 +503,7 @@ struct Generated {
 /// Gather + clean every class's XML (sorted by class name for deterministic output) and render the
 /// two dummy `.inc` files that drive the editor F1 help.
 fn generate() -> Generated {
-    let mut classes: Vec<(String, String)> = godot::docs::gather_xml_docs()
-        .map(|raw| {
-            let xml = clean_xml(&raw);
-            (class_name(&xml), xml)
-        })
-        .collect();
-    classes.sort_by(|a, b| a.0.cmp(&b.0));
+    let classes = cleaned_classes();
 
     // The dummy registers all classes, so all of them get their XML loaded (descriptions) and their
     // members registered (signatures) for the editor F1 help.

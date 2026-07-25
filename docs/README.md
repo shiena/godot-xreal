@@ -11,6 +11,15 @@ Documentation, grouped by genre. Archived investigation logs are kept verbatim �
 | [build-and-release.md](guides/build-and-release.md) | Full command reference: cargo-ndk, Godot export, Gradle, signing, release packaging. |
 | [sdk-update-checklist.md](guides/sdk-update-checklist.md) | What to re-check when bumping the vendored `com.xreal.xr` package — the port depends on RE'd native internals, so an unchanged public API is not a safety guarantee. Re-vendor, re-verify offsets on device, version gate, symbols, file lists, manifest. |
 
+## api/ — generated class reference
+
+[api/README.md](api/README.md) — every class the addon exposes to GDScript, one page each. **Generated,
+not written**: the native classes come from the `///` doc comments in `src/` (gdext `register-docs`) and
+the feature components from the `##` doc comments in `addons/godot_xreal/` (Godot's own `--gdscript-docs`
+doctool), rendered by `src/api_docs.rs`. Edit a doc comment, then run `scripts/gen_api_docs.{ps1,sh}`
+and commit — the pages carry a DO-NOT-EDIT header for a reason. Plain CommonMark with explicit
+anchors, so it reads on GitHub as-is and any static-site generator can build it unchanged.
+
 ## reference/ — settled reference material
 
 | Doc | Summary |

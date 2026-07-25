@@ -34,6 +34,18 @@ placeholder class list — from the `#[class(base = ...)]` declarations in `src/
 automatically by the matching `build_dummy_libs` script; `-Check` / `--check` verifies the
 committed file). Keep the two scripts' output byte-identical when editing either.
 
+The two documentation generators take the doc comments as their single source of truth, and both
+support `-Check` / `--check` (verify the committed output is in sync):
+
+- `gen_docs.ps1` / `gen_docs.sh` → `dummy/stub_docs.inc` + `dummy/stub_members.inc`, the **editor F1
+  help** for the native classes (from the `///` comments via gdext's `register-docs`). Rust only, so
+  CI can run it.
+- `gen_api_docs.ps1` / `gen_api_docs.sh` → `docs/api/*.md`, the **web class reference** covering both
+  the native classes and the GDScript feature components (whose `##` comments come via
+  `godot --doctool --gdscript-docs`). Needs a Godot 4.7 binary, so it runs locally and the pages are
+  committed. The binary is a variable, resolved command line → environment → `godot` on PATH:
+  `-Godot <path>` or `godot=<path>` (PS), `godot=<path>` or `--godot <path>` (sh), `GODOT=…` either way.
+
 ## Prerequisites (assumed installed and on PATH)
 
 - **Rust + cargo-ndk** — `cargo install cargo-ndk`; `ANDROID_NDK_HOME` set (NDK r27).
