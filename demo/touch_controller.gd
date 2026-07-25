@@ -110,6 +110,10 @@ const _paired_rows := [["hand_l", "hand_r"], ["anchor", "place"], ["image", "ima
 
 var _theme: Theme
 var _controls := {}                    # button/toggle name -> its Button node
+# The two independent reasons a control is inert, kept apart so neither can hand back what the
+# other still holds: _unsupported = the device lacks the feature, _busy = it is mid-switch.
+var _unsupported := {}
+var _busy := {}
 var _pages: Array[VBoxContainer] = []  # one per tab, only the active one visible
 var _tab_buttons: Array[Button] = []   # the tab-bar radio Buttons
 var _pair_boxes: Array[HBoxContainer] = []
@@ -504,8 +508,10 @@ func _on_hold_up(control_name: String) -> void:
 ## A toggle's label carries its state ("Camera: ON" / "Camera: OFF", "Camera: —" while disabled).
 func _update_toggle_label(control_name: String) -> void:
 	var btn: Button = _controls[control_name]
-	if btn.disabled:
+	if _unsupported.has(control_name):
 		btn.text = "%s: —" % _toggles[control_name]
+	elif _busy.has(control_name):
+		btn.text = "%s: …" % _toggles[control_name]
 	else:
 		btn.text = "%s: %s" % [_toggles[control_name], "ON" if btn.button_pressed else "OFF"]
 
@@ -528,7 +534,28 @@ func set_toggle(name: String, on: bool) -> void:
 func set_disabled(name: String, disabled: bool) -> void:
 	if not _controls.has(name):
 		return
-	(_controls[name] as Button).disabled = disabled
+	if disabled:
+		_unsupported[name] = true
+	else:
+		_unsupported.erase(name)
+	_apply_inert(name)
+
+## Mark a toggle as mid-switch: inert like a disabled one, but labelled "…" instead of "—". The two
+## are different things to whoever is looking at the phone — "—" says this device does not have the
+## feature at all, "…" says it is changing and will answer shortly. Kept separate from set_disabled
+## so a busy control cannot be handed back to a device that never supported it, or vice versa.
+func set_busy(name: String, busy: bool) -> void:
+	if not _controls.has(name):
+		return
+	if busy:
+		_busy[name] = true
+	else:
+		_busy.erase(name)
+	_apply_inert(name)
+
+## A control is inert while either reason holds.
+func _apply_inert(name: String) -> void:
+	(_controls[name] as Button).disabled = _unsupported.has(name) or _busy.has(name)
 	if _toggles.has(name):
 		_update_toggle_label(name)
 

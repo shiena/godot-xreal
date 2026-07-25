@@ -63,6 +63,16 @@ var _boot_elapsed := 0.0
 var _tracking_seen := false
 var _no_glasses := false
 
+## Backstop for a toggle whose component never reports back. Every failure path in xreal_camera.gd
+## and xreal_stream.gd does emit active_changed — except stopping a stream that is still pairing,
+## which returns silently — so this is for the paths that stay quiet, not the normal route. It has
+## to clear the slowest honest wait: pairing gives itself 4 s of discovery + 5 s connect + 5 s
+## handshake before it gives up.
+const SWITCH_TIMEOUT_MS := 20000
+## Toggles that are mid-switch — tapped, but the component has not yet said what actually happened.
+## Maps the control name to the deadline (Time.get_ticks_msec) past which it is handed back anyway.
+var _switching: Dictionary = {}
+
 @onready var _status: Label = $UI/Panel/Margin/VBox/Status
 @onready var _ar: Node3D = $ARScene
 @onready var _cursor: MeshInstance3D = $ARScene.cursor
@@ -107,9 +117,9 @@ func _ready() -> void:
 	_spawn_rig()
 	# Async feature states (camera start is lazy, stream pairing is async) are reflected back onto
 	# the phone-menu toggles through the components' active_changed signals.
-	_camera.active_changed.connect(func(active: bool) -> void: _set_controller_toggle("camera", active))
-	_stream.active_changed.connect(func(active: bool) -> void: _set_controller_toggle("stream", active))
-	_recorder.active_changed.connect(func(active: bool) -> void: _set_controller_toggle("record", active))
+	_camera.active_changed.connect(_on_feature_active.bind("camera"))
+	_stream.active_changed.connect(_on_feature_active.bind("stream"))
+	_recorder.active_changed.connect(_on_feature_active.bind("record"))
 	# A finished recording (the finalized mp4's path) goes into the phone gallery, like the photos.
 	_recorder.finished.connect(func(path: String) -> void: GalleryHelper.save_video(path))
 	# Surface each feature component's `error` signal at the load site (here: the debug Status label
@@ -204,8 +214,11 @@ func _on_tc_menu() -> void:
 ## (device without an RGB camera) flips the toggle back here.
 func _on_tc_camera(on: bool) -> void:
 	print("[demo] camera toggle -> %s" % ("on" if on else "off"))
+	_begin_switch("camera")
 	if _camera.set_enabled(on) != on:
+		# Refused on the spot (no RGB camera): no active_changed will follow, so close the switch here.
 		_set_controller_toggle("camera", false)
+		_end_switch("camera")
 
 ## Phone-menu "Plane" toggle → the XrealPlanes boundary-polygon overlay (switches tracking to 6DoF
 ## while on).
@@ -240,6 +253,7 @@ func _on_tc_mesh(on: bool) -> void:
 ## `finished`, which _ready wires into the phone gallery.
 func _on_tc_record(on: bool) -> void:
 	print("[demo] record toggle -> %s" % ("on" if on else "off"))
+	_begin_switch("record")
 	_recorder.set_enabled(on)
 
 ## Phone-menu "Stream" toggle → the XrealStream component. Pairing is async, so the component
@@ -247,6 +261,7 @@ func _on_tc_record(on: bool) -> void:
 ## flips the phone toggle to match (incl. a start refused while recording — one shared HW encoder).
 func _on_tc_stream(on: bool) -> void:
 	print("[demo] stream toggle -> %s" % ("on" if on else "off"))
+	_begin_switch("stream")
 	_stream.set_enabled(on)
 
 ## Phone-menu "配置" button → place a spatial anchor at the currently-tracked hand fingertip.
@@ -373,6 +388,46 @@ func _set_controller_toggle(name: String, on: bool) -> void:
 	if ps and ps.has_method(&"set_toggle"):
 		ps.set_toggle(name, on)
 
+## Mark a phone-menu control as mid-switch (inert, labelled "…").
+func _set_controller_busy(name: String, busy: bool) -> void:
+	var ps := get_node_or_null(^"PhoneScreen")
+	if ps and ps.has_method(&"set_busy"):
+		ps.set_busy(name, busy)
+
+## A feature component settled on a state: mirror it onto the phone toggle, and end the switch that
+## was waiting to hear it.
+func _on_feature_active(active: bool, name: String) -> void:
+	_set_controller_toggle(name, active)
+	_end_switch(name)
+
+## Take a toggle out of service until its component reports the resulting state. Camera and stream
+## both take real time to change: the camera only starts once head tracking is live, and streaming
+## has to finish pairing first. Left tappable, that window let taps stack up into a start/stop/start
+## churn on hardware that is slow to open and easy to wedge (a camera killed mid-start stays held
+## until the USB is re-plugged).
+func _begin_switch(name: String) -> void:
+	_switching[name] = Time.get_ticks_msec() + SWITCH_TIMEOUT_MS
+	_set_controller_busy(name, true)
+
+## The switch is over, so the control goes back into service. Whether the device supports it at all
+## is tracked separately by the controller, so this cannot resurrect a capability-disabled control.
+func _end_switch(name: String) -> void:
+	if not _switching.erase(name):
+		return  # not switching - an active_changed the app caused rather than the user
+	_set_controller_busy(name, false)
+
+## Nothing may leave a control dead forever, so give up waiting eventually. Reaching this is a bug
+## or a silent component path, hence the warning: the toggle is usable again either way.
+func _check_switch_timeouts() -> void:
+	if _switching.is_empty():
+		return
+	var now := Time.get_ticks_msec()
+	for name in _switching.keys():  # keys() copies, so _end_switch may erase while we walk it
+		if now >= int(_switching[name]):
+			push_warning("[demo] %s never reported a state within %d s - re-enabling its toggle"
+				% [name, SWITCH_TIMEOUT_MS / 1000])
+			_end_switch(name)
+
 ## Grey out (make inert) the phone-menu controls whose capability the device lacks, once the session
 ## is up and the capabilities are known. Each control maps to a native capability query: camera / plane
 ## / anchor / image / mesh. Camera-dependent capture buttons (Photo / Blend Photo) follow the camera.
@@ -428,6 +483,7 @@ func _on_wearing_changed(wearing: bool) -> void:
 
 func _process(_delta: float) -> void:
 	_check_no_glasses(_delta)
+	_check_switch_timeouts()
 	# One-shot AR-feature availability diagnostic, ~2 s in (once the session has had time to come up),
 	# so a glance at logcat shows which native AR ABIs this device exposes.
 	if _ar_diag_frames >= 0 and _system:

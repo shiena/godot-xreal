@@ -71,6 +71,10 @@ func set_toggle(name: String, on: bool) -> void:
 func set_disabled(name: String, disabled: bool) -> void:
 	($TouchController as Control).set_disabled(name, disabled)
 
+## Forward a mid-switch marker to the touch controller (inert while a toggle is changing; see set_busy).
+func set_busy(name: String, busy: bool) -> void:
+	($TouchController as Control).set_busy(name, busy)
+
 ## Forward a runtime button-label override to the touch controller (see set_button_label).
 func set_button_label(name: String, text: String) -> void:
 	($TouchController as Control).set_button_label(name, text)
