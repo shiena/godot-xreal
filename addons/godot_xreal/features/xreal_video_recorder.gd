@@ -57,15 +57,28 @@ enum BlendMode { BLEND, RGB_ONLY, VIRTUAL_ONLY }
 ## MediaProjection, which means a consent dialog (see XrealShared.request_app_audio_consent).
 ## Either one is dropped silently when its prerequisite is missing.
 @export var audio_state: XrealShared.AudioState = XrealShared.AudioState.NONE
+## Record both eyes side by side rather than one view, the equivalent of the SDK's
+## `CaptureSide.Both`. The file keeps its width and halves its height, each eye filling one half,
+## so it is squeezed horizontally the way side-by-side 3D formats are.
+##
+## Only the holograms separate: the glasses carry one RGB camera, so a blended recording shows the
+## same real-world image in both halves. Stereo always goes through the composite viewport, even
+## for VIRTUAL_ONLY, because that is what puts the two eyes side by side.
+##
+## Read when recording starts, so changing it mid-recording does nothing: the encoder is configured
+## with the frame size at that moment and cannot be resized.
+@export var stereo := false
 
 var _system: Object                 # XrealSystem (this feature's own stateless instance)
-var _ar_vp: SubViewport             # head-POV AR, transparent bg (holograms only)
-var _ar_cam: Camera3D
+var _ar_vps: Array[SubViewport] = []  # head-POV AR per recorded eye, transparent bg (holograms only)
+var _ar_cams: Array[Camera3D] = []
 var _comp_vp: SubViewport           # camera+AR blend composite, built lazily when the camera is on
-var _comp_mat: ShaderMaterial
+var _comp_mats: Array[ShaderMaterial] = []
+var _built_stereo := false          # the layout the current viewports were built for
 var _active := false
 var _path := ""                     # the mp4 being written
 var _rgb_offset := Vector3.ZERO     # RGB camera offset from the head (Godot space), for blend parallax
+var _eye_offsets := [Vector3.ZERO, Vector3.ZERO]  # per-eye display offsets, for the stereo parallax
 var _rgb_geom_done := false         # RGB blend geometry (FOV + offset) applied once, static per device
 var _epoch := 0                     # bumped on every start/stop; a frame captured for a prior session is dropped
 
@@ -120,7 +133,10 @@ func set_enabled(on: bool) -> void:
 		OS.request_permission("android.permission.RECORD_AUDIO")
 		push_warning("[xreal-record] mic not granted yet -- recording video-only; grant RECORD_AUDIO, then record again for audio")
 	var want_mic := XrealShared.audio_wants_mic(audio_state) and XrealShared.is_mic_granted()
-	if not _system.stream_start(_path, record_width, record_height, record_bitrate, record_fps, want_mic, want_app, false):
+	# The encoder is configured with the composed frame size, which stereo halves in height, not with
+	# the per-eye size.
+	var enc := _out_size()
+	if not _system.stream_start(_path, enc.x, enc.y, record_bitrate, record_fps, want_mic, want_app, false):
 		_fail("[xreal-record] recorder start failed")
 		active_changed.emit(false)
 		return
@@ -150,46 +166,80 @@ func _apply_resolution_level() -> void:
 	record_height = preset.y
 	record_bitrate = preset.z
 
+## Eyes recorded into one frame: 2 side by side in stereo, 1 otherwise.
+func _eyes() -> int:
+	return 2 if stereo else 1
+
+## The recorded frame size, which is what the encoder is configured with. Stereo halves the height
+## and fits both eyes across the width, matching the SDK's own sizing for CaptureSide.Both.
+func _out_size() -> Vector2i:
+	return Vector2i(record_width, record_height / _eyes())
+
 ## Head-POV AR viewport on a transparent background: holograms only, so it composites over the
-## camera for the blend and, with no camera, reads back as holograms on black.
+## camera for the blend and, with no camera, reads back as holograms on black. Stereo builds one
+## per eye at half of both dimensions, which the composite then lays out side by side.
 func _ensure_viewport() -> void:
-	if _ar_vp != null:
+	if not _ar_vps.is_empty() and _built_stereo == stereo:
 		return
-	_ar_vp = SubViewport.new()
-	_ar_vp.size = Vector2i(record_width, record_height)
-	_ar_vp.transparent_bg = true
-	_ar_vp.render_target_update_mode = SubViewport.UPDATE_ALWAYS
-	_ar_vp.world_3d = get_tree().root.world_3d  # render the same 3D world the glasses show
-	add_child(_ar_vp)
-	_ar_cam = Camera3D.new()
-	_ar_cam.current = true
-	_ar_cam.cull_mask = record_cull_mask
-	_ar_vp.add_child(_ar_cam)
+	_teardown()
+	_built_stereo = stereo
+	var eye_size := Vector2i(record_width / _eyes(), record_height / _eyes())
+	for eye in _eyes():
+		var vp := SubViewport.new()
+		vp.size = eye_size
+		vp.transparent_bg = true
+		vp.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+		vp.world_3d = get_tree().root.world_3d  # render the same 3D world the glasses show
+		add_child(vp)
+		var cam := Camera3D.new()
+		cam.current = true
+		cam.cull_mask = record_cull_mask
+		vp.add_child(cam)
+		_ar_vps.append(vp)
+		_ar_cams.append(cam)
+
+func _teardown() -> void:
+	for vp in _ar_vps:
+		vp.queue_free()
+	_ar_vps.clear()
+	_ar_cams.clear()
+	_comp_mats.clear()
+	if _comp_vp:
+		_comp_vp.queue_free()
+		_comp_vp = null
+	_rgb_geom_done = false  # the FOV is applied per camera, and the cameras are new
 
 ## Composite viewport blending the AR viewport over the RGB camera, using xreal_blend_2d.gdshader
 ## just as blend capture and streaming do, built lazily the first time the camera is on while
-## recording.
+## recording. In stereo it holds one ColorRect per eye, side by side.
 func _ensure_comp() -> void:
 	if _comp_vp != null:
 		return
+	var out_size := _out_size()
 	_comp_vp = SubViewport.new()
-	_comp_vp.size = Vector2i(record_width, record_height)
+	_comp_vp.size = out_size
 	_comp_vp.render_target_update_mode = SubViewport.UPDATE_ALWAYS
 	add_child(_comp_vp)
-	_comp_mat = ShaderMaterial.new()
-	_comp_mat.shader = load("res://addons/godot_xreal/shaders/xreal_blend_2d.gdshader")
-	var rect := ColorRect.new()
-	rect.size = Vector2(record_width, record_height)
-	rect.material = _comp_mat
-	_comp_vp.add_child(rect)
+	var shader := load("res://addons/godot_xreal/shaders/xreal_blend_2d.gdshader")
+	for eye in _ar_vps.size():
+		var mat := ShaderMaterial.new()
+		mat.shader = shader
+		var rect := ColorRect.new()
+		rect.position = Vector2(eye * out_size.x / _ar_vps.size(), 0)
+		rect.size = Vector2(out_size.x / _ar_vps.size(), out_size.y)
+		rect.material = mat
+		_comp_vp.add_child(rect)
+		_comp_mats.append(mat)
 
-## Drive the AR camera from the RGB camera's real geometry: the intrinsics give the vertical FOV
+## Drive the AR cameras from the RGB camera's real geometry: the intrinsics give the vertical FOV
 ## and the pose relative to the head gives a small forward offset, so the blended holograms match
 ## the camera image. It is static per device, so it is applied once.
 func _apply_rgb_geometry() -> void:
-	if _rgb_geom_done or _ar_cam == null:
+	if _rgb_geom_done or _ar_cams.is_empty():
 		return
-	_rgb_offset = XrealShared.apply_rgb_camera_geometry(_system, _ar_cam)
+	for cam in _ar_cams:
+		_rgb_offset = XrealShared.apply_rgb_camera_geometry(_system, cam)
+	_eye_offsets = XrealShared.eye_offsets(_system)
 	_rgb_geom_done = true
 
 ## True when the RGB camera feed is live, meaning the camera is on and a frame arrived, in which
@@ -200,39 +250,45 @@ func _use_blend(feed: Object) -> bool:
 	return feed.get_y_texture() != null and feed.get_cbcr_texture() != null
 
 func _process(_delta: float) -> void:
-	if not _active or _ar_vp == null:
+	if not _active or _ar_vps.is_empty():
 		return
 	var feed := XrealShared.find_camera_feed(get_tree())
 	var blending := _use_blend(feed)
 	var tracker := XrealShared.find_head_tracker(get_tree())
-	if tracker and _ar_cam:
+	if tracker:
 		if blending:
 			# Blend, with the camera ON: drive the AR camera from the RGB camera's real geometry, its FOV
 			# and forward offset, so the holograms line up with the camera image instead of a default guess.
 			_apply_rgb_geometry()
-			_ar_cam.global_transform = tracker.global_transform.translated_local(_rgb_offset)
-		else:
-			# Plain AR with no camera: head-locked at the default FOV.
-			_ar_cam.fov = 75.0
-			_ar_cam.global_transform = tracker.global_transform
+		for eye in _ar_cams.size():
+			# In stereo each eye adds its own display offset, which is what separates the two views.
+			var offset := _rgb_offset if blending else Vector3.ZERO
+			if _built_stereo:
+				offset += _eye_offsets[eye] as Vector3
+			if not blending:
+				_ar_cams[eye].fov = 75.0  # plain AR with no camera: head-locked at the default FOV
+			_ar_cams[eye].global_transform = tracker.global_transform.translated_local(offset)
 	# The blend viewport is what applies blend_mode and the green key, so it is needed whenever either
-	# asks for something other than "holograms on transparent", which is exactly what _ar_vp already
-	# is. That keeps the common VIRTUAL_ONLY and camera-off case on the cheap single-viewport path.
+	# asks for something other than "holograms on transparent", which is exactly what the AR viewport
+	# already is. That keeps the common VIRTUAL_ONLY and camera-off case on the cheap single-viewport
+	# path. Stereo always needs it, because laying the eyes side by side is its job.
 	var needs_comp := (
-		(blending and blend_mode == BlendMode.BLEND)
+		_built_stereo
+		or (blending and blend_mode == BlendMode.BLEND)
 		or blend_mode == BlendMode.RGB_ONLY
 		or (green_background and blend_mode != BlendMode.RGB_ONLY)
 	)
-	var src_vp := _ar_vp
+	var src_vp := _ar_vps[0]
 	if needs_comp:
 		_ensure_comp()
-		if blending:
-			_comp_mat.set_shader_parameter(&"y_texture", feed.get_y_texture())
-			_comp_mat.set_shader_parameter(&"cbcr_texture", feed.get_cbcr_texture())
-		_comp_mat.set_shader_parameter(&"ar_texture", _ar_vp.get_texture())
-		_comp_mat.set_shader_parameter(&"blend_mode", int(blend_mode))
-		_comp_mat.set_shader_parameter(&"green_background", green_background)
-		_comp_mat.set_shader_parameter(&"green_key", Vector3(green_key.r, green_key.g, green_key.b))
+		for eye in _comp_mats.size():
+			if blending:
+				_comp_mats[eye].set_shader_parameter(&"y_texture", feed.get_y_texture())
+				_comp_mats[eye].set_shader_parameter(&"cbcr_texture", feed.get_cbcr_texture())
+			_comp_mats[eye].set_shader_parameter(&"ar_texture", _ar_vps[eye].get_texture())
+			_comp_mats[eye].set_shader_parameter(&"blend_mode", int(blend_mode))
+			_comp_mats[eye].set_shader_parameter(&"green_background", green_background)
+			_comp_mats[eye].set_shader_parameter(&"green_key", Vector3(green_key.r, green_key.g, green_key.b))
 		_comp_vp.render_target_update_mode = SubViewport.UPDATE_ALWAYS
 		src_vp = _comp_vp
 	elif _comp_vp != null:
