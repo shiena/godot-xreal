@@ -43,7 +43,7 @@ const MB_STATE: usize = 0x08; // i32 Unity MeshChangeState (Added0/Updated1/Remo
 const MB_VERTICES: usize = 0x20; // vector<NRVector3f> (12 B/elem)
 const MB_NORMALS: usize = 0x38; // vector<NRVector3f> (12 B/elem)
 const MB_INDICES: usize = 0x50; // vector<u32> (4 B/elem)
-const MB_LABELS: usize = 0x68; // vector<u8> NRMeshingVertexSemanticLabel, freed and not surfaced
+const MB_LABELS: usize = 0x68; // vector<u8> NRMeshingVertexSemanticLabel, one per vertex
 const MESH_BLOCK_STRIDE: usize = 0x80; // 128 bytes
 
 /// Sanity caps against a garbage vector length driving an OOB read (the SDK vectors are transient).
@@ -69,16 +69,39 @@ struct CppVec {
     _cap: *mut u8,
 }
 
+/// `NRMeshingVertexSemanticLabel` (a `u8`), the class the meshing backend assigns to each **vertex**,
+/// not to a face or a whole block, so one block's triangles can straddle two classes. The values are
+/// the SDK's own and are deliberately non-contiguous, since 3 and 9 are absent: this is a subset of
+/// an outdoor-first segmentation taxonomy, which is why `HIGHWAY`, `SIDEWALK` and `GRASS` sit beside
+/// the indoor classes. `BACKGROUND` is the catch-all for everything the classifier did not place.
+pub mod semantic_label {
+    pub const BACKGROUND: u8 = 0;
+    pub const WALL: u8 = 1;
+    pub const BUILDING: u8 = 2;
+    pub const FLOOR: u8 = 4;
+    pub const CEILING: u8 = 5;
+    pub const HIGHWAY: u8 = 6;
+    pub const SIDEWALK: u8 = 7;
+    pub const GRASS: u8 = 8;
+    pub const DOOR: u8 = 10;
+    pub const TABLE: u8 = 11;
+}
+
 /// One meshing block copied out of the SDK. `vertices` and `normals` are in **raw NR backend
 /// space**, that is *before* the SDK's Unity conversion: `AcquireMesh` negates Z on its way into
 /// Unity's buffers, so raw is right-handed and Unity space is `(x, y, -z)` of these values. The
 /// Godot side applies the flip. `state == 2` means the block was removed.
+///
+/// `labels` holds one [`semantic_label`] per vertex, so it parallels `vertices` when the backend
+/// classified the block. Consumers must not assume it does: it comes back empty when meshing is
+/// running without classification, so check its length against `vertices` before indexing.
 pub struct MeshBlock {
     pub id: u64,
     pub state: i32,
     pub vertices: Vec<[f32; 3]>,
     pub normals: Vec<[f32; 3]>,
     pub indices: Vec<u32>,
+    pub labels: Vec<u8>,
 }
 
 /// Resolve `(lib_base, NativePerception*)` once the SDK's perception is fully up; `None` otherwise.
@@ -155,15 +178,18 @@ pub fn poll_mesh_blocks() -> Vec<MeshBlock> {
                 let (vertices, v_begin) = read_vec3(block, MB_VERTICES);
                 let (normals, n_begin) = read_vec3(block, MB_NORMALS);
                 let (indices, i_begin) = read_u32(block, MB_INDICES);
+                // The label storage is freed by the shared MB_LABELS free below, which every block goes
+                // through, so this reads the bytes without taking the pointer back.
+                let labels = read_u8(block, MB_LABELS);
                 out.push(MeshBlock {
                     id: (block.add(MB_ID) as *const u64).read_unaligned(),
                     state: (block.add(MB_STATE) as *const i32).read_unaligned(),
                     vertices,
                     normals,
                     indices,
+                    labels,
                 });
-                // Free the block's four libc++-allocated vector storages. The labels are freed without being
-                // copied out, since nothing consumes them yet.
+                // Free the block's three geometry vector storages.
                 free_op(v_begin);
                 free_op(n_begin);
                 free_op(i_begin);
@@ -208,6 +234,19 @@ unsafe fn read_u32(block: *const u8, off: usize) -> (Vec<u32>, *mut u8) {
     let p = begin as *const u32;
     let v = (0..count).map(|i| p.add(i).read_unaligned()).collect();
     (v, begin)
+}
+
+/// Read the `std::vector<u8>` of [`semantic_label`]s at `block + off`. Unlike the two above it does
+/// not hand back the storage pointer, because the caller frees that vector on every block, copied
+/// out or not. An empty result means the backend produced no classification for this block.
+unsafe fn read_u8(block: *const u8, off: usize) -> Vec<u8> {
+    let begin = (block.add(off) as *const *mut u8).read_unaligned();
+    let end = (block.add(off + 8) as *const *mut u8).read_unaligned();
+    if begin.is_null() || end < begin {
+        return Vec::new();
+    }
+    let count = (end as usize - begin as usize).min(MAX_VERTS);
+    std::slice::from_raw_parts(begin as *const u8, count).to_vec()
 }
 
 /// libc++ `operator delete(void*)` on a non-null pointer, freeing SDK vector storage. It resolves

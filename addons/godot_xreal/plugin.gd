@@ -29,9 +29,11 @@ extends EditorPlugin
 const ExportPluginScript := preload("res://addons/godot_xreal/export_plugin.gd")
 const ImageDbDockScript := preload("res://addons/godot_xreal/editor/image_db_dock.gd")
 const VendorImportDockScript := preload("res://addons/godot_xreal/editor/vendor_import_dock.gd")
+const MeshSnapshotDockScript := preload("res://addons/godot_xreal/editor/mesh_snapshot_dock.gd")
 var _export_plugin: EditorExportPlugin
 var _image_db_dock: Control
 var _vendor_import_dock: Control
+var _mesh_snapshot_dock: Control
 
 ## The `xreal/*` project settings. Most are consumed at runtime, and demo/main.gd reads them with
 ## these same inline defaults, so a project works with or without them persisted. The exceptions
@@ -133,6 +135,13 @@ func _enter_tree() -> void:
 	_image_db_dock.name = "XREAL Image DB"
 	add_control_to_dock(EditorPlugin.DOCK_SLOT_LEFT_UR, _image_db_dock)
 
+	# Mesh-snapshot converter dock: a depth-mesh scan saved on the glasses becomes an ArrayMesh or a
+	# .glb here, so mesh-consuming work can iterate in the editor. The Godot answer to the SDK's
+	# "Use Meshes in the Editor", which exports .obj and drops the semantic classification.
+	_mesh_snapshot_dock = MeshSnapshotDockScript.new()
+	_mesh_snapshot_dock.name = "XREAL Mesh Snapshot"
+	add_control_to_dock(EditorPlugin.DOCK_SLOT_LEFT_UR, _mesh_snapshot_dock)
+
 func _exit_tree() -> void:
 	if _export_plugin:
 		remove_export_plugin(_export_plugin)
@@ -145,3 +154,7 @@ func _exit_tree() -> void:
 		remove_control_from_docks(_vendor_import_dock)
 		_vendor_import_dock.free()
 		_vendor_import_dock = null
+	if _mesh_snapshot_dock:
+		remove_control_from_docks(_mesh_snapshot_dock)
+		_mesh_snapshot_dock.free()
+		_mesh_snapshot_dock = null

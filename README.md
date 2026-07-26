@@ -41,6 +41,7 @@ XREAL SDK for Unity 3.1.0 native libraries. Everything below is community-revers
 | **Multiview** stereo (single-pass-instanced) | ✅ works, but no performance gain | Renders both eyes correctly (opt-in: `setprop debug.xreal.stereo_mode 2`), yet **costs exactly what Multipass costs**. Our rig draws two Godot SubViewports (two passes), then copies each into an array layer with one direct `glCopyImageSubData` per eye, identical to the Multipass copy. The single-pass-instanced win arrives only when the *engine* draws both eyes in one multiview pass, which Godot's Compatibility SubViewport rig does not. Multipass therefore stays the default. See [`docs/archive/multiview-investigation.md`](docs/archive/multiview-investigation.md). |
 | **Recenter** | ✅ | Resets the forward direction (SDK `NativePerception::Recenter`). |
 | **Render metrics** (present FPS, dropped, early, latency) | ✅ | Live compositor stats from the `NRMetrics*` API, queried directly rather than through the Unity `UpdateMetrics` sink. Read them on `XrealSystem` with `get_present_fps()`, `get_dropped_frame_count()`, and friends. See [`docs/plans/render-metrics-gdscript-plan.md`](docs/plans/render-metrics-gdscript-plan.md). |
+| **Focus plane** (compositor reprojection) | ✅ device verification pending | Before every VSync the compositor warps the last frame onto the newest head pose, against a single plane the SDK pins at 1.4 m. Content far from that plane smears and doubles. `XrealSystem.set_focus_plane()` moves it per frame in head-local space, and the `XrealFocusPlane` component drives it from a forward raycast, as the SDK's `FocusManager` does. The `SetFocusPlane` export takes two by-value `UnityXRVector3`s, point and normal, where Unity's own wrapper takes a third velocity it drops before this point. |
 | **Glasses input** (physical keys MENU/MULTI: click, double, long) | ✅ | Godot signals `key_event` and `key_state_changed`. |
 | **Wear sensor, brightness, volume, electrochromic, USB hot-plug** | ✅ | Signals `wearing_changed`, `brightness_changed`, `glasses_connected`, and the rest. |
 | **Diagnostics** (session and tracking state, HMD clock, plugin version) | ✅ | Read from `XrealSystem`. |
@@ -54,8 +55,9 @@ XREAL SDK for Unity 3.1.0 native libraries. Everything below is community-revers
 | **Phone 3D pointer** (host IMU) | ✅ (demo) | Tilt the phone to aim a 3D ray in the glasses (`demo/phone_pointer.gd`). GDScript fuses the orientation from the NRController's raw IMU (`accel` for pitch and roll, `gyro` for yaw) exposed by `XrealSystem.poll_controller()`, because the NRController *fused pose* and Godot's own `Input.get_gyroscope()` both read empty on this host. The ray highlights what it hits and the trigger selects it; an on-screen left/right-hand toggle switches the beam origin; bias-learning and a deadzone damp the gyro drift. `recenter` sets forward. |
 
 Also ported: image tracking, marker tracking, depth meshing, photo and blended capture, and FPV
-streaming. Device verification is still pending for some;
-see [`docs/plans/ar-features-plan.md`](docs/plans/ar-features-plan.md).
+streaming. Depth meshing carries the SDK's per-vertex semantic classification, and a scan saved on
+the glasses becomes an `ArrayMesh` or a `.glb` through an editor dock. Device verification is still
+pending for some; see [`docs/plans/ar-features-plan.md`](docs/plans/ar-features-plan.md).
 
 ## Install (prebuilt)
 
@@ -321,7 +323,8 @@ addons/godot_xreal/      the installable addon
   plugin.cfg/.gd         EditorPlugin — also registers the editor docks
   export_plugin.gd       Android export: manifest, permissions, .aar/assets staging
   xreal_rig.tscn         XrealHeadTracker + Camera3D rig
-  editor/                docks: vendor_import_dock.gd (SDK import), image_db_dock.gd
+  editor/                docks: vendor_import_dock.gd (SDK import), image_db_dock.gd,
+                         mesh_snapshot_dock.gd (depth-mesh scan -> ArrayMesh/.glb)
   android/               bridge Java source (nr_plugins.json + .aar vendored, git-ignored)
   bin/                   built libs (git-ignored): android/libgodot_xreal.so + desktop dummy stubs
 src/                     the Rust GDExtension

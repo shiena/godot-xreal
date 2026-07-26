@@ -13,6 +13,18 @@ Frame blending, or mixed-reality capture, as a drop-in feature component: the Go
 
 It needs the camera running (xreal_camera.tscn enabled) and the head rig in the tree. Both are discovered at capture time through XrealShared.find_camera_feed() and find_head_tracker(), with no wiring needed.
 
+## Properties
+
+<a id="property-stereo"></a>
+
+### stereo: bool = false
+
+Capture both eyes side by side rather than one view, the equivalent of the SDK's `CaptureSide.Both`. The output keeps its width and halves its height, each eye filling one half, so the frame is squeezed horizontally the way side-by-side 3D formats are.
+
+Only the virtual content gains parallax: the glasses carry one RGB camera, so both halves share the same real-world image. That is also what the SDK produces.
+
+Changing this rebuilds the viewports on the next capture.
+
 ## Signals
 
 <a id="signal-error"></a>

@@ -35,6 +35,8 @@ signal stream_toggled(on: bool)
 signal place_pressed()
 ## Momentary "Cycle Image" button: cycle the active image-tracking set.
 signal image_cycle_pressed()
+## Momentary "Save Mesh" button: write the current depth-mesh scan to a file for editor use.
+signal mesh_save_pressed()
 ## Momentary "Photo" button: capture a photo from the RGB camera.
 signal capture_pressed()
 ## Momentary "Blend Photo" button: capture a blended camera+AR (mixed-reality) photo.
@@ -59,6 +61,7 @@ func _ready() -> void:
 	c.stream_toggled.connect(stream_toggled.emit)
 	c.place_pressed.connect(place_pressed.emit)
 	c.image_cycle_pressed.connect(image_cycle_pressed.emit)
+	c.mesh_save_pressed.connect(mesh_save_pressed.emit)
 	c.capture_pressed.connect(capture_pressed.emit)
 	c.blend_pressed.connect(blend_pressed.emit)
 	c.exit_confirmed.connect(exit_confirmed.emit)

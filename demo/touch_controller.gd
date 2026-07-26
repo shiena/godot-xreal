@@ -44,6 +44,9 @@ signal stream_toggled(on: bool)
 signal place_pressed()
 ## Momentary "Cycle Image" button: cycle the active image-tracking set.
 signal image_cycle_pressed()
+## Momentary "Save Mesh" button: write the current depth-mesh scan to a file for editor use. Only
+## meaningful while the mesh toggle is on, which is why main.gd keeps it inert until then.
+signal mesh_save_pressed()
 ## Momentary "Photo" button: capture a photo from the RGB camera.
 signal capture_pressed()
 ## Momentary "Blend Photo" button: capture a blended camera+AR (mixed-reality) photo.
@@ -69,6 +72,7 @@ const _buttons := {
 	"hand_r": "R Hand ▶",
 	"place": "Place",
 	"image_cycle": "Cycle Image",
+	"mesh_save": "Save Mesh",
 	"capture": "Photo",
 	"blend": "Blend Photo",
 	"exit": "Exit",
@@ -102,14 +106,17 @@ const _toggles := {
 const _tabs := [
 	{"label": "Control", "items": ["trigger", "grip", "menu", "hand_l", "hand_r", "exit"]},
 	{"label": "Camera", "items": ["capture", "blend", "camera", "record", "stream"]},
-	{"label": "AR", "items": ["plane", "anchor", "place", "image", "image_cycle", "mesh"]},
+	{"label": "AR", "items": ["plane", "anchor", "place", "image", "image_cycle", "mesh", "mesh_save"]},
 ]
 
 # Adjacent item pairs (left name first) laid out as one 2-column row instead of two stacked rows, for
 # tightly-related controls: hand_l/hand_r (pointer-origin hand), anchor/place (anchor mode +
-# drop-at-fingertip), and image/image_cycle (image-tracking mode + set cycle). Both names of a pair
-# must sit next to each other, in this order, in the tab's `items`.
-const _paired_rows := [["hand_l", "hand_r"], ["anchor", "place"], ["image", "image_cycle"]]
+# drop-at-fingertip), image/image_cycle (image-tracking mode + set cycle) and mesh/mesh_save
+# (meshing mode + save the scan). Both names of a pair must sit next to each other, in this order,
+# in the tab's `items`.
+const _paired_rows := [
+	["hand_l", "hand_r"], ["anchor", "place"], ["image", "image_cycle"], ["mesh", "mesh_save"],
+]
 
 var _theme: Theme
 var _controls := {}                    # button/toggle name -> its Button node
@@ -493,6 +500,8 @@ func _on_momentary_down(control_name: String) -> void:
 			place_pressed.emit()
 		"image_cycle":
 			image_cycle_pressed.emit()
+		"mesh_save":
+			mesh_save_pressed.emit()
 		"capture":
 			capture_pressed.emit()
 		"blend":

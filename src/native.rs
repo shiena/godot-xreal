@@ -23,8 +23,9 @@ use crate::ffi::{
     FnGetReferenceImageCount, FnGetTrackableAnchorChanges, FnInitImageTrackingDatabase,
     FnIsHmdFeatureSupported, FnLoadTrackableAnchor, FnReleaseImageTrackingDatabase,
     FnRemapTrackableAnchor, FnRemoveTrackableAnchor, FnSaveTrackableAnchor,
-    FnSetAnchorMappingFileDirectory, FnSetImageTrackingDatabase, FnSetPlaneDetectionMode,
-    FnSetTrackableAnchorEnabled, Guid, ManagedReferenceImage, NativeView, TrackableId, UnityPose,
+    FnSetAnchorMappingFileDirectory, FnSetFocusPlane, FnSetImageTrackingDatabase,
+    FnSetPlaneDetectionMode, FnSetTrackableAnchorEnabled, Guid, ManagedReferenceImage, NativeView,
+    TrackableId, UnityPose, UnityVector3,
 };
 use crate::ffi::{
     FnControlSetI32, FnCreateFrame, FnCreateSession, FnGetCameraIntrinsic,
@@ -232,6 +233,9 @@ pub struct XrealNative {
     /// Per-device capability query, `IsHMDFeatureSupported`. The RGB camera, for instance, is absent on
     /// the Air 2 Ultra, so the camera path has to gate on this and never open a nonexistent camera.
     is_hmd_feature_supported: Option<FnIsHmdFeatureSupported>,
+    /// `SetFocusPlane`: the plane the compositor reprojects against, left at its 1.4 m default
+    /// unless something calls this each frame. See [`FnSetFocusPlane`].
+    set_focus_plane: Option<FnSetFocusPlane>,
 
     // Plane detection (libXREALXRPlugin.so, flat C ABI; see docs/plans/ar-features-plan.md). Needs 6DoF.
     get_plane_detection_mode: Option<FnGetPlaneDetectionMode>,
@@ -633,6 +637,10 @@ impl XrealNative {
                 .and_then(|l| l.get(b"IsHMDFeatureSupported\0").ok().map(|s| *s));
 
             // Plane detection exports (libXREALXRPlugin.so). See docs/plans/ar-features-plan.md.
+            let set_focus_plane: Option<FnSetFocusPlane> = plugin_lib
+                .as_ref()
+                .and_then(|l| l.get(b"SetFocusPlane\0").ok().map(|s| *s));
+
             let get_plane_detection_mode: Option<FnGetPlaneDetectionMode> = plugin_lib
                 .as_ref()
                 .and_then(|l| l.get(b"GetPlaneDetectionMode\0").ok().map(|s| *s));
@@ -835,6 +843,7 @@ impl XrealNative {
                 get_tracking_type,
                 switch_tracking_type,
                 is_hmd_feature_supported,
+                set_focus_plane,
                 get_plane_detection_mode,
                 set_plane_detection_mode,
                 get_plane_detection_changes,
@@ -1045,6 +1054,33 @@ impl XrealNative {
         let f = self.get_camera_projection_matrix?;
         let mut mat = [0.0f32; 16];
         unsafe { f(component, near, far, &mut mat) }.then_some(mat)
+    }
+
+    /// Point the compositor's reprojection plane at `point` with surface normal `normal`, both in
+    /// **head-local Unity space**. Returns whether the export was there to call.
+    ///
+    /// This is a per-frame setting, not a mode: the compositor uses whatever it was last given, so
+    /// a caller that stops calling leaves the plane wherever it stopped, and one that never calls
+    /// gets the SDK's fixed 1.4 m default.
+    pub fn set_focus_plane(&self, point: [f32; 3], normal: [f32; 3]) -> bool {
+        let Some(f) = self.set_focus_plane else {
+            return false;
+        };
+        unsafe {
+            f(
+                UnityVector3 {
+                    x: point[0],
+                    y: point[1],
+                    z: point[2],
+                },
+                UnityVector3 {
+                    x: normal[0],
+                    y: normal[1],
+                    z: normal[2],
+                },
+            )
+        };
+        true
     }
 
     /// Current `PlaneDetectionMode` flags (`ffi::plane_detection_mode`), or `None` if the export is absent.

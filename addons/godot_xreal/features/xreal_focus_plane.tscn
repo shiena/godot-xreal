@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3 uid="uid://xrfocusscn01"]
+
+[ext_resource type="Script" uid="uid://xrfocusgd001" path="res://addons/godot_xreal/features/xreal_focus_plane.gd" id="1_script"]
+
+[node name="XrealFocusPlane" type="Node3D"]
+script = ExtResource("1_script")

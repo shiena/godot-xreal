@@ -15,54 +15,97 @@ extends Node
 ## pushed as a warning.
 signal error(message: String)
 
+## Capture both eyes side by side rather than one view, the equivalent of the SDK's
+## `CaptureSide.Both`. The output keeps its width and halves its height, each eye filling one half,
+## so the frame is squeezed horizontally the way side-by-side 3D formats are.
+##
+## Only the virtual content gains parallax: the glasses carry one RGB camera, so both halves share
+## the same real-world image. That is also what the SDK produces.
+##
+## Changing this rebuilds the viewports on the next capture.
+@export var stereo := false
 
 const W := 1280
 const H := 720
 
 var _system: Object                 # XrealSystem (this feature's own stateless instance)
-var _ar_vp: SubViewport
-var _ar_cam: Camera3D
+var _ar_vps: Array[SubViewport] = []  # one per captured eye: 1 entry mono, 2 stereo
+var _ar_cams: Array[Camera3D] = []
 var _comp_vp: SubViewport
-var _comp_mat: ShaderMaterial
+var _comp_mats: Array[ShaderMaterial] = []
+var _built_stereo := false          # the layout the current viewports were built for
 var _rgb_offset := Vector3.ZERO    # RGB camera offset from the head (Godot space), for parallax
+var _eye_offsets := [Vector3.ZERO, Vector3.ZERO]  # per-eye display offsets, for the stereo parallax
 var _rgb_geom_done := false        # RGB geometry (FOV + offset) applied once, since it is static per device
 
 func _ready() -> void:
 	_system = XrealShared.make_system()  # null off-device -> inert
 
+## Build (or rebuild) the viewports for the current `stereo` setting.
+##
+## Mono is one full-size AR viewport composited into a full-size output. Stereo is two half-width,
+## half-height AR viewports composited side by side into a half-height output, which matches the
+## SDK's own sizing: it renders each eye at half of both dimensions and lays them into a
+## width x height/2 target.
 func _ensure() -> bool:
-	if _comp_vp != null:
+	if _comp_vp != null and _built_stereo == stereo:
 		return true
-	# AR viewport: the shared 3D world from the head POV on a transparent background, holograms only.
-	_ar_vp = SubViewport.new()
-	_ar_vp.size = Vector2i(W, H)
-	_ar_vp.transparent_bg = true
-	_ar_vp.render_target_update_mode = SubViewport.UPDATE_ALWAYS
-	_ar_vp.world_3d = get_tree().root.world_3d
-	add_child(_ar_vp)
-	_ar_cam = Camera3D.new()
-	_ar_cam.current = true
-	_ar_vp.add_child(_ar_cam)
-	# Composite viewport: blends the AR viewport over the camera.
+	_teardown()
+	_built_stereo = stereo
+	var eyes := 2 if stereo else 1
+	var eye_size := Vector2i(W / eyes, H / eyes)
+	var out_size := Vector2i(W, H / eyes)
+	# Composite viewport: blends the AR viewport(s) over the camera.
 	_comp_vp = SubViewport.new()
-	_comp_vp.size = Vector2i(W, H)
+	_comp_vp.size = out_size
 	_comp_vp.render_target_update_mode = SubViewport.UPDATE_ALWAYS
 	add_child(_comp_vp)
-	_comp_mat = ShaderMaterial.new()
-	_comp_mat.shader = load("res://addons/godot_xreal/shaders/xreal_blend_2d.gdshader")
-	var rect := ColorRect.new()
-	rect.size = Vector2(W, H)
-	rect.material = _comp_mat
-	_comp_vp.add_child(rect)
+	var shader := load("res://addons/godot_xreal/shaders/xreal_blend_2d.gdshader")
+	for eye in eyes:
+		# AR viewport: the shared 3D world from the head POV on a transparent background, holograms only.
+		var vp := SubViewport.new()
+		vp.size = eye_size
+		vp.transparent_bg = true
+		vp.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+		vp.world_3d = get_tree().root.world_3d
+		add_child(vp)
+		var cam := Camera3D.new()
+		cam.current = true
+		vp.add_child(cam)
+		_ar_vps.append(vp)
+		_ar_cams.append(cam)
+		# One ColorRect per eye, side by side. Each carries its own material because the AR texture
+		# differs per eye; the camera textures are the same on both, there being one camera.
+		var mat := ShaderMaterial.new()
+		mat.shader = shader
+		var rect := ColorRect.new()
+		rect.position = Vector2(eye * out_size.x / eyes, 0)
+		rect.size = Vector2(out_size.x / eyes, out_size.y)
+		rect.material = mat
+		_comp_vp.add_child(rect)
+		_comp_mats.append(mat)
 	return true
+
+func _teardown() -> void:
+	for vp in _ar_vps:
+		vp.queue_free()
+	_ar_vps.clear()
+	_ar_cams.clear()
+	_comp_mats.clear()
+	if _comp_vp:
+		_comp_vp.queue_free()
+		_comp_vp = null
+	_rgb_geom_done = false  # the FOV is applied per camera, and the cameras are new
 
 ## Drive the AR camera from the RGB camera's real geometry: intrinsics give the vertical FOV, and
 ## the pose relative to the head gives a small forward offset. The holograms then match the camera
 ## image instead of a default guess. It is static per device, so it is applied once.
 func _apply_rgb_geometry() -> void:
-	if _rgb_geom_done or _ar_cam == null:
+	if _rgb_geom_done or _ar_cams.is_empty():
 		return
-	_rgb_offset = XrealShared.apply_rgb_camera_geometry(_system, _ar_cam)
+	for cam in _ar_cams:
+		_rgb_offset = XrealShared.apply_rgb_camera_geometry(_system, cam)
+	_eye_offsets = XrealShared.eye_offsets(_system)
 	_rgb_geom_done = true
 
 ## The live camera feed's Y/CbCr textures as [yt, ct], or an empty array when the camera is not
@@ -92,13 +135,18 @@ func capture_blended() -> String:
 	_ensure()
 	_apply_rgb_geometry()
 	var tracker := XrealShared.find_head_tracker(get_tree())
-	if tracker and _ar_cam:
-		# Sit the AR camera at the RGB camera's pose, the head plus its small forward offset, rather than
-		# at the head alone, so the holograms line up with the camera image and the parallax is right.
-		_ar_cam.global_transform = tracker.global_transform.translated_local(_rgb_offset)
-	_comp_mat.set_shader_parameter(&"y_texture", tex[0])
-	_comp_mat.set_shader_parameter(&"cbcr_texture", tex[1])
-	_comp_mat.set_shader_parameter(&"ar_texture", _ar_vp.get_texture())
+	for eye in _ar_cams.size():
+		if tracker:
+			# Sit the AR camera at the RGB camera's pose, the head plus its small forward offset, rather
+			# than at the head alone, so the holograms line up with the camera image and the parallax is
+			# right. In stereo each eye adds its own display offset on top, which is what separates them.
+			var offset: Vector3 = _rgb_offset
+			if _built_stereo:
+				offset += _eye_offsets[eye] as Vector3
+			_ar_cams[eye].global_transform = tracker.global_transform.translated_local(offset)
+		_comp_mats[eye].set_shader_parameter(&"y_texture", tex[0])
+		_comp_mats[eye].set_shader_parameter(&"cbcr_texture", tex[1])
+		_comp_mats[eye].set_shader_parameter(&"ar_texture", _ar_vps[eye].get_texture())
 	# Let both viewports render this frame before reading the composite back.
 	await RenderingServer.frame_post_draw
 	var img := _comp_vp.get_texture().get_image()

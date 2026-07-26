@@ -225,6 +225,29 @@ pub struct UnityPose {
     pub rotation: [f32; 4],
 }
 
+/// `UnityXRVector3`, three floats passed **by value**. AArch64 classifies it as a homogeneous
+/// floating-point aggregate, so two of them arrive in `s0-s2` and `s3-s5` rather than through
+/// memory. The components are named rather than an `[f32; 3]` so the call sites read clearly; the
+/// ABI classification is the same either way.
+#[repr(C)]
+#[derive(Clone, Copy, Default, Debug)]
+pub struct UnityVector3 {
+    pub x: f32,
+    pub y: f32,
+    pub z: f32,
+}
+
+/// `void SetFocusPlane(UnityXRVector3 point, UnityXRVector3 normal)`: the plane the compositor
+/// reprojects the rendered frame against, in **head-local Unity space**. Both arguments are by
+/// value; the export tail-calls `DisplayManager::SetFocusPlane(UnityXRVector3, UnityXRVector3)`,
+/// which is where the argument count comes from (the disassembly saves exactly `v0`-`v5`).
+///
+/// Note it takes **two** vectors, where Unity's own `XRDisplaySubsystem.SetFocusPlane` takes a
+/// third `velocity`. The SDK's C# goes through Unity's wrapper, which drops it before this point.
+/// Without a call the compositor holds its default plane at 1.4 m, which is what makes content at
+/// other distances judder.
+pub type FnSetFocusPlane = unsafe extern "C" fn(UnityVector3, UnityVector3);
+
 /// `ARSubsystemChanges`, from `XREALPlaneSubsystem.cs:86`: the added, updated and removed poll shape
 /// shared by planes, images and anchors. The pointers index native arrays of `element_size`-byte
 /// elements and stay valid only until the next poll, so copy out immediately.

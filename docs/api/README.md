@@ -32,6 +32,7 @@ Drop-in scenes under `addons/godot_xreal/features/`: instance one, flip its `ena
 | [XrealAnchors](xreal_anchors.md) | [`Node3D`](https://docs.godotengine.org/en/stable/classes/class_node3d.html) | Spatial anchors as a drop-in feature component (Air 2 Ultra). … |
 | [XrealBlendCapture](xreal_blend_capture.md) | [`Node`](https://docs.godotengine.org/en/stable/classes/class_node.html) | Frame blending, or mixed-reality capture, as a drop-in feature component: the Godot analog of the SDK's FrameBlender. … |
 | [XrealCamera](xreal_camera.md) | [`Node3D`](https://docs.godotengine.org/en/stable/classes/class_node3d.html) | XREAL glasses RGB camera as a drop-in feature component: it owns the XrealCameraFeed lifecycle, registered with the CameraServer. … |
+| [XrealFocusPlane](xreal_focus_plane.md) | [`Node3D`](https://docs.godotengine.org/en/stable/classes/class_node3d.html) | The compositor's reprojection focus plane as a drop-in feature component (all glasses). |
 | [XrealHands](xreal_hands.md) | [`Node3D`](https://docs.godotengine.org/en/stable/classes/class_node3d.html) | Hand-tracking visualization as a drop-in feature component: small spheres at each of the 26 OpenXR joints per hand. … |
 | [XrealImageTracking](xreal_image_tracking.md) | [`Node3D`](https://docs.godotengine.org/en/stable/classes/class_node3d.html) | Image tracking as a drop-in feature component (Air 2 Ultra). … |
 | [XrealMesh](xreal_mesh.md) | [`Node3D`](https://docs.godotengine.org/en/stable/classes/class_node3d.html) | Depth meshing as a drop-in feature component (Air 2 Ultra). … |
@@ -48,5 +49,6 @@ Supporting GDScript classes in the addon.
 
 | Class | Inherits | Description |
 | --- | --- | --- |
+| [MeshSnapshotDock](mesh_snapshot_dock.md) | [`VBoxContainer`](https://docs.godotengine.org/en/stable/classes/class_vboxcontainer.html) | Editor dock: turns a depth-mesh snapshot written on the glasses into something the editor can open, an `ArrayMesh` resource or a .glb. … |
 | [XrealAndroidBridge](xreal_android_bridge.md) | [`Object`](https://docs.godotengine.org/en/stable/classes/class_object.html) | Bootstrap for the XrealBridge Java helper (addons/godot_xreal/android/src/…/XrealBridge.java). … |
 | [XrealDesktopPreview](xreal_desktop_preview.md) | [`Node`](https://docs.godotengine.org/en/stable/classes/class_node.html) | Desktop-only preview: a second OS window showing what the glasses would draw, flown around with mouse-look and WASD. |

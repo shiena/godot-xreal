@@ -644,6 +644,39 @@ impl XrealSystem {
     // --- Depth mesh (see docs/plans/ar-features-plan.md §4). Internal libXREALXRPlugin.so functions by
     //     LIB_BASE+offset (like hand tracking), NOT flat exports. Air 2 Ultra only. ---
 
+    /// `NRMeshingVertexSemanticLabel` for the `labels` of [`Self::poll_mesh_blocks`]: whatever the
+    /// classifier did not place, which is the catch-all rather than an "unknown surface" class.
+    #[constant]
+    const MESH_LABEL_BACKGROUND: i64 = crate::depth_mesh::semantic_label::BACKGROUND as i64;
+    /// `NRMeshingVertexSemanticLabel`: a wall.
+    #[constant]
+    const MESH_LABEL_WALL: i64 = crate::depth_mesh::semantic_label::WALL as i64;
+    /// `NRMeshingVertexSemanticLabel`: a building exterior.
+    #[constant]
+    const MESH_LABEL_BUILDING: i64 = crate::depth_mesh::semantic_label::BUILDING as i64;
+    /// `NRMeshingVertexSemanticLabel`: the floor or ground.
+    #[constant]
+    const MESH_LABEL_FLOOR: i64 = crate::depth_mesh::semantic_label::FLOOR as i64;
+    /// `NRMeshingVertexSemanticLabel`: the ceiling.
+    #[constant]
+    const MESH_LABEL_CEILING: i64 = crate::depth_mesh::semantic_label::CEILING as i64;
+    /// `NRMeshingVertexSemanticLabel`: a road surface (the taxonomy is outdoor-first, so the label
+    /// set carries classes an indoor scan never produces).
+    #[constant]
+    const MESH_LABEL_HIGHWAY: i64 = crate::depth_mesh::semantic_label::HIGHWAY as i64;
+    /// `NRMeshingVertexSemanticLabel`: a pavement.
+    #[constant]
+    const MESH_LABEL_SIDEWALK: i64 = crate::depth_mesh::semantic_label::SIDEWALK as i64;
+    /// `NRMeshingVertexSemanticLabel`: grass.
+    #[constant]
+    const MESH_LABEL_GRASS: i64 = crate::depth_mesh::semantic_label::GRASS as i64;
+    /// `NRMeshingVertexSemanticLabel`: a door.
+    #[constant]
+    const MESH_LABEL_DOOR: i64 = crate::depth_mesh::semantic_label::DOOR as i64;
+    /// `NRMeshingVertexSemanticLabel`: a table top.
+    #[constant]
+    const MESH_LABEL_TABLE: i64 = crate::depth_mesh::semantic_label::TABLE as i64;
+
     /// Whether the connected glasses support depth meshing. Gated by
     /// [`Self::is_ar_perception_available`] (6DoF + no RGB camera = the Air 2 Ultra). `false` until the
     /// session is up.
@@ -660,8 +693,13 @@ impl XrealSystem {
     }
 
     /// Poll the current mesh blocks. Returns an `Array` of `Dictionary { id: String, state: int,
-    /// vertices: PackedVector3Array, normals: PackedVector3Array, indices: PackedInt32Array }`.
+    /// vertices: PackedVector3Array, normals: PackedVector3Array, indices: PackedInt32Array,
+    /// labels: PackedByteArray }`.
     /// `state == 2` means the block was removed; build/update an `ArrayMesh` per block otherwise.
+    ///
+    /// `labels` is the per-vertex semantic classification, one `MESH_LABEL_*` per vertex, so it is
+    /// index-aligned with `vertices`. It is empty when the backend classified nothing, so compare
+    /// its size against `vertices` before indexing it.
     #[func]
     fn poll_mesh_blocks(&self) -> VarArray {
         let mut arr = VarArray::new();
@@ -742,6 +780,33 @@ impl XrealSystem {
     #[func]
     fn set_stereo_mode(&self, mode: i64) {
         session::set_stereo_mode_override(mode as i32);
+    }
+
+    /// Point the compositor's reprojection plane at `point`, with surface `normal`, both in
+    /// **head-local Godot space**: the head tracker's own frame, not the world. Returns whether the
+    /// call reached the SDK.
+    ///
+    /// Before every VSync the compositor warps the last rendered frame to the newest head pose, and
+    /// it does that against a plane. Content far from that plane is what smears and doubles when
+    /// the head moves. The SDK pins the plane at a fixed 1.4 m unless an app moves it, so an app
+    /// whose content sits at arm's length gains from setting it to whatever the user is looking at.
+    ///
+    /// This is a per-frame setting, not a mode. It holds its last value, so call it every frame, or
+    /// use `addons/godot_xreal/features/xreal_focus_plane.tscn`, which drives it from a forward
+    /// raycast the way the SDK's `FocusManager` does.
+    ///
+    /// `normal` points back at the viewer, so `Vector3(0, 0, 1)`, the Godot camera's backward axis,
+    /// is the default for a plane square to the gaze.
+    #[func]
+    fn set_focus_plane(&self, point: Vector3, normal: Vector3) -> bool {
+        session::shared()
+            .map(|s| {
+                s.set_focus_plane(
+                    [point.x, -point.y, -point.z],
+                    [normal.x, -normal.y, -normal.z],
+                )
+            })
+            .unwrap_or(false)
     }
 
     /// Select the head-tracking mode applied when the native session **bootstraps**, a startup
@@ -1073,6 +1138,12 @@ fn mesh_block_to_dict(b: &crate::depth_mesh::MeshBlock) -> VarDictionary {
     d.set(&"vertices".to_variant(), &verts.to_variant());
     d.set(&"normals".to_variant(), &norms.to_variant());
     d.set(&"indices".to_variant(), &idx.to_variant());
+    // Vertex order is untouched above (only the triangle winding is reversed), so the labels stay
+    // index-aligned with `vertices`.
+    d.set(
+        &"labels".to_variant(),
+        &PackedByteArray::from(b.labels.as_slice()).to_variant(),
+    );
     d
 }
 
@@ -1183,7 +1254,8 @@ impl XrealAR {
     fn image_removed(id: GString);
 
     /// A mesh block was added or updated, as
-    /// `Dictionary { id, state, vertices, normals, indices }`.
+    /// `Dictionary { id, state, vertices, normals, indices, labels }`, where `labels` is the
+    /// per-vertex semantic classification and may be empty.
     #[signal]
     fn mesh_block_changed(block: VarDictionary);
     /// A mesh block was removed (its id string).

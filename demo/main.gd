@@ -144,11 +144,17 @@ func _ready() -> void:
 	# Label the "Cycle Image" button with the active image-tracking set as it changes.
 	if _image_tracking and _image_tracking.has_signal(&"set_changed"):
 		_image_tracking.set_changed.connect(_on_image_set_changed)
+	# Report where a mesh snapshot landed, which is what the user needs to pull it off the device.
+	if _mesh and _mesh.has_signal(&"snapshot_saved"):
+		_mesh.snapshot_saved.connect(_on_mesh_snapshot_saved)
 	_setup_touch_controller()
 	_setup_desktop_pointer()
 	# Reflect the boot camera state on the phone-menu toggle (on only when the XrealCamera
 	# instance was saved with `enabled` ticked; the other toggles start off).
 	_set_controller_toggle("camera", _camera.enabled)
+	# "Save Mesh" has nothing to write until meshing is on, so it starts inert and follows the Mesh
+	# toggle from there.
+	_set_controller_disabled("mesh_save", true)
 
 func _spawn_rig() -> void:
 	if _extension_loaded:
@@ -296,8 +302,25 @@ func _on_tc_image(on: bool) -> void:
 ## Phone-menu "Mesh" toggle, driving the XrealMesh component (Air 2 Ultra only).
 func _on_tc_mesh(on: bool) -> void:
 	print("[demo] mesh toggle -> %s" % ("on" if on else "off"))
-	if _mesh.set_enabled(on) != on:
+	var active: bool = _mesh.set_enabled(on)
+	if active != on:
 		_set_controller_toggle("mesh", false)
+	# "Save Mesh" writes what is in the scene, so it tracks the toggle rather than the device: OFF
+	# drops every block mesh, leaving nothing to save.
+	_set_controller_disabled("mesh_save", not active)
+
+## Phone-menu "Save Mesh" button: write the current scan to a JSON snapshot for the editor dock.
+## Where it landed comes back through snapshot_saved, and a failure through the error signal.
+func _on_tc_mesh_save() -> void:
+	print("[demo] save mesh")
+	_mesh.save_snapshot()
+
+## The mesh component wrote a snapshot. The full path goes on the Status label because that is what
+## the user needs in order to `adb pull` it.
+func _on_mesh_snapshot_saved(path: String, block_count: int) -> void:
+	print("[demo] mesh snapshot -> %s (%d blocks)" % [path, block_count])
+	if _status:
+		_status.text = "Mesh saved (%d blocks): %s" % [block_count, path]
 
 ## Phone-menu "Record" toggle, driving the XrealVideoRecorder component: with the camera on it
 ## records the camera+AR blend, with the camera off the AR view alone. The resulting state comes
@@ -446,6 +469,13 @@ func _set_controller_toggle(control_name: String, on: bool) -> void:
 	var ps := get_node_or_null(^"PhoneScreen")
 	if ps and ps.has_method(&"set_toggle"):
 		ps.set_toggle(control_name, on)
+
+## Grey out a phone-menu control, for a state its own toggle governs rather than the device: "Save
+## Mesh" is inert until meshing is on. Capability gating goes through _apply_capabilities instead.
+func _set_controller_disabled(control_name: String, disabled: bool) -> void:
+	var ps := get_node_or_null(^"PhoneScreen")
+	if ps and ps.has_method(&"set_disabled"):
+		ps.set_disabled(control_name, disabled)
 
 ## Mark a phone-menu control as mid-switch (inert, labelled "…").
 func _set_controller_busy(control_name: String, busy: bool) -> void:
