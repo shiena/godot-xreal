@@ -76,7 +76,7 @@ static func request_app_audio_consent() -> void:
 	var projection := _projection_class()
 	if projection == null:
 		return
-	var activity = Engine.get_singleton(&"AndroidRuntime").getActivity()
+	var activity := XrealAndroidBridge.get_activity()
 	if activity != null:
 		projection.request(activity)
 
