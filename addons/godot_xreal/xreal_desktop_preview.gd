@@ -37,7 +37,9 @@ const WINDOW_GAP := 24
 
 ## Turn off to keep the preview window closed (the component then does nothing at all).
 @export var enabled := true
+## Window title. The side that currently holds the mouse and keys follows it in brackets.
 @export var window_title := "XREAL glasses preview"
+## Size of the preview window, in pixels.
 @export var window_size := Vector2i(1280, 720)
 ## Flycam speed in m/s.
 @export var move_speed := 2.5

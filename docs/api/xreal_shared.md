@@ -51,6 +51,12 @@ The live XrealCameraFeed, or null while the camera is off or absent. Consumers p
 
 The XrealHeadTracker (head rig), or null while it does not exist yet. It is never auto-created, because the app owns the rig's lifecycle and may spawn it late, so callers re-poll each frame or at each use.
 
+<a id="method-find_preview_head"></a>
+
+### static find_preview_head(tree: SceneTree) -> Node3D
+
+The desktop preview window's head node, or null. It is the off-device stand-in for the head tracker, so head-locked content parents to whichever of the two exists: the tracker on device, this in the editor. Null on device, and in a scene with no xreal_desktop_preview.tscn.
+
 <a id="method-get_ar"></a>
 
 ### static get_ar(tree: SceneTree) -> Node
@@ -132,3 +138,4 @@ Android will only let an app capture playback audio through a MediaProjection, a
 | <a id="constant-GROUP_HAND_TRACKER"></a>`GROUP_HAND_TRACKER` | `&"xreal_shared_hand_tracker"` |  |
 | <a id="constant-GROUP_HEAD_TRACKER"></a>`GROUP_HEAD_TRACKER` | `&"xreal_head_tracker"` | xreal_rig.tscn's root joins this group; add it to a custom rig's XrealHeadTracker too. |
 | <a id="constant-GROUP_CAMERA"></a>`GROUP_CAMERA` | `&"xreal_camera_feature"` |  |
+| <a id="constant-GROUP_DESKTOP_PREVIEW"></a>`GROUP_DESKTOP_PREVIEW` | `&"xreal_desktop_preview_head"` | The desktop preview window's head node (xreal_desktop_preview.tscn) joins this group. |
