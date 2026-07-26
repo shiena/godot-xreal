@@ -45,8 +45,18 @@ func _build_ui() -> void:
 	add_child(title)
 
 	var hint := Label.new()
-	hint.text = "Convert a \"Save Mesh\" JSON from the glasses into an ArrayMesh or a .glb."
+	hint.text = "A \"Save Mesh\" JSON from the glasses -> ArrayMesh or .glb."
+	hint.tooltip_text = ("Run the demo on an Air 2 Ultra, turn Mesh on, scan, then tap Save Mesh. "
+		+ "Pull the file with: adb pull /sdcard/Android/data/<package>/files/MeshSave")
 	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	# Cap the wrapped height. An autowrap Label reports its *wrapped* height as its minimum, and a
+	# dock tab that has never been the active one was never laid out, leaving it about 17 px wide, so
+	# it wraps to hundreds of lines and asks for thousands of px. The editor sizes hidden tabs too
+	# (use_hidden_tabs_for_min_size), so that minimum pushes the dock below it, FileSystem, off-screen
+	# until this tab is first opened. Same trap as vendor_import_dock's help label, capped tighter
+	# here because this dock has more rows to fit under it.
+	hint.max_lines_visible = 2
+	hint.modulate = Color(1, 1, 1, 0.75)
 	add_child(hint)
 
 	# The snapshot lives outside the project (it was pulled off a phone), so this browses the whole
@@ -75,18 +85,21 @@ func _build_ui() -> void:
 	orow.add_child(_output_edit)
 	add_child(orow)
 
+	# Side by side: this dock has enough rows already, and a dock slot's minimum height is the
+	# maximum over every tab in it, so each row saved here is a row FileSystem keeps.
+	var formats := HBoxContainer.new()
 	_res_check = CheckBox.new()
-	_res_check.text = "ArrayMesh (.res)"
+	_res_check.text = "ArrayMesh"
 	_res_check.button_pressed = true
-	_res_check.tooltip_text = ("Native resource: one surface per mesh block, the class ids kept "
+	_res_check.tooltip_text = ("Writes .res. One surface per block and class, the class ids kept "
 		+ "verbatim in the resource metadata.")
-	add_child(_res_check)
-
+	formats.add_child(_res_check)
 	_glb_check = CheckBox.new()
-	_glb_check.text = "glTF binary (.glb)"
-	_glb_check.tooltip_text = ("Portable, for Blender and the like. The class colours travel as "
-		+ "vertex colours; the ids themselves do not survive the format.")
-	add_child(_glb_check)
+	_glb_check.text = "glTF"
+	_glb_check.tooltip_text = ("Writes .glb, for Blender and the like. The class colours travel as "
+		+ "materials; the ids themselves do not survive the format.")
+	formats.add_child(_glb_check)
+	add_child(formats)
 
 	var convert := Button.new()
 	convert.text = "Convert"
@@ -94,9 +107,14 @@ func _build_ui() -> void:
 	add_child(convert)
 
 	_status = RichTextLabel.new()
-	_status.fit_content = true
-	_status.custom_minimum_size = Vector2(0, 60)
 	_status.bbcode_enabled = true
+	_status.selection_enabled = true  # the written paths are worth copying out
+	# A floor only, and deliberately no fit_content: fit_content makes the minimum height the
+	# *content* height measured at the current width, which in a never-shown dock tab is about 17 px,
+	# so a multi-line result asks for thousands of px and pushes FileSystem off-screen. The result
+	# scrolls inside the label instead, and EXPAND_FILL still hands it every pixel the dock has.
+	_status.custom_minimum_size = Vector2(0, 48)
+	_status.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	add_child(_status)
 
 func _on_browse() -> void:
