@@ -77,6 +77,12 @@ Per-vertex semantic class -> colour, keyed by the XrealSystem.MESH_LABEL_* value
 
 Grey background, blue wall, purple building, green floor, cyan ceiling, slate highway, tan sidewalk, lime grass, orange door, pink table. The gaps at 3 and 9 are gaps in the SDK's own enum.
 
+<a id="constant-LABEL_NAMES"></a>
+
+### LABEL_NAMES = {0: "background", 1: "wall", 2: "building", 4: "floor", 5: "ceiling", 6: "highway", 7: "sidewalk", 8: "grass", 10: "door", 11: "table"}
+
+Class id -> name, the SDK's own enum spellings in lower case. The snapshot converter names each surface and material after these, so a scan opened in Blender reads "wall" and "floor" rather than a colour someone has to remember.
+
 <a id="constant-UNKNOWN_LABEL_COLOR"></a>
 
 ### UNKNOWN_LABEL_COLOR = Color(1, 0.15, 0.15, 1)

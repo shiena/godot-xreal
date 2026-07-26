@@ -16,6 +16,8 @@ adb pull /sdcard/Android/data/&lt;package>/files/MeshSave
 
 Point this dock at one of those files and convert. From then on the real scan is in the scene, and iterating on anything that consumes the mesh no longer costs a redeploy and a rescan.
 
+The output splits on both axes at once, block and semantic class: surfaces come out named `block_&lt;id>_&lt;class>`, each with the flat-coloured material of its class. So a converted scan opened in Blender lists "wall", "floor" and "ceiling" among its materials, and each class can be selected, hidden or exported on its own rather than only looked at.
+
 ## Constants
 
 | Constant | Value | Description |
