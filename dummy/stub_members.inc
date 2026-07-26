@@ -187,13 +187,23 @@ static const StubConst _c_XrealSystem[] = {
   {"ANCHOR_QUALITY_INSUFFICIENT",0},
   {"ANCHOR_QUALITY_SUFFICIENT",1},
   {"ANCHOR_QUALITY_GOOD",2},
+  {"MESH_LABEL_BACKGROUND",0},
+  {"MESH_LABEL_WALL",1},
+  {"MESH_LABEL_BUILDING",2},
+  {"MESH_LABEL_FLOOR",4},
+  {"MESH_LABEL_CEILING",5},
+  {"MESH_LABEL_HIGHWAY",6},
+  {"MESH_LABEL_SIDEWALK",7},
+  {"MESH_LABEL_GRASS",8},
+  {"MESH_LABEL_DOOR",10},
+  {"MESH_LABEL_TABLE",11},
 };
 static const StubMembers stub_members[] = {
   {"XrealAR",0,0,_s_XrealAR,13,0,0},
   {"XrealCameraFeed",_m_XrealCameraFeed,5,0,0,0,0},
   {"XrealHandTracker",0,0,0,0,0,0},
   {"XrealHeadTracker",_m_XrealHeadTracker,3,_s_XrealHeadTracker,10,_c_XrealHeadTracker,9},
-  {"XrealSystem",_m_XrealSystem,67,0,0,_c_XrealSystem,16},
+  {"XrealSystem",_m_XrealSystem,67,0,0,_c_XrealSystem,26},
 };
 enum { STUB_MEMBERS_COUNT = sizeof(stub_members) / sizeof(stub_members[0]) };
-#define STUB_SN_POOL 517
+#define STUB_SN_POOL 527
