@@ -247,9 +247,18 @@ Godot-side (see the layout note below — the flip is one step short of the pose
 **Editor round trip (2026-07-26).** `save_snapshot()` writes every block on screen to one JSON file
 (base64 float32/int32/u8 payloads, already in Godot space), on Android under
 `getExternalFilesDir(null)/MeshSave` so `adb pull` reaches it without root, since Godot maps `user://`
-to internal storage. The `XREAL Mesh Snapshot` editor dock turns a pulled file into an `ArrayMesh`
-(one surface per block, class ids in resource metadata) or a `.glb`. It replaces the SDK's "Use Meshes
-in the Editor", which writes `.obj` and therefore drops the classification entirely.
+to internal storage. (The SDK's own sample writes to `Application.persistentDataPath`, which resolves
+to the same directory.) The `XREAL Mesh Snapshot` editor dock turns a pulled file into an `ArrayMesh`
+or a `.glb`, splitting surfaces on **both axes, block and class** (`block_<id>_<class>`, one shared
+flat-coloured material per class, per-vertex ids kept in resource metadata).
+
+It replaces the SDK's "Use Meshes in the Editor". That one is pure C# in `Samples~/AR Features/
+Meshing/Scripts/` with no native involvement (`libXREALXRPlugin.so` exports `SaveTrackableAnchor` but
+nothing for meshes), writing `.obj` per block, or per block-and-label from `SaveFrackingMesh`. So it
+does keep the classification, in file names rather than in the geometry, but it loses the per-vertex
+ids: `MeshClassificationFracking` assigns each triangle the class of its **first corner**, reading the
+other two and discarding them, and copies every vertex of the block into every class mesh. Ours votes
+by majority and remaps to only the vertices each class touches.
 
 **Semantic classification (2026-07-26).** `labels` is the `vector<u8>` at block `+0x68`, one
 `NRMeshingVertexSemanticLabel` per **vertex**, copied out alongside the geometry (it used to be freed

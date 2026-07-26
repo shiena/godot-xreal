@@ -13,6 +13,11 @@ extends VBoxContainer
 ##
 ## Point this dock at one of those files and convert. From then on the real scan is in the scene,
 ## and iterating on anything that consumes the mesh no longer costs a redeploy and a rescan.
+##
+## The output splits on both axes at once, block and semantic class: surfaces come out named
+## `block_<id>_<class>`, each with the flat-coloured material of its class. So a converted scan
+## opened in Blender lists "wall", "floor" and "ceiling" among its materials, and each class can be
+## selected, hidden or exported on its own rather than only looked at.
 
 ## The runtime component owns the snapshot format and the class palette; they are read from it here
 ## rather than restated, so the two halves cannot drift apart.
@@ -26,6 +31,7 @@ var _res_check: CheckBox
 var _glb_check: CheckBox
 var _status: RichTextLabel
 var _file_dialog: EditorFileDialog
+var _materials := {}  # class id (-1 = unclassified) -> the one material shared by every surface of it
 
 func _ready() -> void:
 	_build_ui()
@@ -120,8 +126,8 @@ func _on_convert() -> void:
 		return
 	var written := _write_outputs(mesh, path)
 	if not written.is_empty():
-		_ok("Wrote %s\n%d blocks, %d vertices."
-			% [", ".join(written), mesh.get_surface_count(), _vertex_total(mesh)])
+		_ok("Wrote %s\n%d surfaces, %d vertices\nclasses: %s"
+			% [", ".join(written), mesh.get_surface_count(), _vertex_total(mesh), _classes_present()])
 
 ## Write whichever formats are ticked and return their paths, or [] once a failure was reported.
 func _write_outputs(mesh: ArrayMesh, snapshot_path: String) -> Array[String]:
@@ -174,39 +180,112 @@ func _read_snapshot(path: String) -> Dictionary:
 		return {}
 	return doc
 
-## One ArrayMesh, one surface per block, named after the block id so the origin of each piece stays
-## visible in the editor. Returns null after reporting an empty result.
+## One ArrayMesh whose surfaces are split on both axes at once, block and class, named
+## `block_<id>_<class>`. Both are worth keeping: the block id says which piece of the scan a surface
+## came from, and the class says what it is. Blocks the backend never classified become a single
+## `block_<id>` surface.
+##
+## Returns null after reporting an empty result.
 func _build_mesh(doc: Dictionary) -> ArrayMesh:
 	var mesh := ArrayMesh.new()
 	var raw_labels := {}
+	_materials.clear()
 	for entry in doc.get("blocks", []):
 		var block: Dictionary = entry
+		var id: String = block.get("id", "")
 		var verts := _to_vector3_array(block.get("vertices", ""))
 		var indices := _from_base64(block.get("indices", "")).to_int32_array()
 		if verts.is_empty() or indices.is_empty():
 			continue
-		var arrays := []
-		arrays.resize(Mesh.ARRAY_MAX)
-		arrays[Mesh.ARRAY_VERTEX] = verts
 		var normals := _to_vector3_array(block.get("normals", ""))
-		if normals.size() == verts.size():
-			arrays[Mesh.ARRAY_NORMAL] = normals
+		if normals.size() != verts.size():
+			normals = PackedVector3Array()
 		var labels := _from_base64(block.get("labels", ""))
 		if labels.size() == verts.size():
-			arrays[Mesh.ARRAY_COLOR] = _label_colors(labels)
-			raw_labels[block.get("id", "")] = labels
-		arrays[Mesh.ARRAY_INDEX] = indices
-		mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
-		mesh.surface_set_name(mesh.get_surface_count() - 1, "block_%s" % block.get("id", ""))
-		mesh.surface_set_material(mesh.get_surface_count() - 1, _material())
+			raw_labels[id] = labels
+			_add_class_surfaces(mesh, id, verts, normals, indices, labels)
+		else:
+			_add_surface(mesh, "block_%s" % id, verts, normals, indices, _flat_material())
 	if mesh.get_surface_count() == 0:
 		_error("Every block in the snapshot was empty.")
 		return null
-	# ARRAY_COLOR carries the classes as colour, which loses the ids. Keep them beside it, so a
-	# script can still ask what class a vertex is; resource metadata survives the .res round trip.
+	# Splitting by class puts the classification in the structure, but only down to a whole surface.
+	# Keep the per-vertex ids too, so a script can still ask about an individual vertex; resource
+	# metadata survives the .res round trip.
 	if not raw_labels.is_empty():
 		mesh.set_meta(&"xreal_semantic_labels", raw_labels)
 	return mesh
+
+## Split one block's triangles by class and add a surface for each class present in it.
+##
+## A triangle can straddle two classes, because the SDK labels vertices rather than faces, so each
+## one goes to whichever class holds at least two of its three corners. Three distinct classes on
+## one triangle is vanishingly rare and falls back to the first corner. (The SDK's own sample reads
+## all three corners and then uses the first unconditionally, so its boundaries are noisier.)
+func _add_class_surfaces(mesh: ArrayMesh, id: String, verts: PackedVector3Array,
+		normals: PackedVector3Array, indices: PackedInt32Array, labels: PackedByteArray) -> void:
+	var by_class := {}  # class id -> Array of source vertex indices, three per triangle
+	for t in range(0, indices.size() - 2, 3):
+		var a := indices[t]
+		var b := indices[t + 1]
+		var c := indices[t + 2]
+		var label := _triangle_class(labels[a], labels[b], labels[c])
+		var tris: Array = by_class.get(label, [])
+		if tris.is_empty():
+			by_class[label] = tris
+		tris.append(a)
+		tris.append(b)
+		tris.append(c)
+	# Sorted, so the surface order is the class order rather than whatever the hash gives.
+	var classes := by_class.keys()
+	classes.sort()
+	for label in classes:
+		var sub := _extract(verts, normals, by_class[label])
+		_add_surface(mesh, "block_%s_%s" % [id, _label_name(label)],
+			sub[0], sub[1], sub[2], _class_material(label))
+
+## The class of a triangle from its three corner classes: the majority, or the first corner when
+## all three disagree.
+static func _triangle_class(a: int, b: int, c: int) -> int:
+	if a == b or a == c:
+		return a
+	return b if b == c else a
+
+## Pull just the vertices a class's triangles touch into their own arrays, renumbering the indices.
+## Returns [vertices, normals, indices]. The alternative is copying every vertex of the block into
+## every one of its class surfaces, which is what the SDK's sample does and which multiplies the
+## vertex data by the number of classes in the block.
+func _extract(verts: PackedVector3Array, normals: PackedVector3Array,
+		src_indices: Array) -> Array:
+	var remap := PackedInt32Array()
+	remap.resize(verts.size())
+	remap.fill(-1)
+	var out_verts := PackedVector3Array()
+	var out_normals := PackedVector3Array()
+	var out_indices := PackedInt32Array()
+	out_indices.resize(src_indices.size())
+	for i in src_indices.size():
+		var src: int = src_indices[i]
+		if remap[src] == -1:
+			remap[src] = out_verts.size()
+			out_verts.append(verts[src])
+			if not normals.is_empty():
+				out_normals.append(normals[src])
+		out_indices[i] = remap[src]
+	return [out_verts, out_normals, out_indices]
+
+func _add_surface(mesh: ArrayMesh, surface_name: String, verts: PackedVector3Array,
+		normals: PackedVector3Array, indices: PackedInt32Array, material: Material) -> void:
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = verts
+	if normals.size() == verts.size():
+		arrays[Mesh.ARRAY_NORMAL] = normals
+	arrays[Mesh.ARRAY_INDEX] = indices
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	var surface := mesh.get_surface_count() - 1
+	mesh.surface_set_name(surface, surface_name)
+	mesh.surface_set_material(surface, material)
 
 ## Write the mesh out as .glb through a throwaway scene, since GLTFDocument works on node trees.
 func _write_glb(mesh: ArrayMesh, path: String) -> bool:
@@ -228,24 +307,42 @@ func _write_glb(mesh: ArrayMesh, path: String) -> bool:
 		return false
 	return true
 
-## Opaque unshaded material that shows the vertex colours. Unlike the runtime overlay this is not
-## translucent: nothing real is behind it here, and a see-through mesh only obscures itself.
-func _material() -> StandardMaterial3D:
+## One flat-coloured material per class, named after it, shared across every block that contains
+## that class. Sharing matters for the .glb: a fresh material per surface would write one glTF
+## material per block-class pair instead of one per class, and Blender's material list is the
+## legend here.
+##
+## The colour lives in the material rather than in vertex colours, because a surface is
+## single-class by construction now. glTF carries baseColorFactor everywhere, whereas vertex
+## colours depend on the importer choosing to apply them, which Godot's own glTF importer does not.
+func _class_material(label: int) -> StandardMaterial3D:
+	if not _materials.has(label):
+		var mat := _base_material()
+		mat.resource_name = _label_name(label)
+		mat.albedo_color = MeshFeature.LABEL_COLORS.get(label, MeshFeature.UNKNOWN_LABEL_COLOR)
+		_materials[label] = mat
+	return _materials[label]
+
+## For a block the backend never classified: the runtime overlay's tint, opaque here.
+func _flat_material() -> StandardMaterial3D:
+	if not _materials.has(-1):
+		var mat := _base_material()
+		mat.resource_name = "unclassified"
+		mat.albedo_color = Color(0.4, 0.8, 1.0)
+		_materials[-1] = mat
+	return _materials[-1]
+
+## Unlike the runtime overlay these are opaque: nothing real is behind them here, and a see-through
+## mesh only obscures itself.
+func _base_material() -> StandardMaterial3D:
 	var mat := StandardMaterial3D.new()
-	mat.vertex_color_use_as_albedo = true
 	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
 	return mat
 
-## Class ids to vertex colours, using the runtime component's palette so a converted scan reads the
-## same as it did in the glasses.
-func _label_colors(labels: PackedByteArray) -> PackedColorArray:
-	var colors := PackedColorArray()
-	colors.resize(labels.size())
-	for i in labels.size():
-		var c: Color = MeshFeature.LABEL_COLORS.get(labels[i], MeshFeature.UNKNOWN_LABEL_COLOR)
-		colors[i] = c.srgb_to_linear()
-	return colors
+## The SDK's name for a class, or "class<n>" for a value a future taxonomy might add.
+static func _label_name(label: int) -> String:
+	return MeshFeature.LABEL_NAMES.get(label, "class%d" % label)
 
 ## Bytes from base64, tolerating the "" that an absent or empty array is written as: Marshalls
 ## treats empty input as an error and logs it.
@@ -262,6 +359,15 @@ func _to_vector3_array(encoded: String) -> PackedVector3Array:
 	for i in out.size():
 		out[i] = Vector3(floats[i * 3], floats[i * 3 + 1], floats[i * 3 + 2])
 	return out
+
+## The classes the conversion produced, for the status line: it says at a glance whether the scan
+## was classified at all, and which surfaces to look for.
+func _classes_present() -> String:
+	var names: Array[String] = []
+	for label in _materials:
+		names.append("unclassified" if label == -1 else _label_name(label))
+	names.sort()
+	return ", ".join(names)
 
 func _vertex_total(mesh: ArrayMesh) -> int:
 	var total := 0

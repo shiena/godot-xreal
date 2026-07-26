@@ -52,6 +52,21 @@ const LABEL_COLORS := {
 	10: Color(1.00, 0.55, 0.10),  # DOOR
 	11: Color(0.95, 0.25, 0.65),  # TABLE
 }
+## Class id -> name, the SDK's own enum spellings in lower case. The snapshot converter names each
+## surface and material after these, so a scan opened in Blender reads "wall" and "floor" rather
+## than a colour someone has to remember.
+const LABEL_NAMES := {
+	0: "background",
+	1: "wall",
+	2: "building",
+	4: "floor",
+	5: "ceiling",
+	6: "highway",
+	7: "sidewalk",
+	8: "grass",
+	10: "door",
+	11: "table",
+}
 ## Colour for a label value outside LABEL_COLORS, which only a future SDK taxonomy would produce.
 ## Deliberately an alarming red, so an unmapped class shows up instead of blending in.
 const UNKNOWN_LABEL_COLOR := Color(1.0, 0.15, 0.15)
