@@ -336,6 +336,18 @@ Point the anchor subsystem at a writable directory for its saved-anchor map file
 
 Keep the glasses display on by bypassing the proximity (wear) sensor auto-off. Returns the SDK status (0 = success), or `-1` when unavailable. The SDK no-ops until the session is live, so retry after `is_session_started()` turns true.
 
+<a id="method-set_focus_plane"></a>
+
+### set_focus_plane(point: Vector3, normal: Vector3) -> bool
+
+Point the compositor's reprojection plane at `point`, with surface `normal`, both in **head-local Godot space**: the head tracker's own frame, not the world. Returns whether the call reached the SDK.
+
+Before every VSync the compositor warps the last rendered frame to the newest head pose, and it does that against a plane. Content far from that plane is what smears and doubles when the head moves. The SDK pins the plane at a fixed 1.4 m unless an app moves it, so an app whose content sits at arm's length gains from setting it to whatever the user is looking at.
+
+This is a per-frame setting, not a mode. It holds its last value, so call it every frame, or use `addons/godot_xreal/features/xreal_focus_plane.tscn`, which drives it from a forward raycast the way the SDK's `FocusManager` does.
+
+`normal` points back at the viewer, so `Vector3(0, 0, 1)`, the Godot camera's backward axis, is the default for a plane square to the gaze.
+
 <a id="method-set_glasses_space_mode"></a>
 
 ### set_glasses_space_mode(mode: int) -> int
