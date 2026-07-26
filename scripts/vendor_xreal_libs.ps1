@@ -9,24 +9,24 @@
       - 7 .aar           -> addons/godot_xreal/android/  (shipped into the APK by export_plugin.gd:
                                                           Java/JNI layer + manifest merge; Gradle
                                                           also merges each .aar's jni/arm64-v8a/*.so
-                                                          — the NR libs — into the APK, so they are
+                                                          (the NR libs) into the APK, so they are
                                                           NOT extracted separately)
       - nr_plugins.json  -> addons/godot_xreal/android/  (NR perception manifest; makes the loader
-                                                          load libnr_image_tracking.so — staged into
+                                                          load libnr_image_tracking.so, staged into
                                                           the APK's assets/ by export_plugin.gd)
       - trackableImageTools -> addons/godot_xreal/tools/ (host build tool, NOT in the APK: generates
                                                           the image-tracking DB blob from PNGs)
 
-    Extraction only — the XrealBridge Java sources are compiled by the export's gradle build
+    Extraction only: the XrealBridge Java sources are compiled by the export's gradle build
     (export_plugin.gd stages them into the build template), not here.
 
-    Nothing is downloaded — you supply a local copy of the package. nractivitylife*.aar is
+    Nothing is downloaded: you supply a local copy of the package. nractivitylife*.aar is
     DELIBERATELY EXCLUDED: its NRXRActivity/NRXRApp launcher is Unity-specific (instantiates
     com.unity3d.player.UnityPlayer) and must not ship in a Godot app. See docs/guides/android-setup.md.
 
 .PARAMETER XrealPackage
     Either the Unity package root (the folder containing Runtime/Plugins/Android) or the
-    `com.xreal.xr.tar.gz` archive itself — the archive is extracted to a temp dir (removed
+    `com.xreal.xr.tar.gz` archive itself, which is extracted to a temp dir (removed
     afterwards) and its `package/` root is used.
 
 .EXAMPLE
@@ -63,7 +63,7 @@ if ((Test-Path $XrealPackage -PathType Leaf)) {
     }
     $XrealPackage = Join-Path $tempExtract 'package'
     if (-not (Test-Path $XrealPackage)) {
-        # No `package/` root — fall back to whichever top-level dir holds Runtime/Plugins/Android.
+        # No `package/` root, so fall back to whichever top-level dir holds Runtime/Plugins/Android.
         $XrealPackage = Get-ChildItem $tempExtract -Directory |
             Where-Object { Test-Path (Join-Path $_.FullName 'Runtime/Plugins/Android') } |
             Select-Object -First 1 -ExpandProperty FullName
@@ -95,7 +95,7 @@ try {
     # Compare the numeric core (strip any -pre / +build suffix) as a System.Version.
     $verCore = ($pkgVer -split '[-+]')[0]
     if ([version]$verCore -lt [version]$minVersion) {
-        throw "com.xreal.xr $pkgVer is too old — this addon needs $minVersion or newer (the native offsets were RE'd against $minVersion; an older package can crash). Nothing was vendored."
+        throw "com.xreal.xr $pkgVer is too old: this addon needs $minVersion or newer (the native offsets were RE'd against $minVersion; an older package can crash). Nothing was vendored."
     }
     Write-Host "com.xreal.xr version $pkgVer (>= $minVersion) - ok"
 
@@ -116,8 +116,9 @@ try {
         Write-Host "so   $lib"
     }
 
-    # libmedia_codec.so lives under the Camera Features plugin path (the FPV HW encoder — see
-    # docs/plans/fpv-streaming-plan.md). Copy it into jniLibs too (listed in godot_xreal.gdextension).
+    # libmedia_codec.so lives under the Camera Features plugin path; it is the FPV HW encoder, see
+    # docs/plans/fpv-streaming-plan.md. Copy it into jniLibs too, where godot_xreal.gdextension
+    # lists it.
     $mediaCodecSrc = Join-Path $XrealPackage 'Runtime/Scripts/Android/Camera Features/Plugins/Android/arm64/libmedia_codec.so'
     if (Test-Path $mediaCodecSrc) {
         Copy-Item -Path $mediaCodecSrc -Destination (Join-Path $jniDir 'libmedia_codec.so') -Force
@@ -130,7 +131,8 @@ try {
     #        the exact file names are hardcoded there). Besides the Java/JNI layer + manifest merge,
     #        the aars carry the NR native libs at jni/arm64-v8a/ (nr_api.aar: libnr_api.so /
     #        libnr_plugin_6dof.so / libnr_rgb_camera.so, nr_loader.aar: libnr_loader.so,
-    #        nr_common.aar: libnr_libusb.so, nr_spatial_anchor.aar: libnr_spatial_anchor.so, nr_image_tracking.aar: libnr_image_tracking.so) — Gradle merges those into the APK.
+    #        nr_common.aar: libnr_libusb.so, nr_spatial_anchor.aar: libnr_spatial_anchor.so,
+    #        nr_image_tracking.aar: libnr_image_tracking.so), and Gradle merges those into the APK.
     #
     # Log-Control is REQUIRED whenever GlassesDisplayPlugEvent ships: its GlassesInitProvider
     # (a ContentProvider that auto-runs at app startup) references com.xreal.logcontrol.LogControl,
@@ -189,12 +191,12 @@ try {
 
     Write-Host ""
     if ($missing) {
-        Write-Host "INCOMPLETE — still missing:" -ForegroundColor Red
+        Write-Host "INCOMPLETE, still missing:" -ForegroundColor Red
         $missing | ForEach-Object { Write-Host "  - $_" }
         exit 1
     }
     Write-Host "Done: 3 core .so -> jniLibs/arm64-v8a, 7 .aar + nr_plugins.json -> addons/godot_xreal/android, trackableImageTools -> addons/godot_xreal/tools." -ForegroundColor Green
-    Write-Host "(NR .so ship via the .aar; nractivitylife*.aar deliberately excluded — Unity-only launcher.)"
+    Write-Host "(NR .so ship via the .aar; nractivitylife*.aar deliberately excluded: Unity-only launcher.)"
 }
 finally {
     if ($tempExtract) { Remove-Item -Recurse -Force $tempExtract -ErrorAction SilentlyContinue }

@@ -1,13 +1,15 @@
 extends Node3D
 ## Demo-side head-locked live preview of the XREAL RGB camera. The addon's xreal_camera feature
-## only owns the feed (CameraServer registration); whether to SHOW it is the app's choice, so the
-## demo renders it here — the same path the photo/blend/stream features take: discover the live feed
-## via XrealShared.find_camera_feed() and sample its Y/CbCr ImageTextures DIRECTLY (a CameraTexture
-## on a script-fed feed only shows Godot's placeholder). Shader = the addon's spatial YCbCr->RGB one.
+## owns only the feed (CameraServer registration), and showing it is the app's choice, so the demo
+## renders it here. It takes the same path as the photo, blend and stream features: discover the
+## live feed with XrealShared.find_camera_feed() and sample its Y/CbCr ImageTextures DIRECTLY,
+## because a CameraTexture on a script-fed feed only shows Godot's placeholder. The shader is the
+## addon's spatial YCbCr->RGB one.
 ##
 ## The quad is reparented under the head tracker (xreal_head_tracker group) once it exists, so it
-## follows the gaze (head-locked) and is drawn by the eye SubViewports (shared world). Inert off
-## device / while the camera is off: the panel stays hidden (a not-yet-fed shader would show pink).
+## follows the gaze (head-locked) and the eye SubViewports draw it (shared world). It stays inert
+## off device and while the camera is off: the panel keeps hidden, since a not-yet-fed shader
+## would show pink.
 
 ## Show the head-locked preview quad. Turn off to keep the shared camera feed running with no preview.
 @export var show_preview := true
@@ -25,13 +27,13 @@ func _process(_delta: float) -> void:
 			_panel.visible = false
 		return
 	# Discovered per frame (like the photo/blend/stream features), so camera on/off just toggles the
-	# preview with no wiring. Off device this is always null -> the panel stays hidden.
+	# preview with no wiring. Off device this is always null, so the panel stays hidden.
 	var feed := XrealShared.find_camera_feed(get_tree())
 	var live := feed != null and is_instance_valid(feed) and feed.has_method(&"get_y_texture")
 	var yt = feed.get_y_texture() if live else null
 	var ct = feed.get_cbcr_texture() if live else null
 	if yt == null or ct == null:
-		# Camera off / not started / no frame yet — keep the unset-sampler (pink) panel hidden.
+		# Camera off, not started, or no frame yet: keep the unset-sampler (pink) panel hidden.
 		if _panel.visible:
 			_panel.visible = false
 		return
@@ -48,6 +50,6 @@ func _process(_delta: float) -> void:
 		_panel.visible = true
 
 func _exit_tree() -> void:
-	# The panel lives under the tracker once live — take it down with us.
+	# The panel lives under the tracker once live, so take it down with us.
 	if _panel and is_instance_valid(_panel) and _panel.get_parent() != self:
 		_panel.queue_free()

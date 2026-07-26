@@ -2,7 +2,7 @@
 """FPV receive server: RTP in, FLV over WebSocket out, browser plays it.
 
 The server never decodes anything. It reframes bytes: RTP -> access units -> FLV tags -> WebSocket,
-and the browser's own H.264/AAC decoders do the work. That is the whole point of the design — no
+and the browser's own H.264/AAC decoders do the work. That is the whole point of the design: no
 codec library is linked, so no codec copyright licence and no patent licence attaches to this
 server. Only the browser decodes, and it already ships decoders.
 
@@ -573,7 +573,7 @@ def measure_audio_clock(rtp_delta: int, elapsed: float) -> "int | None":
     """Nearest standard AAC rate to the observed RTP-timestamp advance, or None if it is not close.
 
     The rate cannot be read off the wire: LATM with cpresent=0 carries no StreamMuxConfig, so a
-    receiver has to be told — and being told wrongly is silent and ruinous. Assuming 16000 while the
+    receiver has to be told, and being told wrongly is silent and ruinous. Assuming 16000 while the
     app sent 44100 made audio time run 2.756x fast, putting the audio track 86 s ahead of video after
     a minute; the browser showed one frame and froze. The RTP clock *is* the sample rate, so measure
     it instead of trusting a default.

@@ -2,7 +2,7 @@
 # "LF will be replaced by CRLF" churn on Windows working copies).
 * text=auto eol=lf
 
-# Binary — never touch line endings.
+# Binary: never touch line endings.
 *.so   binary
 *.dll  binary
 *.dylib binary

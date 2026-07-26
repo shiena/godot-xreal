@@ -13,9 +13,9 @@ use godot::builtin::Quaternion;
 /// Native head pose written by `XREALGetHeadPoseAtTime`.
 ///
 /// The internal method is `GetHeadPoseAtTime(unsigned long, float*)`, so the output
-/// is a flat `float` array. It maps to the NRSDK `NRPose`, whose documented layout is
-/// **rotation first** (`NRRotation{x,y,z,w}`) then **position** (`NRPosition{x,y,z}`)
-/// — the opposite order from Unity's `Pose`.
+/// is a flat `float` array. It maps to the NRSDK `NRPose`, whose documented layout puts
+/// **rotation first**, `NRRotation{x,y,z,w}`, then **position**, `NRPosition{x,y,z}`,
+/// the opposite order from Unity's `Pose`.
 #[repr(C)]
 #[derive(Clone, Copy, Default, Debug)]
 pub struct NrPose {
@@ -96,30 +96,30 @@ pub struct UserDefinedSettings {
 //   - C wrappers tail-call the methods, so the C export return == the method return
 //     (NRSDK uniformly returns `NRResult` = i32, 0 on success).
 
-/// `int XREALGetHMDTimeNanos(uint64_t* out_time_ns)` — writes the HMD clock through an
-/// out-pointer. RE: SessionManager-style wrappers appear to use `0` as success, while
-/// libXREALXRPlugin.so's InputManager export returns bool-style `1` on success.
+/// `int XREALGetHMDTimeNanos(uint64_t* out_time_ns)` writes the HMD clock through an
+/// out-pointer. From the RE: SessionManager-style wrappers appear to use `0` as success, while
+/// libXREALXRPlugin.so's InputManager export returns a bool-style `1` on success.
 pub type FnHmdTimeNanos = unsafe extern "C" fn(*mut u64) -> i32;
 
-/// `int XREALGetHeadPoseAtTime(uint64_t time_ns, NrPose* out)` — writes pose to `out`.
-/// RE: use this compact 7-float layout only with libXREALNativeSessionManager.so. The
+/// `int XREALGetHeadPoseAtTime(uint64_t time_ns, NrPose* out)` writes the pose to `out`.
+/// From the RE: use this compact 7-float layout only with libXREALNativeSessionManager.so. The
 /// libXREALXRPlugin.so export of the same name writes a larger Unity-facing pose block.
 pub type FnGetHeadPoseAtTime = unsafe extern "C" fn(u64, *mut NrPose) -> i32;
 
 /// `int GetHeadPoseAtTime(uint64_t time_ns, float out[16])` in **libXREALXRPlugin.so**.
 ///
-/// Distinct from the session-manager `XREALGetHeadPoseAtTime`: this exported wrapper
-/// (@0x48cc8) tail-calls `InputManager::GetHeadPoseAtTime` @0x7f4a0, which copies a
-/// **64-byte / 16-float** block straight from `NativePerception::GetHeadPose`'s struct
-/// return — i.e. the *display* subsystem's HMD pose, the exact source the compositor
-/// reprojects the glasses layer with (so driving the eye cameras from it should yield a
-/// head-locked peek window). Returns 1 on success. Device-pinned layout of the 16 floats:
-/// a **4×4 row-major transform** (rotation 3×3 upper-left, position in floats 12/13/14);
-/// see the RE map in `docs/archive/multiview-investigation.md`.
+/// This is distinct from the session-manager `XREALGetHeadPoseAtTime`: the exported wrapper
+/// @0x48cc8 tail-calls `InputManager::GetHeadPoseAtTime` @0x7f4a0, which copies a
+/// **64-byte, 16-float** block straight from `NativePerception::GetHeadPose`'s struct
+/// return. That is the *display* subsystem's HMD pose, the exact source the compositor
+/// reprojects the glasses layer with, so driving the eye cameras from it should yield a
+/// head-locked peek window. It returns 1 on success. The device-pinned layout of the 16 floats is
+/// a **4x4 row-major transform**, with the rotation in the upper-left 3x3 and the position in
+/// floats 12, 13 and 14; see the RE map in `docs/archive/multiview-investigation.md`.
 pub type FnGetHeadPoseDisplay = unsafe extern "C" fn(u64, *mut [f32; 16]) -> i32;
 
-/// `void XREALLoadAPI(void)` — wires the session-manager perception delegate; must run
-/// before pose queries. (Return value, if any, is ignored.)
+/// `void XREALLoadAPI(void)` wires the session-manager perception delegate and has to run
+/// before any pose query. Its return value, if it has one, is ignored.
 pub type FnLoadApi = unsafe extern "C" fn();
 
 /// `bool XREALIsSessionStarted(void)`.
@@ -158,10 +158,10 @@ pub struct XrealFrameMetaData {
 }
 pub type FnGetFrameMetaData = unsafe extern "C" fn() -> XrealFrameMetaData;
 
-/// `IntPtr GetPluginVersion(void)` (C# DllImport) — a NUL-terminated C string.
+/// `IntPtr GetPluginVersion(void)`, a C# DllImport, returning a NUL-terminated C string.
 pub type FnGetPluginVersion = unsafe extern "C" fn() -> *const c_char;
 
-/// `XREALDeviceType GetDeviceType(void)` (C# DllImport) — enum value as `int`.
+/// `XREALDeviceType GetDeviceType(void)`, a C# DllImport, returning the enum value as an `int`.
 pub type FnGetDeviceType = unsafe extern "C" fn() -> i32;
 
 /// `int GetTrackingState()` / `int GetTrackingReason()` / `int GetTrackingType()`
@@ -175,7 +175,7 @@ pub type FnSwitchTrackingType = unsafe extern "C" fn(i32) -> bool;
 
 // --- RGB camera (libXREALXRPlugin.so, flat C ABI; see docs/plans/camera-feed-plan.md) ---
 
-/// `NRSize2i` / Unity `Vector2Int` — plane or frame dimensions (RGB camera).
+/// `NRSize2i`, Unity's `Vector2Int`: plane or frame dimensions for the RGB camera.
 #[repr(C)]
 #[derive(Clone, Copy, Default, Debug)]
 pub struct NrSize2i {
@@ -197,7 +197,8 @@ pub type FnTryAcquireLatestImage = unsafe extern "C" fn(*mut i32, *mut NrSize2i,
 /// bytes). The pointer is valid until the handle is disposed.
 pub type FnTryGetRgbCameraDataPlane =
     unsafe extern "C" fn(i32, i32, *mut *mut c_void, *mut NrSize2i) -> bool;
-/// `DisposeRGBCameraDataHandle(frameHandle)` — free a frame acquired by [`FnTryAcquireLatestImage`].
+/// `DisposeRGBCameraDataHandle(frameHandle)` frees a frame acquired by
+/// [`FnTryAcquireLatestImage`].
 pub type FnDisposeRgbCameraDataHandle = unsafe extern "C" fn(i32);
 
 // --- Plane detection (libXREALXRPlugin.so, flat C ABI; see docs/plans/ar-features-plan.md) ---
@@ -206,8 +207,8 @@ pub type FnDisposeRgbCameraDataHandle = unsafe extern "C" fn(i32);
 // 6DoF session. Poses are in **Unity space** (left-handed) and need the same conversion the head/hand
 // poses use (`(x, -y, -z)` / quaternion `(-x, -y, z, w)`).
 
-/// AR Foundation `TrackableId` — a 128-bit id (`m_SubId1`, `m_SubId2`). Passed **by value** (16 bytes,
-/// AArch64 x0/x1) into the boundary/anchor calls.
+/// AR Foundation's `TrackableId`, a 128-bit id of `m_SubId1` and `m_SubId2`. It is passed **by
+/// value**, 16 bytes in AArch64 x0 and x1, into the boundary and anchor calls.
 #[repr(C)]
 #[derive(Clone, Copy, Default, PartialEq, Eq, Hash, Debug)]
 pub struct TrackableId {
@@ -215,7 +216,8 @@ pub struct TrackableId {
     pub sub_id_2: u64,
 }
 
-/// Unity `Pose` — position (`Vector3`) then rotation (`Quaternion` x,y,z,w). 28 bytes, no padding.
+/// Unity's `Pose`: a position `Vector3` then a rotation `Quaternion` of x, y, z, w. It is 28 bytes,
+/// with no padding.
 #[repr(C)]
 #[derive(Clone, Copy, Default, Debug)]
 pub struct UnityPose {
@@ -223,9 +225,9 @@ pub struct UnityPose {
     pub rotation: [f32; 4],
 }
 
-/// `ARSubsystemChanges` (`XREALPlaneSubsystem.cs:86`) — the added/updated/removed poll shape shared by
-/// plane / image / anchor. The pointers index native arrays of `element_size`-byte elements and are
-/// valid only until the next poll; copy out immediately.
+/// `ARSubsystemChanges`, from `XREALPlaneSubsystem.cs:86`: the added, updated and removed poll shape
+/// shared by planes, images and anchors. The pointers index native arrays of `element_size`-byte
+/// elements and stay valid only until the next poll, so copy out immediately.
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub struct ArSubsystemChanges {
@@ -235,8 +237,8 @@ pub struct ArSubsystemChanges {
     pub updated_count: i32,
     pub removed_ptr: *const c_void,
     pub removed_count: i32,
-    /// Native element stride — used to walk the arrays by offset (robust to AR Foundation version
-    /// differences in trailing struct fields).
+    /// Native element stride, used to walk the arrays by offset. It stays robust against AR Foundation
+    /// version differences in the trailing struct fields.
     pub element_size: i32,
 }
 
@@ -277,20 +279,22 @@ pub mod plane_detection_mode {
     pub const BOTH: i32 = 3;
 }
 
-/// `PlaneDetectionMode GetPlaneDetectionMode()` — the active detection-mode flags.
+/// `PlaneDetectionMode GetPlaneDetectionMode()` returns the active detection-mode flags.
 pub type FnGetPlaneDetectionMode = unsafe extern "C" fn() -> i32;
-/// `bool SetPlaneDetectionMode(PlaneDetectionMode)` — enable horizontal/vertical detection.
+/// `bool SetPlaneDetectionMode(PlaneDetectionMode)` enables horizontal and vertical detection.
 pub type FnSetPlaneDetectionMode = unsafe extern "C" fn(i32) -> bool;
-/// `void GetPlaneDetectionChanges(out ARSubsystemChanges)` — added/updated/removed `BoundedPlane`s.
+/// `void GetPlaneDetectionChanges(out ARSubsystemChanges)` returns the added, updated and removed
+/// `BoundedPlane`s.
 pub type FnGetPlaneDetectionChanges = unsafe extern "C" fn(*mut ArSubsystemChanges);
-/// `int GetPlaneBoundaryVertexCount(TrackableId)` — boundary-polygon vertex count.
+/// `int GetPlaneBoundaryVertexCount(TrackableId)` returns the boundary-polygon vertex count.
 pub type FnGetPlaneBoundaryVertexCount = unsafe extern "C" fn(TrackableId) -> i32;
-/// `void GetPlaneBoundaryVertexData(TrackableId, void* out)` — writes `count` `Vector2`s (plane-local).
+/// `void GetPlaneBoundaryVertexData(TrackableId, void* out)` writes `count` plane-local `Vector2`s.
 pub type FnGetPlaneBoundaryVertexData = unsafe extern "C" fn(TrackableId, *mut c_void);
 
-/// `XREALSupportedFeature` (`XREALPlugin.cs`) — the per-device capability queried by
-/// [`FnIsHmdFeatureSupported`]. The SDK uses `RGB_CAMERA` to gate the camera pipeline (so the Air 2
-/// Ultra, which has no RGB camera, reports `false` and never opens it — see `XREALCameraInitializer.cs`).
+/// `XREALSupportedFeature`, from `XREALPlugin.cs`: the per-device capability queried by
+/// [`FnIsHmdFeatureSupported`]. The SDK uses `RGB_CAMERA` to gate the camera pipeline, so the Air 2
+/// Ultra, which has no RGB camera, reports `false` and never opens it; see
+/// `XREALCameraInitializer.cs`.
 pub mod hmd_feature {
     pub const RGB_CAMERA: i32 = 1;
     pub const WEARING_STATUS: i32 = 2;
@@ -298,12 +302,14 @@ pub mod hmd_feature {
     pub const HEAD_TRACKING_ROTATION: i32 = 4;
     pub const HEAD_TRACKING_POSITION: i32 = 5;
 }
-/// `bool IsHMDFeatureSupported(XREALSupportedFeature)` — whether the connected glasses support a
-/// feature (`hmd_feature`). The correct, device-accurate gate before opening the RGB camera etc.
+/// `bool IsHMDFeatureSupported(XREALSupportedFeature)` reports whether the connected glasses
+/// support an `hmd_feature`. It is the correct, device-accurate gate before opening the RGB camera
+/// and the like.
 pub type FnIsHmdFeatureSupported = unsafe extern "C" fn(i32) -> bool;
 
-/// `XREALComponent` device ids for the geometry APIs below (distinct from [`hmd_feature`] — here the
-/// RGB camera is `2`, not `1`). See docs/plans/coordinate-systems-notes.md.
+/// `XREALComponent` device ids for the geometry APIs below. They are distinct from
+/// [`hmd_feature`]: here the RGB camera is `2`, not `1`. See
+/// docs/plans/coordinate-systems-notes.md.
 pub mod component {
     pub const DISPLAY_LEFT: i32 = 0;
     pub const DISPLAY_RIGHT: i32 = 1;
@@ -314,27 +320,33 @@ pub mod component {
     #[allow(dead_code)]
     pub const MAGNETIC: i32 = 5;
 }
-// --- Device / camera geometry (libXREALXRPlugin.so C exports; Unity space). Confirmed export symbols
-// with `llvm-objdump -T`. See docs/plans/coordinate-systems-notes.md. ---
-/// `GetDevicePoseFromHead(component, &pose) -> bool`. `pose` is a Unity `Pose`: position `[x,y,z]` then
-/// rotation quaternion `[x,y,z,w]` (7 floats) — the device's extrinsic relative to Head, in Unity space.
+// --- Device and camera geometry, the libXREALXRPlugin.so C exports, in Unity space. The export
+// symbols were confirmed with `llvm-objdump -T`. See docs/plans/coordinate-systems-notes.md. ---
+// `GetDevicePoseFromHead(component, &pose) -> bool`. `pose` is a Unity `Pose`: the position
+// `[x,y,z]` then the rotation quaternion `[x,y,z,w]`, 7 floats in all, giving the device's
+// extrinsic relative to Head in Unity space.
 pub type FnGetDevicePoseFromHead = unsafe extern "C" fn(i32, *mut [f32; 7]) -> bool;
-/// `GetDeviceResolution(component, &size) -> bool` — pixel resolution (`NrSize2i` = Unity `Vector2Int`).
+/// `GetDeviceResolution(component, &size) -> bool` returns the pixel resolution as an `NrSize2i`,
+/// which is Unity's `Vector2Int`.
 pub type FnGetDeviceResolution = unsafe extern "C" fn(i32, *mut NrSize2i) -> bool;
-/// `GetCameraIntrinsic(component, &focalLength, &principalPoint) -> bool` — `focalLength=(fx,fy)` and
-/// `principalPoint=(cx,cy)` in pixels (Unity `Vector2` = 2 floats each).
+/// `GetCameraIntrinsic(component, &focalLength, &principalPoint) -> bool` returns
+/// `focalLength=(fx,fy)` and `principalPoint=(cx,cy)` in pixels, each a Unity `Vector2` of 2
+/// floats.
 pub type FnGetCameraIntrinsic = unsafe extern "C" fn(i32, *mut [f32; 2], *mut [f32; 2]) -> bool;
-/// `GetCameraProjectionMatrix(component, z_near, z_far, &mat) -> bool` — a 4x4 projection matrix
-/// (16 floats, Unity `Matrix4x4` column-major).
+/// `GetCameraProjectionMatrix(component, z_near, z_far, &mat) -> bool` returns a 4x4 projection
+/// matrix, 16 floats in Unity's column-major `Matrix4x4`.
 pub type FnGetCameraProjectionMatrix = unsafe extern "C" fn(i32, f32, f32, *mut [f32; 16]) -> bool;
 
-// --- Spatial anchors (libXREALXRPlugin.so flat C exports; see docs/plans/ar-features-plan.md) --------
-// Source: `XREALAnchorSubsystem.cs` `[DllImport]` + demangled `InputManager::*` internals. Needs a
-// 6DoF session AND the vendored `nr_spatial_anchor.aar` backend `.so`. Poses are Unity space — convert
-// like the plane/hand poses. The changes-poll reuses [`ArSubsystemChanges`]; `removed` is `TrackableId[]`.
+// --- Spatial anchors, the libXREALXRPlugin.so flat C exports; see
+// docs/plans/ar-features-plan.md --------
+// The sources are `XREALAnchorSubsystem.cs`'s `[DllImport]` plus the demangled `InputManager::*`
+// internals. They need a 6DoF session AND the vendored `nr_spatial_anchor.aar` backend `.so`. The
+// poses are in Unity space, so convert them like the plane and hand poses. The changes-poll reuses
+// [`ArSubsystemChanges`], and `removed` is a `TrackableId[]`.
 
-/// .NET `System.Guid` — a 128-bit persistence key for a saved anchor. Opaque 16-byte blob, passed by
-/// value (2 GPRs) into [`FnLoadTrackableAnchor`] and written out by [`FnSaveTrackableAnchor`].
+/// .NET's `System.Guid`, a 128-bit persistence key for a saved anchor. It is an opaque 16-byte
+/// blob, passed by value in 2 GPRs into [`FnLoadTrackableAnchor`] and written out by
+/// [`FnSaveTrackableAnchor`].
 #[repr(C)]
 #[derive(Clone, Copy, Default, PartialEq, Eq, Hash, Debug)]
 pub struct Guid {
@@ -363,25 +375,28 @@ pub mod anchor_quality {
     pub const GOOD: i32 = 2;
 }
 
-/// `void SetAnchorMappingFileDirectory(const char* dir)` — where saved-anchor maps are persisted.
+/// `void SetAnchorMappingFileDirectory(const char* dir)` sets where saved-anchor maps are
+/// persisted.
 pub type FnSetAnchorMappingFileDirectory = unsafe extern "C" fn(*const c_char);
-/// `void SetTrackableAnchorEnabled(bool)` — turn the anchor subsystem on/off (call before use).
+/// `void SetTrackableAnchorEnabled(bool)` turns the anchor subsystem on or off; call it before use.
 pub type FnSetTrackableAnchorEnabled = unsafe extern "C" fn(bool);
-/// `bool AcquireNewTrackableAnchor(UnityPose pose, XRTrackedAnchor* out)` — create an anchor at a pose.
-/// `UnityPose` (28 B, non-HFA) is passed **indirectly** by the ABI; declare it by value and Rust matches.
+/// `bool AcquireNewTrackableAnchor(UnityPose pose, XRTrackedAnchor* out)` creates an anchor at a
+/// pose. `UnityPose`, 28 bytes and not an HFA, is passed **indirectly** by the ABI, so declare it by
+/// value and Rust matches.
 pub type FnAcquireNewTrackableAnchor = unsafe extern "C" fn(UnityPose, *mut c_void) -> bool;
-/// `void GetTrackableAnchorChanges(out ARSubsystemChanges)` — added/updated/removed `XRTrackedAnchor`s.
+/// `void GetTrackableAnchorChanges(out ARSubsystemChanges)` returns the added, updated and removed
+/// `XRTrackedAnchor`s.
 pub type FnGetTrackableAnchorChanges = unsafe extern "C" fn(*mut ArSubsystemChanges);
-/// `bool SaveTrackableAnchor(TrackableId, Guid* out)` — persist an anchor; writes its `Guid` key.
+/// `bool SaveTrackableAnchor(TrackableId, Guid* out)` persists an anchor and writes its `Guid` key.
 pub type FnSaveTrackableAnchor = unsafe extern "C" fn(TrackableId, *mut Guid) -> bool;
-/// `bool LoadTrackableAnchor(Guid, XRTrackedAnchor* out)` — restore a saved anchor by its `Guid`.
+/// `bool LoadTrackableAnchor(Guid, XRTrackedAnchor* out)` restores a saved anchor by its `Guid`.
 pub type FnLoadTrackableAnchor = unsafe extern "C" fn(Guid, *mut c_void) -> bool;
-/// `bool RemoveTrackableAnchor(TrackableId)` — drop a tracked anchor.
+/// `bool RemoveTrackableAnchor(TrackableId)` drops a tracked anchor.
 pub type FnRemoveTrackableAnchor = unsafe extern "C" fn(TrackableId) -> bool;
-/// `bool RemapTrackableAnchor(TrackableId)` — re-localize an anchor into the current map.
+/// `bool RemapTrackableAnchor(TrackableId)` re-localizes an anchor into the current map.
 pub type FnRemapTrackableAnchor = unsafe extern "C" fn(TrackableId) -> bool;
-/// `bool EstimateTrackableAnchorQuality(TrackableId, UnityPose, i32* out)` — save-quality estimate
-/// (`anchor_quality`).
+/// `bool EstimateTrackableAnchorQuality(TrackableId, UnityPose, i32* out)` returns a save-quality
+/// estimate, an `anchor_quality`.
 pub type FnEstimateTrackableAnchorQuality =
     unsafe extern "C" fn(TrackableId, UnityPose, *mut i32) -> bool;
 
@@ -391,8 +406,9 @@ pub type FnEstimateTrackableAnchorQuality =
 // reference-image DB blob built by the `trackableImageTools` CLI. The changes-poll reuses
 // [`ArSubsystemChanges`]; `removed` is `TrackableId[]`.
 
-/// `NativeView { void* data; int count; }` (16 B) — a pointer + length view over a managed buffer,
-/// passed **by value** (2 GPRs: `data` in the first, `count` in the low 32 bits of the second).
+/// `NativeView { void* data; int count; }`, 16 bytes: a pointer and length view over a managed
+/// buffer, passed **by value** in 2 GPRs, with `data` in the first and `count` in the low 32 bits of
+/// the second.
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub struct NativeView {
@@ -400,9 +416,10 @@ pub struct NativeView {
     pub count: i32,
 }
 
-/// `ManagedReferenceImage` (56 B, `StructLayout.Sequential`) — one entry of the second `NativeView`
-/// into [`FnInitImageTrackingDatabase`], mapping a baked image `guid` to its metadata. `name`/`texture`
-/// are Unity `GCHandle`/pointer fields → pass null from Godot; `guid` must match the blob's baked guid.
+/// `ManagedReferenceImage`, 56 bytes with `StructLayout.Sequential`: one entry of the second
+/// `NativeView` into [`FnInitImageTrackingDatabase`], mapping a baked image `guid` to its metadata.
+/// `name` and `texture` are Unity `GCHandle` and pointer fields, so pass null from Godot, and `guid`
+/// has to match the blob's baked guid.
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub struct ManagedReferenceImage {
@@ -426,26 +443,27 @@ pub mod xr_tracked_image {
     pub const ELEMENT_SIZE: i32 = 80;
 }
 
-/// `void SetImageTrackingDatabase(u64 handle)` — activate the database from
-/// [`FnInitImageTrackingDatabase`] (pass `0` to disable image tracking).
+/// `void SetImageTrackingDatabase(u64 handle)` activates the database from
+/// [`FnInitImageTrackingDatabase`]; pass `0` to disable image tracking.
 pub type FnSetImageTrackingDatabase = unsafe extern "C" fn(u64);
-/// `void GetImageTrackingChanges(out ARSubsystemChanges)` — added/updated/removed `XRTrackedImage`s.
+/// `void GetImageTrackingChanges(out ARSubsystemChanges)` returns the added, updated and removed
+/// `XRTrackedImage`s.
 pub type FnGetImageTrackingChanges = unsafe extern "C" fn(*mut ArSubsystemChanges);
-/// `u64 InitImageTrackingDatabase(NativeView database, NativeView managedReferenceImages)` — build a
-/// tracking DB from the blob + metadata; returns an opaque handle for the calls below. The two 16-byte
-/// `NativeView`s are passed by value in GPR pairs (device-confirmed).
+/// `u64 InitImageTrackingDatabase(NativeView database, NativeView managedReferenceImages)` builds a
+/// tracking DB from the blob and its metadata, returning an opaque handle for the calls below. The
+/// two 16-byte `NativeView`s are passed by value in GPR pairs, confirmed on device.
 pub type FnInitImageTrackingDatabase = unsafe extern "C" fn(NativeView, NativeView) -> u64;
-/// `int GetReferenceImageCount(u64 handle)` — number of reference images in a database.
+/// `int GetReferenceImageCount(u64 handle)` returns the number of reference images in a database.
 pub type FnGetReferenceImageCount = unsafe extern "C" fn(u64) -> i32;
-/// `void ReleaseImageTrackingDatabase(u64 handle)` — free a database.
+/// `void ReleaseImageTrackingDatabase(u64 handle)` frees a database.
 pub type FnReleaseImageTrackingDatabase = unsafe extern "C" fn(u64);
 
 /// `GlassesEventData` from `XREALCallbackHandler.cs`, delivered **by value** to the
 /// callback registered with `SetGlassesEventCallback` (libXREALXRPlugin.so export,
 /// C# `[DllImport] SetGlassesEventCallback(XREALGlassesEventCallback)`).
 ///
-/// 16 bytes `{i32, u32, u32, f32}` — on AArch64 AAPCS a ≤16-byte composite is passed in
-/// x0/x1, which Rust's `extern "C"` handles for a `#[repr(C)]` struct.
+/// It is 16 bytes of `{i32, u32, u32, f32}`, and on AArch64 AAPCS a composite of 16 bytes or less
+/// is passed in x0 and x1, which Rust's `extern "C"` handles for a `#[repr(C)]` struct.
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub struct GlassesEventData {
@@ -472,16 +490,17 @@ pub const ACTION_TYPE_PROXIMITY_WEARING_STATE: i32 = 2024;
 pub const WEARING_STATUS_PUT_ON: u32 = 1;
 pub const WEARING_STATUS_TAKE_OFF: u32 = 2;
 
-/// The callback passed to `SetGlassesEventCallback`. Invoked from an SDK-owned thread —
-/// implementations must not touch Godot objects; queue and drain on the main thread.
+/// The callback passed to `SetGlassesEventCallback`. It is invoked from an SDK-owned thread, so an
+/// implementation must not touch Godot objects: queue there and drain on the main thread.
 pub type FnGlassesEventCallback = extern "C" fn(GlassesEventData);
 
 /// `void SetGlassesEventCallback(XREALGlassesEventCallback cb)` (libXREALXRPlugin.so).
 pub type FnSetGlassesEventCallback = unsafe extern "C" fn(FnGlassesEventCallback);
 
-/// The callback passed to `SetNativeErrorCallback`: `void(XREALErrorCode code, const char* msg)`
-/// (`XREALCallbackHandler.cs`). `code` is the `XREALErrorCode` enum as an i32; `msg` is a UTF-8 C
-/// string (may be null). Invoked from an SDK-owned thread — no Godot calls; cache and poll.
+/// The callback passed to `SetNativeErrorCallback`: `void(XREALErrorCode code, const char* msg)`,
+/// from `XREALCallbackHandler.cs`. `code` is the `XREALErrorCode` enum as an i32, and `msg` is a
+/// UTF-8 C string that may be null. It is invoked from an SDK-owned thread, so make no Godot calls:
+/// cache the values and poll them.
 pub type FnNativeErrorCallback = extern "C" fn(i32, *const c_char);
 
 /// `void SetNativeErrorCallback(XREALErrorCallback cb)` (libXREALXRPlugin.so).
@@ -557,8 +576,8 @@ mod tests {
         );
     }
 
-    /// At rest the first float is the scalar w (~1), so the pose must be (near) identity — NOT the
-    /// 180-degree-about-X rotation that reading it as (x, y, z, w) would produce. This is the exact
+    /// At rest the first float is the scalar w, near 1, so the pose has to be near identity, and NOT
+    /// the 180-degree rotation about X that reading it as (x, y, z, w) would produce. That is the exact
     /// bug the w-first fix corrected.
     #[test]
     fn rest_pose_is_identity_not_180() {

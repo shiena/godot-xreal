@@ -67,14 +67,14 @@ die() { echo -e "\033[31m$*\033[0m" >&2; exit 1; }
 # adb, optionally targeting a specific device (-s) when XREAL_DEVICE is set.
 adbx() { if [ -n "$DEVICE" ]; then "$ADB" -s "$DEVICE" "$@"; else "$ADB" "$@"; fi; }
 
-# The XREAL runtime pieces the APK must bundle. They are NOT in this repo — you vendor them from
-# the XREAL SDK for Unity (see README / the guide printed below):
+# The XREAL runtime pieces the APK must bundle. They are NOT in this repo, so vendor them from
+# the XREAL SDK for Unity; see the README or the guide printed below:
 #   - 3 core .so in jniLibs/arm64-v8a (packed via godot_xreal.gdextension [dependencies])
 #   - 5 .aar in addons/godot_xreal/android (shipped into the APK by the addon's export_plugin.gd:
 #     Java/JNI layer + manifest merge; the aars also carry the NR native libs, which Gradle
 #     merges into the APK)
-# The XrealBridge Java sources are compiled by the export's gradle build (export_plugin.gd
-# stages them into the build template) — nothing to vendor for those.
+# The export's gradle build compiles the XrealBridge Java sources, with export_plugin.gd
+# staging them into the build template, so there is nothing to vendor for those.
 # This checks both before an export and stops with instructions if anything is missing; it never
 # downloads anything.
 REQUIRED_LIBS=(libXREALNativeSessionManager.so libXREALXRPlugin.so libVulkanSupport.so libmedia_codec.so)
@@ -99,7 +99,7 @@ Vendor them once from a local copy of the package (nothing is downloaded):
        - 3 core .so -> jniLibs/arm64-v8a/      (dlopen'd by the GDExtension)
        - 5 .aar -> addons/godot_xreal/android/ (shipped by the addon's export plugin; they also
          carry the NR native libs, which Gradle merges into the APK)
-     (The XrealBridge Java sources are compiled by the export's gradle build — no JDK step here.)
+     (The XrealBridge Java sources are compiled by the export's gradle build, so no JDK step here.)
 See the README "Prerequisite: vendor the XREAL runtime libraries" and docs/guides/build-and-release.md.
 GUIDE
     } >&2

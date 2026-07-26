@@ -1,13 +1,14 @@
-//! First-person-view video streaming via the XREAL SDK's hardware encoder `libmedia_codec.so` (flat C
-//! `HWEncoder*` exports, dlsym'd like the other vendored libs). The encoder is a MediaCodec-backed
-//! H.264 encoder + muxer: configure it with a JSON string (resolution / bitrate / fps + `codecType`
-//! 0=local mp4 / 1=RTMP / 2=RTP and the output path or `rtp://`/`rtmp://` URL), then hand it a GL
-//! texture id per frame via `HWEncoderUpdateSurface`. See `docs/plans/fpv-streaming-plan.md`.
+//! First-person-view video streaming through the XREAL SDK's hardware encoder
+//! `libmedia_codec.so`, whose flat C `HWEncoder*` exports are dlsym'd like the other vendored libs.
+//! The encoder is a MediaCodec-backed H.264 encoder and muxer: configure it with a JSON string
+//! carrying the resolution, bitrate and fps, a `codecType` of 0 for a local mp4, 1 for RTMP or 2
+//! for RTP, and the output path or `rtp://` or `rtmp://` URL, then hand it a GL texture id per frame
+//! through `HWEncoderUpdateSurface`. See `docs/plans/fpv-streaming-plan.md`.
 //!
 //! `HWEncoderUpdateSurface(handle, gl_texture_id, timestamp)` reads the GL texture on the **current
-//! EGL context**, so `submit_frame` MUST be called on Godot's render thread (see
-//! `crate::unity_plugin::run_render_thread_tick` / `RenderingServer::call_on_render_thread`), not the
-//! main thread. `codecType` is derived from the output URL scheme.
+//! EGL context**, so `submit_frame` MUST be called on Godot's render thread, through
+//! `crate::unity_plugin::run_render_thread_tick` or `RenderingServer::call_on_render_thread`, and
+//! never on the main thread. `codecType` is derived from the output URL scheme.
 
 use std::ffi::{c_char, CString};
 use std::sync::Mutex;
@@ -18,10 +19,11 @@ const MEDIA_CODEC_LIB: &str = "libmedia_codec.so";
 
 type FnCreate = unsafe extern "C" fn(*mut u64) -> i32;
 type FnSetConfig = unsafe extern "C" fn(u64, *const c_char) -> i32;
-/// `HWEncoderSetMediaProjection(handle, media_projection)`. The SDK's `NativeEncoder.SetConfigration`
-/// always calls this right after the config (a null projection for the RGB-camera / texture path —
-/// it is only non-null for screen capture). It initialises encoder state that `HWEncoderStart`
-/// reads; omitting it left that field null and crashed `HWEncoderStart` on device (SIGSEGV).
+/// `HWEncoderSetMediaProjection(handle, media_projection)`. The SDK's
+/// `NativeEncoder.SetConfigration` always calls this right after the config, passing a null
+/// projection for the RGB-camera and texture path, since only screen capture makes it non-null. It
+/// initialises encoder state that `HWEncoderStart` reads, and omitting it left that field null and
+/// crashed `HWEncoderStart` on device with a SIGSEGV.
 type FnSetMediaProjection = unsafe extern "C" fn(u64, *mut core::ffi::c_void) -> i32;
 type FnStart = unsafe extern "C" fn(u64) -> i32;
 type FnUpdateSurface = unsafe extern "C" fn(u64, usize, u64) -> i32;
@@ -37,13 +39,14 @@ struct Encoder {
     handle: u64,
 }
 
-// The fn pointers borrow from `_lib` (kept alive alongside them); safe to move across threads —
-// `submit_frame` runs on the render thread while `start`/`stop` run on the main thread.
+// The fn pointers borrow from `_lib`, which is kept alive alongside them. Moving them across
+// threads is safe, and it happens: `submit_frame` runs on the render thread while `start` and
+// `stop` run on the main thread.
 unsafe impl Send for Encoder {}
 
 static ENCODER: Mutex<Option<Encoder>> = Mutex::new(None);
 
-/// `codecType` for the output path: `rtp://` → 2, `rtmp://` → 1, else 0 (local file).
+/// `codecType` for the output path: 2 for `rtp://`, 1 for `rtmp://`, otherwise 0 for a local file.
 fn codec_type(output: &str) -> i32 {
     if output.starts_with("rtp://") {
         2
@@ -58,17 +61,18 @@ fn codec_type(output: &str) -> i32 {
 /// SDK's `RECORD_AUDIO_SAMPLERATE_DEFAULT` (its `monophonic` variant is 16000).
 ///
 /// **The encoder does not resample.** Measured on the X4000: pushing 44100 Hz PCM while the config
-/// said 48000 produced an audio track 0.914x the video's length — exactly 44100/48000. The rate
+/// said 48000 produced an audio track 0.914x the video's length, exactly 44100/48000. The rate
 /// passed per push to `HWEncoderNotifyAudioData` labels the samples, but the *config* rate is what
-/// the track is written at, so the two have to agree. The Unity SDK never hits this because Android
-/// runs Unity's mixer at 48000 too, so its constant already matches.
+/// the track is written at, so the two have to agree. The Unity SDK never hits this, because
+/// Android runs Unity's mixer at 48000 too and its constant already matches.
 const AUDIO_SAMPLE_RATE: i32 = 48_000;
 
-/// Build the encoder config JSON (SDK format from `EncodeTypes.cs`). `with_mic` captures the microphone
-/// natively; `with_internal` makes it capture app audio too (needs a MediaProjection). `with_alpha`
-/// sets `useAlpha` — the
-/// encoder then packs the frame's RGB + alpha (top/bottom) for the ObserverView MRC composite; the input
-/// texture must carry a real alpha channel (a transparent-bg viewport). See docs/plans/observer-view-notes.md.
+/// Build the encoder config JSON, in the SDK format from `EncodeTypes.cs`. `with_mic` captures the
+/// microphone natively, and `with_internal` makes it capture app audio too, which needs a
+/// MediaProjection. `with_alpha` sets `useAlpha`, and the encoder then packs the frame's RGB and
+/// alpha top-and-bottom for the ObserverView MRC composite; the input texture has to carry a real
+/// alpha channel, meaning a transparent-background viewport. See
+/// docs/plans/observer-view-notes.md.
 #[allow(clippy::too_many_arguments)]
 fn config_json(
     output: &str,
@@ -81,8 +85,9 @@ fn config_json(
     with_alpha: bool,
     audio_rate: Option<i32>,
 ) -> String {
-    // Escape the path/URL for JSON: a `"` or `\` in `output` would otherwise break the config.
-    // codec_type() still sees the raw string (it matches on scheme/extension, unaffected by escaping).
+    // Escape the path or URL for JSON, since a `"` or `\` in `output` would otherwise break the
+    // config. codec_type() still sees the raw string, and it matches on the scheme and extension, so
+    // escaping does not affect it.
     let output_json = output.replace('\\', "\\\\").replace('"', "\\\"");
     format!(
         concat!(
@@ -109,9 +114,10 @@ pub fn is_active() -> bool {
     ENCODER.lock().expect("encoder mutex").is_some()
 }
 
-/// Start streaming the FPV to `output` (`rtp://ip:port`, `rtmp://…`, or a local file path). Creates,
-/// configures, and starts the HW encoder. Returns `false` on any failure (library/symbol absent or an
-/// `HWEncoder*` non-zero status). Feed frames with [`submit_frame`] from the render thread.
+/// Start streaming the FPV to `output`, which is an `rtp://ip:port`, an `rtmp://…` or a local file
+/// path. It creates, configures and starts the HW encoder, and returns `false` on any failure,
+/// whether a missing library or symbol or a non-zero `HWEncoder*` status. Feed frames with
+/// [`submit_frame`] from the render thread.
 #[allow(clippy::too_many_arguments)]
 pub fn start(
     output: &str,
@@ -189,12 +195,12 @@ pub fn start(
             destroy(handle);
             return false;
         }
-        // Must come right after the config, as the SDK does: without it HWEncoderStart dereferenced
-        // a null field → SIGSEGV. The projection is not decoration — with `addInternalAudio` the
-        // encoder builds an AudioPlaybackCaptureConfiguration from it and opens its own AudioRecord
-        // for app sound, then adds those blocks to the microphone's (docs/archive/codex-audio-mix-
-        // analysis.md). Null is still correct when app audio was not asked for, or consent was
-        // declined: the capture simply does not start.
+        // This must come right after the config, as the SDK does: without it HWEncoderStart dereferenced
+        // a null field and hit a SIGSEGV. The projection is not decoration. With `addInternalAudio` the
+        // encoder builds an AudioPlaybackCaptureConfiguration from it and opens its own AudioRecord for
+        // app sound, then adds those blocks to the microphone's (docs/archive/codex-audio-mix-
+        // analysis.md). Null is still correct when app audio was not asked for, or consent was declined:
+        // the capture simply does not start.
         let projection = if with_internal {
             crate::jni_bridge::media_projection_ptr()
         } else {
@@ -232,10 +238,11 @@ pub fn start(
     }
 }
 
-/// Feed one frame: `gl_texture_id` is the GL texture name to encode (from
-/// `RenderingServer.texture_get_native_handle` on the actual viewport color-texture RID returned by
-/// `viewport_get_texture`, not the `ViewportTexture` proxy RID), `timestamp` in nanoseconds.
-/// **Render thread only.** Returns the encoder status (`0` = ok, `-1` if not streaming).
+/// Feed one frame. `gl_texture_id` is the GL texture name to encode, taken from
+/// `RenderingServer.texture_get_native_handle` on the actual viewport color-texture RID that
+/// `viewport_get_texture` returns, not on the `ViewportTexture` proxy RID, and `timestamp` is in
+/// nanoseconds. **Render thread only.** It returns the encoder status: `0` for ok, `-1` when not
+/// streaming.
 pub fn submit_frame(gl_texture_id: usize, timestamp: u64) -> i32 {
     let guard = ENCODER.lock().expect("encoder mutex");
     match guard.as_ref() {
@@ -244,7 +251,7 @@ pub fn submit_frame(gl_texture_id: usize, timestamp: u64) -> i32 {
     }
 }
 
-/// Stop + destroy the encoder (idempotent).
+/// Stop and destroy the encoder. Idempotent.
 pub fn stop() {
     let mut guard = ENCODER.lock().expect("encoder mutex");
     if let Some(enc) = guard.take() {

@@ -1,35 +1,37 @@
 extends Node3D
-## Demo for the Godot XREAL addon — a consumer of the per-feature components in
+## Demo for the Godot XREAL addon, a consumer of the per-feature components in
 ## addons/godot_xreal/features/*.
 ##
 ## The static content lives in sub-scenes instanced by demo/main.tscn:
-##   - $ARScene (demo/ar_scene.tscn + ar_scene.gd) — the 3D world: WorldEnvironment (black
-##     background — on the XREAL optical see-through display black reads as transparent), sun,
-##     the ring of colored boxes (with colliders for the phone-pointer raycast), plus the
-##     head-locked controller cursor and phone-IMU pointer, exposed as `cursor` / `phone_pointer`.
-##   - $PhoneScreen (demo/phone_screen.tscn + phone_screen.gd) — the phone-only touch
-##     controller layer; its signals are wired to the _on_tc_* handlers here via main.tscn.
-##   - $Xreal* — the addon feature components (camera, planes, anchors, image tracking, mesh,
-##     hands, photo/blend capture, FPV streaming), instanced straight from
+##   - $ARScene (demo/ar_scene.tscn + ar_scene.gd) holds the 3D world: a WorldEnvironment whose
+##     background is black (the XREAL optical see-through display reads black as transparent),
+##     the sun, the ring of colored boxes (with colliders for the phone-pointer raycast), plus
+##     the head-locked controller cursor and phone-IMU pointer, exposed as `cursor` and
+##     `phone_pointer`.
+##   - $PhoneScreen (demo/phone_screen.tscn + phone_screen.gd) is the phone-only touch
+##     controller layer; main.tscn wires its signals to the _on_tc_* handlers here.
+##   - $Xreal* are the addon feature components (camera, planes, anchors, image tracking, mesh,
+##     hands, photo and blend capture, FPV streaming), instanced straight from
 ##     addons/godot_xreal/features/*.tscn. Each is self-contained: this script only toggles them
 ##     from the phone menu and reflects their state back onto the toggles. Delete the instances
-##     you don't need — they don't know about each other.
+##     you don't need, since they know nothing about each other.
 ## The debug UI ($UI) also lives in main.tscn, its Recenter button wired the same way.
 ##
 ## This script does only the demo glue: detect the GDExtension, instance the addon camera rig
-## (addons/godot_xreal/xreal_rig.tscn — an XrealHeadTracker with a Camera3D child), map the
+## (addons/godot_xreal/xreal_rig.tscn, an XrealHeadTracker with a Camera3D child), map the
 ## phone-menu controls to the feature components, and pump the controller IMU into the phone
 ## pointer per frame. On XREAL hardware the camera looks around with the wearer's head; on
-## desktop the rig stays at identity and the features are inert, so the scene is still runnable.
+## desktop the rig stays at identity and the features stay inert, so the scene still runs.
 
-# The GDExtension classes (XrealHeadTracker / XrealSystem / XrealAR / XrealHandTracker /
-# XrealCameraFeed) only exist if the native extension loaded. We look everything up defensively
-# so a missing/failed extension shows a diagnostic instead of a blank scene.
+# The GDExtension classes (XrealHeadTracker, XrealSystem, XrealAR, XrealHandTracker,
+# XrealCameraFeed) exist only when the native extension loaded, so every lookup below is
+# defensive: a missing or failed extension shows a diagnostic instead of a blank scene.
 const RIG_SCENE := "res://addons/godot_xreal/xreal_rig.tscn"
 
-# Demo-side gallery saver (pure GDScript MediaStore via JavaClassWrapper): the capture components
-# return the saved JPG's path; the demo forwards it into the phone gallery. Kept out of the addon
-# on purpose — whether an app publishes captures to the shared gallery is the app's decision.
+# Demo-side gallery saver (pure GDScript MediaStore through JavaClassWrapper): the capture
+# components return the saved JPG's path and the demo forwards it into the phone gallery. It
+# stays out of the addon on purpose, because publishing captures to the shared gallery is the
+# app's decision.
 const GalleryHelper := preload("res://demo/gallery_helper.gd")
 
 # XrealHeadTracker key/action constants, mirrored locally so this script parses even
@@ -50,13 +52,14 @@ var _imu_poll_count := 0
 var _phone_pointer: Node3D
 var _cursor_mat: StandardMaterial3D
 # No-glasses watchdog: the head-tracking session only comes up with the glasses connected, so if
-# tracking hasn't started within this window we assume they're absent, show a message and quit —
-# rather than sitting forever in the session-bootstrap retry loop. Detection is heuristic-free: it
-# keys on "did tracking actually start", not on any display name/resolution guess. Disarmed for
-# good the moment the session goes live — on the `display_started` signal (the reliable "glasses up"
-# event) OR the first `is_tracking()` true. A mid-session unplug is a separate, unhandled case.
-# 15 s: session bring-up is ~4-6 s normally but a cold first launch after (re)install is slower, and
-# a false "no glasses" quit while they ARE connected is worse than a couple extra seconds of wait.
+# tracking has not started within this window we take them to be absent, show a message and quit
+# instead of sitting forever in the session-bootstrap retry loop. Detection uses no heuristic: it
+# keys on whether tracking actually started, not on a display name or resolution guess. It
+# disarms for good the moment the session goes live, on the `display_started` signal (the
+# reliable "glasses up" event) or on the first `is_tracking()` true. A mid-session unplug is a
+# separate, unhandled case. The window is 15 s because session bring-up takes ~4-6 s normally but
+# a cold first launch after a (re)install is slower, and a false "no glasses" quit while they ARE
+# connected costs more than a couple of extra seconds of waiting.
 const NO_GLASSES_TIMEOUT_S := 15.0
 const NO_GLASSES_QUIT_DELAY_S := 3.0
 var _boot_elapsed := 0.0
@@ -64,20 +67,20 @@ var _tracking_seen := false
 var _no_glasses := false
 
 ## Backstop for a toggle whose component never reports back. Every failure path in xreal_camera.gd
-## and xreal_stream.gd does emit active_changed — except stopping a stream that is still pairing,
-## which returns silently — so this is for the paths that stay quiet, not the normal route. It has
-## to clear the slowest honest wait: pairing gives itself 4 s of discovery + 5 s connect + 5 s
-## handshake before it gives up.
+## and xreal_stream.gd does emit active_changed, apart from stopping a stream that is still
+## pairing, which returns silently, so this covers the quiet paths rather than the normal route.
+## It has to clear the slowest honest wait: pairing gives itself 4 s of discovery, 5 s to connect
+## and 5 s of handshake before it gives up.
 const SWITCH_TIMEOUT_MS := 20000
-## Toggles that are mid-switch — tapped, but the component has not yet said what actually happened.
+## Toggles that are mid-switch: tapped, but the component has not yet said what actually happened.
 ## Maps the control name to the deadline (Time.get_ticks_msec) past which it is handed back anyway.
 var _switching: Dictionary = {}
 
 @onready var _status: Label = $UI/Panel/Margin/VBox/Status
 @onready var _ar: Node3D = $ARScene
 @onready var _cursor: MeshInstance3D = $ARScene.cursor
-# The addon feature components (instanced in main.tscn as children of Main — a world-fixed node,
-# which the world-locked features require).
+# The addon feature components, instanced in main.tscn as children of Main, a world-fixed node,
+# which the world-locked features require.
 @onready var _camera: Node3D = $XrealCamera
 @onready var _planes: Node3D = $XrealPlanes
 @onready var _anchors: Node3D = $XrealAnchors
@@ -91,8 +94,9 @@ var _switching: Dictionary = {}
 func _ready() -> void:
 	XrealAndroidBridge.register()
 	# The GDExtension is Android-only. On desktop the editor loads a dummy stub that DOES register
-	# these classes (so the F1 help can document them), so class presence alone no longer means the
-	# real extension is live — gate on the platform too, or the demo would drive no-op placeholders.
+	# these classes, so the F1 help can document them, which means class presence alone no longer
+	# proves the real extension is live. Gate on the platform too, or the demo would drive no-op
+	# placeholders.
 	_extension_loaded = OS.get_name() == "Android" \
 		and ClassDB.class_exists(&"XrealSystem") and ClassDB.class_exists(&"XrealHeadTracker")
 	if _extension_loaded:
@@ -107,13 +111,13 @@ func _ready() -> void:
 		var stereo_mode := int(ProjectSettings.get_setting("xreal/stereo_mode", -1))
 		if stereo_mode >= 0 and _system.has_method(&"set_stereo_mode"):
 			_system.set_stereo_mode(stereo_mode)
-		# Input sources (1 = Controller [default], 2 = Hands, 3 = both). Hands costs ~878ms of cold
-		# start — see the setting's comment in addons/godot_xreal/plugin.gd.
+		# Input sources (1 = Controller [default], 2 = Hands, 3 = both). Hands costs ~878 ms of cold
+		# start; see the setting's comment in addons/godot_xreal/plugin.gd.
 		var input_source := int(ProjectSettings.get_setting("xreal/input_source", -1))
 		if input_source >= 0 and _system.has_method(&"set_input_source"):
 			_system.set_input_source(input_source)
 	else:
-		push_error("[demo] godot_xreal GDExtension not loaded — XrealSystem/XrealHeadTracker missing. Build the Android .so (cargo ndk) and check the .gdextension paths.")
+		push_error("[demo] godot_xreal GDExtension not loaded: XrealSystem/XrealHeadTracker missing. Build the Android .so (cargo ndk) and check the .gdextension paths.")
 	_spawn_rig()
 	# Async feature states (camera start is lazy, stream pairing is async) are reflected back onto
 	# the phone-menu toggles through the components' active_changed signals.
@@ -122,9 +126,9 @@ func _ready() -> void:
 	_recorder.active_changed.connect(_on_feature_active.bind("record"))
 	# A finished recording (the finalized mp4's path) goes into the phone gallery, like the photos.
 	_recorder.finished.connect(func(path: String) -> void: GalleryHelper.save_video(path))
-	# Surface each feature component's `error` signal at the load site (here: the debug Status label
-	# + logcat). A real app might disable a control or show a toast; the point is the failure is
-	# detectable, not just a buried warning.
+	# Surface each feature component's `error` signal at the load site, here the debug Status label
+	# and logcat. A real app might disable a control or show a toast; the point is that the failure
+	# is detectable rather than buried in a warning.
 	for feature in [_camera, _planes, _anchors, _image_tracking, _mesh, _photo_capture, _blend_capture, _stream, _recorder]:
 		if feature and feature.has_signal(&"error"):
 			feature.error.connect(_on_feature_error)
@@ -154,14 +158,14 @@ func _spawn_rig() -> void:
 		camera.current = true
 		add_child(camera)
 
-## Set up the runtime side of the phone touch controller ($PhoneScreen — its layout and signal
-## wiring are static in phone_screen.tscn / main.tscn; it only renders on the phone's root
-## viewport, so the glasses keep showing the 3D scene): the head-locked 3D cursor and the
-## host-preview camera.
+## Set up the runtime side of the phone touch controller, meaning the head-locked 3D cursor and
+## the host-preview camera. $PhoneScreen keeps its layout and signal wiring static in
+## phone_screen.tscn and main.tscn, and it renders only on the phone's root viewport, so the
+## glasses keep showing the 3D scene.
 func _setup_touch_controller() -> void:
-	# The head-locked cursor makes phone touches visible in the glasses (proves the split):
-	# reparent it under the tracker. Without a tracker (desktop fallback) there is nothing to
-	# lock it to — drop it.
+	# The head-locked cursor makes phone touches visible in the glasses, which proves the split, so
+	# reparent it under the tracker. Without a tracker (desktop fallback) nothing exists to lock it
+	# to, so drop it.
 	if _tracker:
 		_cursor.reparent(_tracker, false)
 		_cursor_mat = _cursor.material_override as StandardMaterial3D
@@ -169,10 +173,10 @@ func _setup_touch_controller() -> void:
 		_cursor.queue_free()
 		_cursor = null
 
-	# The phone shows the controller, not a 3D preview, so stop the rig's host-preview camera: the
-	# root viewport no longer renders the world (one fewer full scene pass — the world was drawn 3×:
-	# host preview + two eyes). The glasses are unaffected; they render from the extension's own
-	# per-eye SubViewports.
+	# The phone shows the controller, not a 3D preview, so stop the rig's host-preview camera. The
+	# root viewport then stops rendering the world, one full scene pass less: it used to be drawn
+	# three times, the host preview plus two eyes. The glasses are unaffected, since they render
+	# from the extension's own per-eye SubViewports.
 	if _tracker:
 		var host_cam := _tracker.get_node_or_null(^"Camera3D") as Camera3D
 		if host_cam:
@@ -194,7 +198,7 @@ func _on_tc_trigger(pressed: bool) -> void:
 	if pressed and _phone_pointer and _phone_pointer.has_method(&"select"):
 		_phone_pointer.select()
 
-## Right/left hand toggle from the on-screen controller → flip the pointer's beam origin.
+## Right/left hand toggle from the on-screen controller: flip the pointer's beam origin.
 func _on_tc_hand(is_right: bool) -> void:
 	if _phone_pointer and _phone_pointer.has_method(&"set_hand"):
 		_phone_pointer.set_hand(is_right)
@@ -208,10 +212,10 @@ func _on_tc_menu() -> void:
 	if _phone_pointer:
 		_phone_pointer.recenter()
 
-## Phone-menu "カメラ" toggle → the XrealCamera component. set_enabled(true) only *requests* the
-## camera (the capture starts lazily once tracking is live); an async start failure comes back
-## through active_changed(false), which is wired to the toggle in _ready. An immediate refusal
-## (device without an RGB camera) flips the toggle back here.
+## Phone-menu "Camera" toggle, driving the XrealCamera component. set_enabled(true) only
+## *requests* the camera, since the capture starts lazily once tracking is live; an async start
+## failure comes back through active_changed(false), which _ready wires to the toggle. An
+## immediate refusal, on a device without an RGB camera, flips the toggle back here.
 func _on_tc_camera(on: bool) -> void:
 	print("[demo] camera toggle -> %s" % ("on" if on else "off"))
 	_begin_switch("camera")
@@ -220,80 +224,84 @@ func _on_tc_camera(on: bool) -> void:
 		_set_controller_toggle("camera", false)
 		_end_switch("camera")
 
-## Phone-menu "Plane" toggle → the XrealPlanes boundary-polygon overlay (switches tracking to 6DoF
-## while on).
+## Phone-menu "Plane" toggle, driving the XrealPlanes boundary-polygon overlay, which switches
+## tracking to 6DoF while on.
 func _on_tc_plane(on: bool) -> void:
 	print("[demo] plane toggle -> %s" % ("on" if on else "off"))
 	if _planes.set_enabled(on) != on:
 		_set_controller_toggle("plane", false)
 
-## Phone-menu "アンカー" toggle → the XrealAnchors component. Pinch or the "配置" button then drop
-## an anchor at the hand fingertip.
+## Phone-menu "Anchor" toggle, driving the XrealAnchors component. A pinch or the "Place" button
+## then drops an anchor at the hand fingertip.
 func _on_tc_anchor(on: bool) -> void:
 	print("[demo] anchor toggle -> %s" % ("on" if on else "off"))
 	if _anchors.set_enabled(on) != on:
 		_set_controller_toggle("anchor", false)
 
-## Phone-menu "画像" toggle → the XrealImageTracking component (its manifest_path is set to the
-## demo's reference.json in main.tscn).
+## Phone-menu "Image" toggle, driving the XrealImageTracking component (main.tscn sets its
+## manifest_path to the demo's reference.json).
 func _on_tc_image(on: bool) -> void:
 	print("[demo] image toggle -> %s" % ("on" if on else "off"))
 	if _image_tracking.set_enabled(on) != on:
 		_set_controller_toggle("image", false)
 
-## Phone-menu "メッシュ" toggle → the XrealMesh component (Air 2 Ultra only).
+## Phone-menu "Mesh" toggle, driving the XrealMesh component (Air 2 Ultra only).
 func _on_tc_mesh(on: bool) -> void:
 	print("[demo] mesh toggle -> %s" % ("on" if on else "off"))
 	if _mesh.set_enabled(on) != on:
 		_set_controller_toggle("mesh", false)
 
-## Phone-menu "Record" toggle → the XrealVideoRecorder component (camera ON records the camera+AR
-## blend, OFF the AR view alone). The resulting state comes back through active_changed (a start is
-## refused while streaming — one shared HW encoder), and a stop delivers the finished mp4 through
-## `finished`, which _ready wires into the phone gallery.
+## Phone-menu "Record" toggle, driving the XrealVideoRecorder component: with the camera on it
+## records the camera+AR blend, with the camera off the AR view alone. The resulting state comes
+## back through active_changed, and a start is refused while streaming, since the two share one
+## HW encoder. A stop delivers the finished mp4 through `finished`, which _ready wires into the
+## phone gallery.
 func _on_tc_record(on: bool) -> void:
 	print("[demo] record toggle -> %s" % ("on" if on else "off"))
 	_begin_switch("record")
 	_recorder.set_enabled(on)
 
-## Phone-menu "Stream" toggle → the XrealStream component. Pairing is async, so the component
-## reports the resulting state back through its active_changed signal (wired in _ready) — which
-## flips the phone toggle to match (incl. a start refused while recording — one shared HW encoder).
+## Phone-menu "Stream" toggle, driving the XrealStream component. Pairing is async, so the
+## component reports the resulting state back through its active_changed signal, wired in _ready,
+## which flips the phone toggle to match. That includes a start refused while recording, since
+## the two share one HW encoder.
 func _on_tc_stream(on: bool) -> void:
 	print("[demo] stream toggle -> %s" % ("on" if on else "off"))
 	_begin_switch("stream")
 	_stream.set_enabled(on)
 
-## Phone-menu "配置" button → place a spatial anchor at the currently-tracked hand fingertip.
+## Phone-menu "Place" button: place a spatial anchor at the currently-tracked hand fingertip.
 func _on_tc_place() -> void:
 	_anchors.place_at_fingertip()
 
-## Phone-menu "画像切替" button → cycle the active image-tracking set.
+## Phone-menu "Cycle Image" button: cycle the active image-tracking set.
 func _on_tc_image_cycle() -> void:
 	_image_tracking.cycle_set()
 
-## Phone-menu "撮影" button → capture a photo from the RGB camera (One Series), then put it in
-## the phone gallery so it can be viewed (and deleted) right on the phone, no adb needed.
+## Phone-menu "Photo" button: capture a photo from the RGB camera (One Series), then put it in
+## the phone gallery so it can be viewed (and deleted) right on the phone, with no adb needed.
 func _on_tc_capture() -> void:
 	var path: String = await _photo_capture.capture_photo()
 	if path != "":
 		GalleryHelper.save_image(path)
 
-## Phone-menu "合成撮影" button → capture a blended camera+AR (mixed-reality) photo, into the
+## Phone-menu "Blend Photo" button: capture a blended camera+AR (mixed-reality) photo, into the
 ## phone gallery like the plain photo.
 func _on_tc_blend() -> void:
 	var path: String = await _blend_capture.capture_blended()
 	if path != "":
 		GalleryHelper.save_image(path)
 
-## Phone-menu "Exit" → quit. The touch controller shows a Yes/No dialog first and only emits this on Yes.
-## A phone-menu exit for glasses without physical keys (the Air 2 Ultra has only an EC-dimming button).
+## Phone-menu "Exit": quit. The touch controller shows a Yes/No dialog first and emits this only
+## on Yes. This is the exit for glasses without physical keys (the Air 2 Ultra has only an
+## EC-dimming button).
 func _on_tc_exit() -> void:
 	get_tree().quit()
 
-## No-glasses watchdog: if the head-tracking session hasn't started within NO_GLASSES_TIMEOUT_S, the
-## glasses aren't connected — show a message on the phone and quit. Once tracking is seen it disarms
-## permanently. Only runs with the real extension (never on desktop, where tracking is inert by design).
+## No-glasses watchdog: if the head-tracking session has not started within NO_GLASSES_TIMEOUT_S,
+## the glasses are not connected, so show a message on the phone and quit. Once tracking is seen
+## it disarms permanently. It runs only with the real extension, never on desktop, where tracking
+## is inert by design.
 func _check_no_glasses(delta: float) -> void:
 	if _tracking_seen or _no_glasses or not _extension_loaded or _tracker == null:
 		return
@@ -305,10 +313,11 @@ func _check_no_glasses(delta: float) -> void:
 		_no_glasses = true
 		_show_no_glasses_and_quit()
 
-## Cover the screen with a "no glasses — quitting" message, then quit after a short delay so the
-## message is readable. Uses its own top CanvasLayer so it sits over the debug UI / controller.
+## Cover the screen with a "no glasses, quitting" message, then quit after a short delay so the
+## message is readable. It uses its own top CanvasLayer, so it sits over the debug UI and the
+## controller.
 func _show_no_glasses_and_quit() -> void:
-	print("[demo] no XREAL glasses detected within %.0fs — quitting" % NO_GLASSES_TIMEOUT_S)
+	print("[demo] no XREAL glasses detected within %.0fs, quitting" % NO_GLASSES_TIMEOUT_S)
 	var layer := CanvasLayer.new()
 	layer.layer = 128
 	var bg := ColorRect.new()
@@ -328,39 +337,41 @@ func _show_no_glasses_and_quit() -> void:
 	layer.add_child(label)
 	add_child(layer)
 	await get_tree().create_timer(NO_GLASSES_QUIT_DELAY_S).timeout
-	# Tracking may have come up during the readability delay (e.g. glasses just plugged in) — don't
-	# quit: drop the overlay and re-arm the watchdog, which disarms permanently on the next tracked frame.
+	# Tracking may have come up during the readability delay, e.g. the glasses were just plugged in,
+	# so do not quit: drop the overlay and re-arm the watchdog, which disarms permanently on the next
+	# tracked frame.
 	if _tracker and _tracker.has_method(&"is_tracking") and _tracker.is_tracking():
 		layer.queue_free()
 		_no_glasses = false
 		return
 	get_tree().quit()
 
-## The active image-tracking set changed — show its name on the phone-menu "Cycle Image" button.
+## The active image-tracking set changed, so show its name on the phone-menu "Cycle Image" button.
 func _on_image_set_changed(name: String) -> void:
 	var ps := get_node_or_null(^"PhoneScreen")
 	if ps and ps.has_method(&"set_button_label"):
 		ps.set_button_label("image_cycle", "Cycle: %s" % name)
 
-## A feature component reported an error (via its `error` signal) — show it on the debug Status
-## label and log it, so the failure is visible at the load site instead of buried in warnings.
-## Failures that need USER action (currently: the wedged glasses camera, which only a USB re-plug
-## clears) additionally pop a modal dialog on the phone screen — a status-label line is too easy
-## to miss for an error whose fix is physical.
+## A feature component reported an error through its `error` signal, so show it on the debug
+## Status label and log it, which keeps the failure visible at the load site instead of buried in
+## warnings. Failures that need USER action, currently the wedged glasses camera that only a USB
+## re-plug clears, additionally pop a modal dialog on the phone screen, because a status-label
+## line is too easy to miss for an error whose fix is physical.
 func _on_feature_error(message: String) -> void:
 	print("[demo] feature error: %s" % message)
 	if _status:
 		_status.text = message
 	# "wedged" is the marker xreal_camera.gd puts in its camera-failure messages. It fires on the
-	# Camera:ON tap (start is lazy) — the earliest point the wedge is detectable at all: nothing
-	# touches the camera at app launch, so launch-time detection would need a start/stop probe.
-	# The dialog text is deliberately short and jargon-free; the technical detail stays in the log.
+	# Camera:ON tap, since the start is lazy, and that is the earliest point the wedge is detectable
+	# at all: nothing touches the camera at app launch, so launch-time detection would need a
+	# start/stop probe. The dialog text is deliberately short and jargon-free; the technical detail
+	# stays in the log.
 	if message.contains("wedged"):
 		_show_error_dialog("Camera unavailable.\nReplug the glasses USB cable,\nthen restart this app.")
 
-## Modal error notice on the phone screen (display 0 — where the user is tapping). Reused across
-## errors; sized like the rest of the phone UI (theme-default dialog text is unreadably small on a
-## 480 dpi phone).
+## Modal error notice on the phone screen, display 0, where the user is tapping. It is reused
+## across errors and sized like the rest of the phone UI, because theme-default dialog text is
+## unreadably small on a 480 dpi phone.
 var _error_dialog: AcceptDialog
 
 func _show_error_dialog(text: String) -> void:
@@ -381,8 +392,8 @@ func _show_error_dialog(text: String) -> void:
 	var s := get_viewport().get_visible_rect().size
 	_error_dialog.popup_centered(Vector2i(int(minf(s.x, s.y) * 0.85), 0))
 
-## Push a toggle's on/off state onto the phone-menu controller (keeps the UI in sync when the app,
-## not the user, changes it — e.g. a failed camera start or an unsupported plane mode).
+## Push a toggle's on/off state onto the phone-menu controller. It keeps the UI in sync when the
+## app, not the user, changes it, e.g. after a failed camera start or an unsupported plane mode.
 func _set_controller_toggle(name: String, on: bool) -> void:
 	var ps := get_node_or_null(^"PhoneScreen")
 	if ps and ps.has_method(&"set_toggle"):
@@ -428,11 +439,11 @@ func _check_switch_timeouts() -> void:
 				% [name, SWITCH_TIMEOUT_MS / 1000])
 			_end_switch(name)
 
-## Grey out (make inert) the phone-menu controls whose capability the device lacks, once the session
-## is up and the capabilities are known. Each control maps to a native capability query: camera / plane
-## / anchor / image / mesh. Camera-dependent capture buttons (Photo / Blend Photo) follow the camera.
-## Streaming and recording are always available (they cast/record the AR view even without a
-## camera), so they are never disabled.
+## Grey out (make inert) the phone-menu controls whose capability the device lacks, once the
+## session is up and the capabilities are known. Each control maps to a native capability query:
+## camera, plane, anchor, image, mesh. The camera-dependent capture buttons (Photo, Blend Photo)
+## follow the camera. Streaming and recording stay available on every device, since they cast and
+## record the AR view even without a camera, so nothing disables them.
 func _apply_capabilities(cam: bool, plane: bool, anchor: bool, image: bool, mesh: bool) -> void:
 	var ps := get_node_or_null(^"PhoneScreen")
 	if ps == null or not ps.has_method(&"set_disabled"):
@@ -445,8 +456,8 @@ func _apply_capabilities(cam: bool, plane: bool, anchor: bool, image: bool, mesh
 	for control_name in avail:
 		ps.set_disabled(control_name, not bool(avail[control_name]))
 
-## Reveal the phone-IMU 3D pointer (demo/phone_pointer.gd — defined in ar_scene.tscn,
-## hidden until the NRController has started so no beam shows before it can be driven).
+## Reveal the phone-IMU 3D pointer (demo/phone_pointer.gd), defined in ar_scene.tscn and hidden
+## until the NRController has started, so no beam shows before it can be driven.
 func _setup_phone_pointer() -> void:
 	_phone_pointer = _ar.phone_pointer
 	# Leave it hidden here. phone_pointer.gd reveals the beam on its first aimed frame (once recenter
@@ -458,8 +469,8 @@ func _on_recenter_pressed() -> void:
 		_tracker.recenter()
 
 func _on_display_started() -> void:
-	# Glasses display + tracking are live — disarm the no-glasses watchdog (reliable "glasses up"
-	# event, in case is_tracking() lags past the timeout on a slow cold start).
+	# The glasses display and tracking are live, so disarm the no-glasses watchdog. This is the
+	# reliable "glasses up" event, for when is_tracking() lags past the timeout on a slow cold start.
 	_tracking_seen = true
 	# Make the current head direction "forward".
 	if _tracker and _tracker.has_method(&"recenter"):
@@ -471,7 +482,8 @@ func _on_key_event(key: int, action: int) -> void:
 	if key == XREAL_KEY_MENU and action == XREAL_ACTION_LONG_PRESS:
 		_on_recenter_pressed()
 	# Long-press the MULTI key to quit the app (glasses-only exit). NB: only the One series has these
-	# physical keys — the Air 2 Ultra has just an EC-dimming button, so it exits via the phone-menu Exit.
+	# physical keys. The Air 2 Ultra has just an EC-dimming button, so it exits through the
+	# phone-menu Exit.
 	elif key == XREAL_KEY_MULTI and action == XREAL_ACTION_LONG_PRESS:
 		get_tree().quit()
 
@@ -497,8 +509,9 @@ func _process(_delta: float) -> void:
 			var mesh: bool = _system.is_meshing_supported() if _system.has_method(&"is_meshing_supported") else false
 			print("[demo] AR features: camera=%s plane=%s anchor=%s image=%s mesh=%s" % [cam, plane, anchor, image, mesh])
 			_apply_capabilities(cam, plane, anchor, image, mesh)
-	# Phase C path B: phone IMU (via NRController state) drives the 3D pointer. Godot's own IMU returns
-	# all-zero on this host, so we read accel (gravity → pitch/roll) + gyro (yaw) from the controller.
+	# Phase C path B: the phone IMU, through NRController state, drives the 3D pointer. Godot's own
+	# IMU returns all-zero on this host, so we read accel (gravity for pitch and roll) and gyro (yaw)
+	# from the controller.
 	if _tracker and _tracker.has_method(&"is_tracking") and _tracker.is_tracking() and _system:
 		if not _controller_started and _system.has_method(&"start_controller"):
 			_controller_started = true

@@ -1,9 +1,10 @@
-// XREAL glasses RGB camera YCbCr -> RGB on a 3D surface. Conversion ported from the XREAL SDK's
-// own sample shader (Samples~/Camera Features/RGBCameraAndCapture/Materials/YUVTransRGB.shader):
-// full-range BT.601-style coefficients; it outputs B/G/R (R<->B swapped) then GammaToLinearSpace.
-// y_texture = R8 luma (.r = Y); cbcr_texture = RG8 chroma (.r = U/Cb, .g = V/Cr) — plain ImageTextures
-// the XrealCameraFeed keeps updated. The upright orientation and the R/B swap are device-calibrated
-// constants (verified on XREAL One Pro), so they are baked in rather than exposed as uniforms.
+// XREAL glasses RGB camera YCbCr -> RGB on a 3D surface. The conversion is ported from the XREAL
+// SDK's own sample shader (Samples~/Camera Features/RGBCameraAndCapture/Materials/
+// YUVTransRGB.shader): full-range BT.601-style coefficients, output in B/G/R order (R and B
+// swapped), then GammaToLinearSpace. y_texture is the R8 luma (.r = Y) and cbcr_texture the RG8
+// chroma (.r = U/Cb, .g = V/Cr), both plain ImageTextures the XrealCameraFeed keeps updated. The
+// upright orientation and the R/B swap are device-calibrated constants, verified on the XREAL One
+// Pro, so they are baked in rather than exposed as uniforms.
 shader_type spatial;
 render_mode unshaded, cull_disabled;
 
@@ -25,8 +26,8 @@ void fragment() {
 	float g = y - 0.34560 * u - 0.71450 * v + 0.53005;
 	float b = y + 1.77100 * u - 0.88550;
 
-	// SDK output order is B/G/R (R<->B swapped). Godot re-encodes sRGB at output, so pre-linearize
-	// (the SDK's GammaToLinearSpace) to avoid double-encoding / blown highlights.
+	// SDK output order is B/G/R (R and B swapped). Godot re-encodes sRGB at output, so pre-linearize
+	// with the SDK's GammaToLinearSpace to avoid double-encoding and blown highlights.
 	vec3 rgb = clamp(vec3(b, g, r), vec3(0.0), vec3(1.0));
 	ALBEDO = srgb_to_linear(rgb);
 }

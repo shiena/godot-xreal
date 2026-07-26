@@ -1,9 +1,9 @@
 extends Node3D
-## Root script of the static AR scene (demo/ar_scene.tscn): environment, sun and the ring of
-## colored boxes need no code at all; this script only exposes the two nodes that main.gd
-## drives at runtime, so the consumer never reaches into the scene's internals by path:
-##   - cursor        head-locked touch-controller cursor — reparented under the head tracker
-##   - phone_pointer phone-IMU 3D pointer — revealed once the NRController starts
+## Root script of the static AR scene (demo/ar_scene.tscn). The environment, the sun and the ring
+## of colored boxes need no code at all, so this script only exposes the two nodes that main.gd
+## drives at runtime, which keeps the consumer out of the scene's internals:
+##   - cursor        head-locked touch-controller cursor, reparented under the head tracker
+##   - phone_pointer phone-IMU 3D pointer, revealed once the NRController starts
 ## (The camera preview quad is its own demo component: demo/camera_preview.tscn + camera_preview.gd.)
 
 @onready var cursor: MeshInstance3D = $Cursor
@@ -14,8 +14,8 @@ func _ready() -> void:
 
 ## The ring box colors depend on the box COUNT (evenly spread hues), so they can't be baked
 ## into the .tscn: add or remove boxes under $Room in the editor and the ring recolors itself.
-## Each box gets its OWN material — phone_pointer.gd mutates it per box (hover emission,
-## select recolor), so sharing one material would highlight the whole ring at once.
+## Each box gets its OWN material, because phone_pointer.gd mutates it per box (hover emission,
+## select recolor); sharing one material would highlight the whole ring at once.
 func _color_room_boxes() -> void:
 	var boxes := $Room.get_children()
 	for i in boxes.size():

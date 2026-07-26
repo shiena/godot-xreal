@@ -5,7 +5,7 @@ edition = "2021"
 authors = ["KOGA Mitsuhiro <shiena.jp@gmail.com>"]
 license = "MIT"
 repository = "https://github.com/shiena/godot-xreal"
-description = "Godot 4 GDExtension that drives XREAL glasses — 6DoF head tracking plus camera, plane/anchor/image tracking, depth mesh, hand tracking, photo/blend capture and FPV streaming — via the XREAL native C API, ported from the Unity com.xreal.xr SDK."
+description = "Godot 4 GDExtension that drives XREAL glasses: 6DoF head tracking plus camera, plane/anchor/image tracking, depth mesh, hand tracking, photo/blend capture and FPV streaming, through the XREAL native C API, ported from the Unity com.xreal.xr SDK."
 
 [lib]
 crate-type = ["cdylib"]
@@ -16,7 +16,7 @@ crate-type = ["cdylib"]
 godot = { version = "0.5", features = ["api-4-6", "register-docs"] }
 # Runtime dlopen/dlsym of the vendored XREAL .so files (libXREALNativeSessionManager.so,
 # libXREALXRPlugin.so), kept out of the link line rather than linked directly. The extension
-# itself is Android-only (see godot_xreal.gdextension) — the desktop editor does not load it.
+# itself is Android-only (see godot_xreal.gdextension), so the desktop editor never loads it.
 libloading = "0.8"
 
 # Android-only: read the host JavaVM / Activity jobject published to the process, used as

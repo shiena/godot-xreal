@@ -3,27 +3,28 @@ extends EditorPlugin
 
 ## Godot XREAL addon.
 ##
-## The runtime classes are provided by the `godot_xreal` GDExtension and are always
-## available once the extension is loaded (regardless of this plugin's enabled state):
+## The `godot_xreal` GDExtension provides the runtime classes, and they are available once the
+## extension is loaded, whatever this plugin's enabled state:
 ##
-##   - XrealHeadTracker (Node3D) — drives its transform from the native 6DoF head pose
-##     (rotation + position; 3DoF/0DoF selectable via the xreal/tracking_type setting).
-##     Parent a Camera3D under it (see addons/godot_xreal/xreal_rig.tscn).
-##   - XrealSystem (RefCounted) — façade over the native plugin: query availability /
-##     version / tracking state, switch the tracking mode, and drive the AR subsystems,
+##   - XrealHeadTracker (Node3D) drives its transform from the native 6DoF head pose, rotation
+##     and position, with 3DoF and 0DoF selectable through the xreal/tracking_type setting.
+##     Parent a Camera3D under it; see addons/godot_xreal/xreal_rig.tscn.
+##   - XrealSystem (RefCounted) is the facade over the native plugin: query availability,
+##     version and tracking state, switch the tracking mode, and drive the AR subsystems,
 ##     render metrics, capture and FPV streaming that the feature sub-scenes build on.
-##   - XrealAR (Node) — polls the AR change streams each frame and re-emits them as
-##     plane / spatial-anchor / tracked-image / glasses-event signals.
-##   - XrealHandTracker (Node) — publishes XREAL hand tracking to XRServer as two
-##     XRHandTrackers (Air 2 Ultra only).
-##   - XrealCameraFeed (CameraFeed) — publishes the RGB camera frames.
+##   - XrealAR (Node) polls the AR change streams each frame and re-emits them as plane,
+##     spatial-anchor, tracked-image and glasses-event signals.
+##   - XrealHandTracker (Node) publishes XREAL hand tracking to XRServer as two XRHandTrackers
+##     (Air 2 Ultra only).
+##   - XrealCameraFeed (CameraFeed) publishes the RGB camera frames.
 ##
-## Drop-in feature sub-scenes (camera, plane detection, spatial anchors, image tracking,
-## depth mesh, hand tracking, photo/blend capture, FPV streaming) live under
+## The drop-in feature sub-scenes (camera, plane detection, spatial anchors, image tracking,
+## depth mesh, hand tracking, photo and blend capture, FPV streaming) live under
 ## addons/godot_xreal/features/.
 ##
 ## This EditorPlugin exists so the addon can be toggled from Project > Project Settings >
-## Plugins and to host the editor docks (SDK import + image-tracking DB builder).
+## Plugins, and so it can host the editor docks: the SDK import and the image-tracking DB
+## builder.
 
 const ExportPluginScript := preload("res://addons/godot_xreal/export_plugin.gd")
 const ImageDbDockScript := preload("res://addons/godot_xreal/editor/image_db_dock.gd")
@@ -32,15 +33,16 @@ var _export_plugin: EditorExportPlugin
 var _image_db_dock: Control
 var _vendor_import_dock: Control
 
-## The `xreal/*` project settings. Most are consumed at runtime (demo/main.gd reads them with these
-## same inline defaults, so a project works with or without them persisted); `xreal/multi_resume` and
-## `xreal/auto_log` are instead read at EXPORT time by export_plugin.gd to shape the Android manifest.
-## Registered here so they show up in Project > Project Settings with proper types/hints; only values
-## changed from the default are written to project.godot. Left in place on plugin disable (removing
-## them would drop user-chosen values).
+## The `xreal/*` project settings. Most are consumed at runtime, and demo/main.gd reads them with
+## these same inline defaults, so a project works with or without them persisted. The exceptions
+## are `xreal/multi_resume` and `xreal/auto_log`, which export_plugin.gd reads at EXPORT time to
+## shape the Android manifest. They are registered here so they show up in Project > Project
+## Settings with proper types and hints, and only values changed from the default are written to
+## project.godot. Disabling the plugin leaves them in place, since removing them would drop
+## user-chosen values.
 const PROJECT_SETTINGS: Array[Dictionary] = [
 	{
-		# Head-tracking mode applied at boot. "SDK Default" (-1) leaves the native default /
+		# Head-tracking mode applied at boot. "SDK Default" (-1) leaves the native default and the
 		# `debug.xreal.tracking_type` system property in charge.
 		"name": "xreal/tracking_type",
 		"type": TYPE_INT,
@@ -50,8 +52,8 @@ const PROJECT_SETTINGS: Array[Dictionary] = [
 	},
 	{
 		# Stereo rendering mode applied at boot. "SDK Default" (-1) leaves the
-		# `debug.xreal.stereo_mode` system property / native default (Multipass) in charge.
-		# Multiview is single-pass-instanced but buys no GPU on this rig — Multipass recommended.
+		# `debug.xreal.stereo_mode` system property, and the native default of Multipass, in charge.
+		# Multiview is single-pass-instanced but buys no GPU on this rig, so Multipass is recommended.
 		"name": "xreal/stereo_mode",
 		"type": TYPE_INT,
 		"hint": PROPERTY_HINT_ENUM,
@@ -60,11 +62,11 @@ const PROJECT_SETTINGS: Array[Dictionary] = [
 	},
 	{
 		# Which input sources InitUserDefinedSettings asks the SDK for. "SDK Default" (-1) leaves the
-		# `debug.xreal.input_source` property / native default (Controller) in charge.
+		# `debug.xreal.input_source` property, and the native default of Controller, in charge.
 		#
-		# Only pick a value with Hands if you actually use hand tracking: the Hands bit makes the SDK
+		# Pick a value with Hands only if you actually use hand tracking. The Hands bit makes the SDK
 		# call NativePerception::SetHandTrackingEnabled synchronously during input start, measured at
-		# ~878 ms of cold start on an X4000 + One Pro — and hand tracking is Air 2 Ultra only, so on
+		# ~878 ms of cold start on an X4000 with a One Pro, and hand tracking is Air 2 Ultra only, so on
 		# any other headset that is pure startup latency. See docs/plans/startup-latency.md.
 		"name": "xreal/input_source",
 		"type": TYPE_INT,
@@ -73,23 +75,24 @@ const PROJECT_SETTINGS: Array[Dictionary] = [
 		"default": -1,
 	},
 	{
-		# Keep the glasses display on while the headset is not worn (bypass the proximity sensor's
-		# auto-off). On by default; turn off to let the display sleep when the glasses are taken off.
+		# Keep the glasses display on while the headset is not worn, bypassing the proximity sensor's
+		# auto-off. It is on by default; turn it off to let the display sleep when the glasses come off.
 		"name": "xreal/display_bypass_psensor",
 		"type": TYPE_BOOL,
 		"default": true,
 	},
 	{
-		# Multi-resume: keep the glasses app running live when the phone switches to another app
-		# (Android manifest `nr_features=multiResume`). On by default; off drops the marker so the app
-		# follows normal Android lifecycle. Read at EXPORT time by export_plugin.gd, not at runtime.
+		# Multi-resume: keep the glasses app running live when the phone switches to another app, through
+		# the Android manifest `nr_features=multiResume`. It is on by default, and turning it off drops
+		# the marker so the app follows the normal Android lifecycle. export_plugin.gd reads it at EXPORT
+		# time, not at runtime.
 		"name": "xreal/multi_resume",
 		"type": TYPE_BOOL,
 		"default": true,
 	},
 	{
-		# NRSDK verbose native logging (Android manifest `autoLog`, emitted as 0/1). Off by default.
-		# Read at EXPORT time by export_plugin.gd, like xreal/multi_resume.
+		# NRSDK verbose native logging, the Android manifest `autoLog`, emitted as 0 or 1. Off by default.
+		# export_plugin.gd reads it at EXPORT time, like xreal/multi_resume.
 		"name": "xreal/auto_log",
 		"type": TYPE_BOOL,
 		"default": false,
@@ -112,19 +115,20 @@ func _register_project_settings() -> void:
 
 func _enter_tree() -> void:
 	_register_project_settings()
-	# Contribute the XREAL Android manifest/library requirements at export time so the Gradle
-	# build template needs no hand-edits (they survive template regeneration).
+	# Contribute the XREAL Android manifest and library requirements at export time, so the Gradle
+	# build template needs no hand-edits and they survive template regeneration.
 	_export_plugin = ExportPluginScript.new()
 	add_export_plugin(_export_plugin)
 
-	# SDK vendoring dock: pick the com.xreal.xr package (.tgz/.tar.gz or an extracted folder) and copy
-	# the .so/.aar/tool into place — the in-editor analog of scripts/vendor_xreal_libs.*.
+	# SDK vendoring dock: pick the com.xreal.xr package, a .tgz, a .tar.gz or an extracted folder, and
+	# copy the .so, .aar and host tool into place. It is the in-editor analog of
+	# scripts/vendor_xreal_libs.*.
 	_vendor_import_dock = VendorImportDockScript.new()
 	_vendor_import_dock.name = "XREAL Import"
 	add_control_to_dock(EditorPlugin.DOCK_SLOT_LEFT_UR, _vendor_import_dock)
 
-	# Image-tracking DB builder dock (runs the vendored trackableImageTools to compile the blob —
-	# the Godot analog of Unity's XREALImageLibraryBuildProcessor).
+	# Image-tracking DB builder dock. It runs the vendored trackableImageTools to compile the blob,
+	# the Godot analog of Unity's XREALImageLibraryBuildProcessor.
 	_image_db_dock = ImageDbDockScript.new()
 	_image_db_dock.name = "XREAL Image DB"
 	add_control_to_dock(EditorPlugin.DOCK_SLOT_LEFT_UR, _image_db_dock)

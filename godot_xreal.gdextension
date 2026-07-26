@@ -14,9 +14,9 @@ android.release.arm64 = "res://addons/godot_xreal/bin/android/libgodot_xreal.so"
 ; ("No GDExtension library found for current OS and architecture"). The stubs register
 ; ALL five classes (XrealHeadTracker / XrealHandTracker / XrealAR / XrealCameraFeed /
 ; XrealSystem) with their full member lists, so scenes open warning-free and the F1 help
-; documents them — which means class_exists() is true on desktop too: scripts must gate
+; documents them, which means class_exists() is true on desktop too: scripts must gate
 ; the real-extension path on OS.get_name() == "Android" (see XrealShared.is_native_runtime).
-; Not committed — build once after cloning with scripts/build_dummy_libs.ps1 / .sh
+; Not committed: build once after cloning with scripts/build_dummy_libs.ps1 / .sh
 ; (clang + lld only; source: dummy/gdext_dummy.c).
 windows.x86_64 = "res://addons/godot_xreal/bin/windows/godot_xreal_dummy.x86_64.dll"
 windows.arm64 = "res://addons/godot_xreal/bin/windows/godot_xreal_dummy.arm64.dll"

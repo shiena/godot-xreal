@@ -1,15 +1,17 @@
 extends Node
-## Photo capture as a drop-in feature component — the Godot analog of the SDK's XREALPhotoCapture.
-## Like the SDK (which reads the camera RenderTexture back and EncodeToJPG), this renders the XREAL
-## RGB camera YCbCr feed into an offscreen SubViewport and saves the read-back image as a JPG in
-## the user data dir, returning its path — what to do with it (e.g. publish it to the phone
-## gallery, as the demo does) is the app's choice. RGB-camera / Eyes feature — One Series only.
+## Photo capture as a drop-in feature component, the Godot analog of the SDK's XREALPhotoCapture.
+## The SDK reads the camera RenderTexture back and calls EncodeToJPG; this renders the XREAL RGB
+## camera YCbCr feed into an offscreen SubViewport and saves the read-back image as a JPG in the
+## user data dir, returning its path. What to do with it, such as publishing it to the phone
+## gallery as the demo does, is the app's choice. This is an RGB-camera (Eyes) feature, so One
+## Series only.
 ##
-## Needs the camera running: drop in xreal_camera.tscn too and enable it — the live feed is
-## discovered via XrealShared.find_camera_feed() at capture time, no wiring needed.
+## It needs the camera running: drop in xreal_camera.tscn too and enable it. The live feed is
+## discovered through XrealShared.find_camera_feed() at capture time, with no wiring needed.
 
-## Emitted when an operation fails or the feature is unavailable, so the load site can react
-## (show UI, log, flip a toggle). Carries the same human-readable text also pushed as a warning.
+## Emitted when an operation fails or the feature is unavailable, so the load site can react by
+## showing UI, logging, or flipping a toggle. It carries the same human-readable text that is also
+## pushed as a warning.
 signal error(message: String)
 
 
@@ -38,8 +40,8 @@ func _ensure_viewport() -> void:
 	_rect.material = _mat
 	_viewport.add_child(_rect)
 
-## The live camera feed's Y/CbCr textures as [yt, ct], or an empty array when the camera isn't
-## ready (off-device / unsupported device / feed off / no frame yet — each case warns).
+## The live camera feed's Y/CbCr textures as [yt, ct], or an empty array when the camera is not
+## ready: off device, unsupported device, feed off, or no frame yet. Each case warns.
 func _feed_textures() -> Array:
 	if _system == null:
 		return []
@@ -71,9 +73,9 @@ func capture_photo() -> String:
 	if img == null:
 		_fail("[xreal-capture] readback failed")
 		return ""
-	img.flip_y()  # SubViewport read-back is bottom-up (GL origin) — flip to upright before saving
+	img.flip_y()  # SubViewport read-back is bottom-up (GL origin), so flip to upright before saving
 	# Local date-time in the name (photo_YYYYMMDD_HHMMSS.jpg) so the file reads naturally in the
-	# gallery ("2026-07-20T14:25:30" -> "20260720_142530").
+	# gallery: "2026-07-20T14:25:30" becomes "20260720_142530".
 	var stamp := Time.get_datetime_string_from_system().replace("-", "").replace(":", "").replace("T", "_")
 	var path := OS.get_user_data_dir().path_join("photo_%s.jpg" % stamp)
 	var err := img.save_jpg(path)
@@ -82,7 +84,8 @@ func capture_photo() -> String:
 		return ""
 	return path
 
-## Push a warning AND emit `error` so the load site can detect the failure (not just see the log).
+## Push a warning AND emit `error`, so the load site can detect the failure instead of only seeing
+## it in the log.
 func _fail(msg: String) -> void:
 	push_warning(msg)
 	error.emit(msg)

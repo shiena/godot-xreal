@@ -8,15 +8,15 @@ import android.view.Window;
 /**
  * Non-Unity stand-in for the NR runtime's lifecycle Activity.
  *
- * The NR loader (nr_features "multiResume") starts an Activity with exactly this
- * fully-qualified name; without a class behind it the app dies at startup with
- * ClassNotFoundException. Unity's own NRFakeActivity (nractivitylife*.aar) cannot be
- * shipped because it references UnityPlayer, so this stub supplies just the Android
- * lifecycle shape. onBackPressed deliberately does NOT call super: the back key on the
- * glasses display must not finish the Activity.
+ * The NR loader, through nr_features "multiResume", starts an Activity with exactly this
+ * fully-qualified name, and without a class behind it the app dies at startup with a
+ * ClassNotFoundException. Unity's own NRFakeActivity, in nractivitylife*.aar, cannot ship
+ * because it references UnityPlayer, so this stub supplies the Android lifecycle shape alone.
+ * onBackPressed deliberately does NOT call super: the back key on the glasses display must not
+ * finish the Activity.
  *
- * (Reconstructed 2026-07-15 from the previously shipped xreal_bridge.jar bytecode —
- * this source was never committed with the original jar.)
+ * Reconstructed on 2026-07-15 from the previously shipped xreal_bridge.jar bytecode, since
+ * this source was never committed with the original jar.
  */
 public class NRFakeActivity extends Activity {
 	private static final String TAG = "NRFakeActivity";

@@ -7,7 +7,7 @@
     script.
 
     You do NOT type an address into the app: it discovers this PC itself. Start this script first,
-    then hit Stream in the app — the receiver is launched automatically at the right moment, because
+    then hit Stream in the app, and the receiver is launched automatically at the right moment, because
     ffmpeg gives up probing long before a hand-driven app gets around to sending.
 
     Needs python 3 (stdlib only) and ffmpeg/ffplay (e.g. `scoop install ffmpeg`).
@@ -20,7 +20,7 @@
     Record to an .mkv in this folder instead of live-playing.
 
 .PARAMETER Stop
-    Stop a receiver that is already running — this script's, or fpv_server.py — and exit. Useful when
+    Stop a receiver that is already running, either this script's or fpv_server.py, and exit. Useful when
     it was started in another window or in the background, and necessary before starting a second
     one: two servers can bind the same port on Windows and then split the app's discovery reply
     between them, which looks like the app timing out for no reason.
@@ -79,7 +79,7 @@ function Find-Tool([string]$name) {
 }
 
 $python = (Find-Tool 'python') ?? (Find-Tool 'python3')
-if (-not $python) { throw "python 3 not found — pair_server.py answers the app's discovery broadcast." }
+if (-not $python) { throw "python 3 not found: pair_server.py answers the app's discovery broadcast." }
 
 # -analyzeduration must stay generous: cut it short and ffmpeg starts before the first SPS/PPS,
 # leaving the H.264 decoder with 'non-existing PPS 0 referenced'.
@@ -92,7 +92,7 @@ if ($Record) {
     # ("track 1: codec frame size is not set") and then drops the whole audio track.
     $out = Join-Path $here ("fpv_{0}.mkv" -f (Get-Date -Format 'yyyyMMdd_HHmmss'))
     # Audio is re-encoded, not copied. Depacketized LATM packets reach the muxer without usable
-    # timestamps, and both mp4 and mkv then write an audio track header with zero packets in it —
+    # timestamps, and both mp4 and mkv then write an audio track header with zero packets in it,
     # a file that looks right until you decode it. Copying the same AAC from an ADTS file muxes
     # fine, so this is the RTP path, not the container. Video copies through untouched.
     # The two RTP streams also start from unrelated random timestamps and carry no RTCP sync, so
@@ -107,7 +107,7 @@ if ($Record) {
     Write-Host "Will open a live window once the app starts streaming." -ForegroundColor Yellow
 }
 
-Write-Host "Waiting for the app's FIND-SERVER broadcast — hit Stream in the app." -ForegroundColor Cyan
+Write-Host "Waiting for the app's FIND-SERVER broadcast: hit Stream in the app." -ForegroundColor Cyan
 Write-Host "Stop with Ctrl+C here, or 'receive.ps1 -Stop' from anywhere." -ForegroundColor DarkGray
 # --then must stay last: it swallows the rest of the command line.
 & $python $pair --control-port $ControlPort --then @recv

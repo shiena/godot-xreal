@@ -1,16 +1,17 @@
 extends Node3D
-## Depth meshing as a drop-in feature component (Air 2 Ultra). Enables meshing
-## (XrealSystem.set_meshing_enabled) and builds/updates an ArrayMesh per block — a translucent
+## Depth meshing as a drop-in feature component (Air 2 Ultra). It enables meshing through
+## XrealSystem.set_meshing_enabled and builds or updates one ArrayMesh per block, a translucent
 ## overlay of the scanned environment. Mesh-block changes stream in through the shared XrealAR
-## poller; its "mesh" stream is gated on this toggle so it only polls while meshing is on.
+## poller, whose "mesh" stream is gated on this toggle, so it polls only while meshing is on.
 ##
-## World-locked: add this component under a world-fixed node (e.g. the scene root, NOT the head
-## rig) so the mesh stays registered to the real room as the head moves. OFF drops every block mesh
-## from the scene but leaves the SDK meshing, so ON repopulates from the next poll (GetMeshBlockInfo
-## reports the whole current block set each time, not just what changed) without a rescan.
+## World-locked: add this component under a world-fixed node, such as the scene root and NOT the
+## head rig, so the mesh stays registered to the real room as the head moves. Switching OFF drops
+## every block mesh from the scene but leaves the SDK meshing running, so switching ON repopulates
+## from the next poll without a rescan: GetMeshBlockInfo reports the whole current block set each
+## time, not just what changed.
 
-## Emitted when the feature is unavailable (e.g. meshing unsupported on this device), so the load
-## site can react — show UI, log, flip a toggle.
+## Emitted when the feature is unavailable, e.g. meshing is unsupported on this device, so the load
+## site can react by showing UI, logging, or flipping a toggle.
 signal error(message: String)
 
 ## Enable at boot (applied in _ready). At runtime call set_enabled().
@@ -29,8 +30,8 @@ func _ready() -> void:
 	if enabled:
 		enabled = set_enabled(true)
 
-## Toggle meshing. Returns the resulting state (false if unsupported — non-Air-2-Ultra — so a UI
-## toggle can flip itself back off).
+## Toggle meshing and return the resulting state. It returns false on an unsupported device, that
+## is anything but an Air 2 Ultra, so a UI toggle can flip itself back off.
 func set_enabled(on: bool) -> bool:
 	# OFF tears down unconditionally, ahead of the capability probe: a probe that reads false (or a
 	# missing _system) must never be able to strand the block meshes in the scene.
@@ -55,8 +56,8 @@ func set_enabled(on: bool) -> bool:
 	enabled = true
 	return true
 
-## Resolve the shared XrealAR and connect its mesh signals once — BEFORE the stream switch goes
-## on, so no change event is ever polled without a listener.
+## Resolve the shared XrealAR and connect its mesh signals once, BEFORE the stream switch goes on,
+## so no change event is ever polled without a listener.
 func _ensure_ar() -> void:
 	if _connected:
 		return
@@ -67,7 +68,7 @@ func _ensure_ar() -> void:
 	_ar.connect(&"mesh_block_removed", _on_mesh_removed)
 	_connected = true
 
-## XrealAR signal: a block was added/updated.
+## XrealAR signal: a block was added or updated.
 func _on_mesh_changed(b: Dictionary) -> void:
 	if _enabled:
 		_update_block(b)
@@ -116,7 +117,8 @@ func _clear_meshes() -> void:
 		(_meshes[id] as MeshInstance3D).queue_free()
 	_meshes.clear()
 
-## Shared translucent unshaded material (double-sided) — reads as a light tint over the real room.
+## Shared translucent unshaded material, double-sided, which reads as a light tint over the real
+## room.
 func _material() -> StandardMaterial3D:
 	if _mat == null:
 		_mat = StandardMaterial3D.new()
@@ -127,7 +129,7 @@ func _material() -> StandardMaterial3D:
 	return _mat
 
 func _exit_tree() -> void:
-	# Release the shared stream switch + stop meshing on clean shutdown.
+	# Release the shared stream switch and stop meshing on clean shutdown.
 	if _enabled and _ar and is_instance_valid(_ar):
 		_ar.set(&"mesh", false)
 	if _initialized and _system:

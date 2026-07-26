@@ -64,8 +64,9 @@ fn sane_count(count: i32, what: &str) -> i32 {
     }
 }
 
-/// A detected plane sampled from the plane-detection changes. The `pose` is **Unity space** — convert
-/// on the Godot side (`(x, -y, -z)` / quaternion `(-x, -y, z, w)`). `center`/`size` are plane-local.
+/// A detected plane sampled from the plane-detection changes. The `pose` is in **Unity space**, so
+/// convert on the Godot side, to `(x, -y, -z)` and quaternion `(-x, -y, z, w)`. `center` and `size`
+/// are plane-local.
 #[derive(Clone, Copy, Debug)]
 pub struct PlaneSample {
     pub id: TrackableId,
@@ -105,8 +106,8 @@ fn read_planes(ptr: *const c_void, count: i32, stride: usize) -> Vec<PlaneSample
         .collect()
 }
 
-/// Read `count` removed `TrackableId`s (AR Foundation packs the removed array as `TrackableId[]`,
-/// 16 bytes each — not full `BoundedPlane`s).
+/// Read `count` removed `TrackableId`s. AR Foundation packs the removed array as a `TrackableId[]`
+/// of 16 bytes each, not as full `BoundedPlane`s.
 fn read_removed_ids(ptr: *const c_void, count: i32) -> Vec<TrackableId> {
     if ptr.is_null() || count <= 0 {
         return Vec::new();
@@ -118,9 +119,9 @@ fn read_removed_ids(ptr: *const c_void, count: i32) -> Vec<TrackableId> {
         .collect()
 }
 
-/// A tracked spatial anchor sampled from the anchor changes / an acquire/load call. `pose` is **Unity
-/// space** — convert on the Godot side (`(x, -y, -z)` / quaternion `(-x, -y, z, w)`). `session_id` is
-/// the map session it belongs to (zero until saved).
+/// A tracked spatial anchor sampled from the anchor changes, or from an acquire or load call.
+/// `pose` is in **Unity space**, so convert on the Godot side, to `(x, -y, -z)` and quaternion
+/// `(-x, -y, z, w)`. `session_id` is the map session it belongs to, and stays zero until saved.
 #[derive(Clone, Copy, Debug)]
 pub struct AnchorSample {
     pub id: TrackableId,
@@ -208,7 +209,7 @@ pub struct XrealNative {
     _session_lib: Library,
     _plugin_lib: Option<Library>,
 
-    // Perception (libXREALNativeSessionManager.so) — RE-confirmed signatures.
+    // Perception, from libXREALNativeSessionManager.so, with RE-confirmed signatures.
     hmd_time_nanos: FnHmdTimeNanos,
     get_head_pose_at_time: FnGetHeadPoseAtTime,
     load_api: Option<FnLoadApi>,
@@ -228,8 +229,8 @@ pub struct XrealNative {
     get_tracking_reason: Option<FnQueryInt>,
     get_tracking_type: Option<FnQueryInt>,
     switch_tracking_type: Option<FnSwitchTrackingType>,
-    /// Per-device capability query (`IsHMDFeatureSupported`) — e.g. the RGB camera is absent on the
-    /// Air 2 Ultra, so the camera path must gate on this to avoid opening a nonexistent camera.
+    /// Per-device capability query, `IsHMDFeatureSupported`. The RGB camera, for instance, is absent on
+    /// the Air 2 Ultra, so the camera path has to gate on this and never open a nonexistent camera.
     is_hmd_feature_supported: Option<FnIsHmdFeatureSupported>,
 
     // Plane detection (libXREALXRPlugin.so, flat C ABI; see docs/plans/ar-features-plan.md). Needs 6DoF.
@@ -266,7 +267,7 @@ pub struct XrealNative {
     rgb_get_data_plane: Option<FnTryGetRgbCameraDataPlane>,
     rgb_dispose_handle: Option<FnDisposeRgbCameraDataHandle>,
 
-    // Session / control (libXREALXRPlugin.so) — optional, used for full bootstrap.
+    // Session and control, from libXREALXRPlugin.so: optional, and used for the full bootstrap.
     unity_plugin_load: Option<FnUnityPluginLoad>,
     init_user_defined_settings: Option<FnInitUserDefinedSettings>,
     create_session: Option<FnCreateSession>,
@@ -283,7 +284,7 @@ pub struct XrealNative {
     get_frame_metadata: Option<FnGetFrameMetaData>,
     deinitialize_rendering: Option<FnVoid>,
 
-    // Read-only device info (libXREALXRPlugin.so) — exposed via XrealSystem.
+    // Read-only device info, from libXREALXRPlugin.so, exposed through XrealSystem.
     get_plugin_version: Option<FnGetPluginVersion>,
     get_device_type: Option<FnGetDeviceType>,
 
@@ -293,7 +294,7 @@ pub struct XrealNative {
     get_camera_intrinsic: Option<FnGetCameraIntrinsic>,
     get_camera_projection_matrix: Option<FnGetCameraProjectionMatrix>,
 
-    // Direct NR compositor/rendering API (libnr_loader.so) — RE / unverified.
+    // The direct NR compositor and rendering API, from libnr_loader.so. RE'd and unverified.
     nr_rendering: Option<NrRenderingApi>,
     display_manager_rendering_initialized: bool,
 
@@ -321,21 +322,22 @@ struct NrRenderingApi {
     rendering_destroy: FnNrRenderingOneHandle,
 }
 
-/// One RGB-camera frame as planar YCbCr: `(y, y_w, y_h, cbcr, c_w, c_h)` — the Y plane (R8, full-res)
-/// plus an interleaved CbCr buffer (RG8, half-res), the layout `set_ycbcr_images` + a YCbCr shader expect.
+/// One RGB-camera frame as planar YCbCr: `(y, y_w, y_h, cbcr, c_w, c_h)`, meaning the Y plane in
+/// full-res R8 plus an interleaved CbCr buffer in half-res RG8, the layout `set_ycbcr_images` and a
+/// YCbCr shader expect.
 pub type YuvFrame = (Vec<u8>, i32, i32, Vec<u8>, i32, i32);
 
 /// Borrowed view of one acquired RGB frame. The slices point **into the SDK's own frame buffer**,
-/// so they are valid only while the frame handle is alive — i.e. only for the body of the
+/// so they stay valid only while the frame handle is alive, that is only for the body of the
 /// [`XrealNative::rgb_camera_with_frame`] closure, which the lifetime enforces.
 pub struct RgbPlanes<'a> {
     /// Luma, full-res, tightly packed (`y_width * y_height` bytes).
     pub y: &'a [u8],
     pub y_width: i32,
     pub y_height: i32,
-    /// I420 plane 2 — U (Cb), half-res.
+    /// I420 plane 2: U, or Cb, at half-res.
     pub u: &'a [u8],
-    /// I420 plane 1 — V (Cr), half-res.
+    /// I420 plane 1: V, or Cr, at half-res.
     pub v: &'a [u8],
     pub chroma_width: i32,
     pub chroma_height: i32,
@@ -344,8 +346,8 @@ pub struct RgbPlanes<'a> {
 /// Borrow one plane of an acquired frame in place, without copying.
 ///
 /// # Safety
-/// `handle` must be a live frame handle, and the returned slice must not outlive it — the lifetime
-/// `'a` is unconstrained, so the caller alone guarantees this. Only
+/// `handle` must be a live frame handle, and the returned slice must not outlive it. The lifetime
+/// `'a` is unconstrained, so the caller alone guarantees that. Only
 /// [`XrealNative::rgb_camera_with_frame`] should call it.
 unsafe fn borrow_plane<'a>(
     get_plane: FnTryGetRgbCameraDataPlane,
@@ -366,47 +368,48 @@ unsafe fn borrow_plane<'a>(
     ))
 }
 
-/// Address of the SDK's RGB "latest frame" `std::mutex` (layout-compatible with `pthread_mutex_t`),
-/// which guards the `shared_ptr<RGBCameraDataFrame>` holder inside the `SessionManager` singleton.
-/// `None` until `lib_base` is published. The two constants come from disassembling
-/// `libXREALXRPlugin.so`: the singleton is the fixed global `lib_base + 0xDB400` (the same base the
-/// other REs in this crate use), and the receive/start/stop paths (`GetRGBCameraData`,
-/// `Start`/`StopRGBCameraDataCapture`) all lock the same mutex at `singleton + 0x1C0` — it is the
-/// single lock guarding the RGB camera state, so holding it serialises us against every writer.
-/// (`TryGetRGBCameraFrame`, the destructive new-frame gate, also reads `+0x188`/`+0x140` unlocked;
-/// we do not use it, but adopting it would need this same lock.)
+/// Address of the SDK's RGB "latest frame" `std::mutex`, which is layout-compatible with
+/// `pthread_mutex_t` and guards the `shared_ptr<RGBCameraDataFrame>` holder inside the
+/// `SessionManager` singleton. It is `None` until `lib_base` is published. The two constants come
+/// from disassembling `libXREALXRPlugin.so`: the singleton is the fixed global
+/// `lib_base + 0xDB400`, the same base the other REs in this crate use, and the receive, start and
+/// stop paths, `GetRGBCameraData`, `StartRGBCameraDataCapture` and `StopRGBCameraDataCapture`, all
+/// lock the same mutex at `singleton + 0x1C0`. It is the single lock guarding the RGB camera state,
+/// so holding it serialises us against every writer. `TryGetRGBCameraFrame`, the destructive
+/// new-frame gate, also reads `+0x188` and `+0x140` unlocked; we do not use it, but adopting it
+/// would need this same lock.
 ///
-/// # Why this exists — the RGB-camera double-free crash
-/// `TryAcquireLatestImage` (the poll API we call from the GL thread) reads that holder **without
-/// taking any lock**, bumps the `shared_ptr` control block's refcount, and copies it into its handle
-/// map. Meanwhile the SDK's camera receive thread runs `SessionManager::GetRGBCameraData`, which
-/// — *under this mutex* — swaps the holder to a new frame and releases the old `shared_ptr`
-/// (refcount 0 → `delete`). Racing the two lets us latch a control block the receive thread is
-/// freeing; the later `DisposeRGBCameraDataHandle` then double-frees it and Scudo aborts the GL
-/// thread with "invalid chunk state when deallocating" (tombstone_29 / tombstone_30, both the same
-/// stack). Holding this mutex across the acquire serialises us against the receive thread: the
-/// `shared_ptr` we latch is valid, and from then on its refcount keeps the frame alive — a frame we
-/// still reference is not returned to the `ObjectPool`, so its planes stay stable too (this also
-/// removes tearing), which is why only the acquire — not the plane reads or the dispose — needs the
-/// lock.
+/// # Why this exists: the RGB-camera double-free crash
+/// `TryAcquireLatestImage`, the poll API we call from the GL thread, reads that holder **without
+/// taking any lock**, bumps the `shared_ptr` control block's refcount, and copies it into its
+/// handle map. Meanwhile the SDK's camera receive thread runs
+/// `SessionManager::GetRGBCameraData`, which, *under this mutex*, swaps the holder to a new frame
+/// and releases the old `shared_ptr`, dropping the refcount to 0 and deleting it. Racing the two
+/// lets us latch a control block the receive thread is freeing, and the later
+/// `DisposeRGBCameraDataHandle` then double-frees it, so Scudo aborts the GL thread with "invalid
+/// chunk state when deallocating" (tombstone_29 and tombstone_30, both the same stack). Holding
+/// this mutex across the acquire serialises us against the receive thread: the `shared_ptr` we
+/// latch is valid, and from then on its refcount keeps the frame alive. A frame we still reference
+/// is not returned to the `ObjectPool`, so its planes stay stable too, which also removes tearing.
+/// That is why only the acquire needs the lock, and neither the plane reads nor the dispose do.
 ///
-/// This is a **stopgap** that borrows an SDK-internal `std::mutex`; the offsets are hard-coded and
-/// must be re-checked on an SDK update. The root-cause fix is **callback mode**
-/// (`StartRGBCameraDataCapture` with a non-null callback → receive the `RGBCameraDataFrameToUnity`
-/// on the receive thread and never touch the poll API off-thread, which is what Unity does). That
-/// was not done here because it needs the callback struct's ABI reversed and the zero-copy
-/// direct-upload path redesigned — a mid-sized change with a wider on-device test surface — whereas
-/// this stopgap is local and reuses existing REs, so it ships first and the callback migration is
-/// tracked as separate work.
+/// This is a **stopgap** that borrows an SDK-internal `std::mutex`, so the offsets are hard-coded
+/// and have to be re-checked on an SDK update. The root-cause fix is **callback mode**: call
+/// `StartRGBCameraDataCapture` with a non-null callback, receive the `RGBCameraDataFrameToUnity` on
+/// the receive thread, and never touch the poll API off-thread, which is what Unity does. That was
+/// not done here because it needs the callback struct's ABI reversed and the zero-copy
+/// direct-upload path redesigned, a mid-sized change with a wider on-device test surface, whereas
+/// this stopgap is local and reuses existing REs. So the stopgap ships first and the callback
+/// migration is tracked as separate work.
 #[cfg(target_os = "android")]
 fn rgb_holder_mutex() -> Option<*mut libc::pthread_mutex_t> {
     let base = crate::signal_guard::lib_base();
     (base != 0).then(|| (base + 0xDB400 + 0x1C0) as *mut libc::pthread_mutex_t)
 }
 
-/// Call `TryAcquireLatestImage` serialised against the SDK camera receive thread — see
-/// [`rgb_holder_mutex`] for the race this closes. Falls back to an unguarded call only if `lib_base`
-/// is not yet published, which cannot happen once the camera has started.
+/// Call `TryAcquireLatestImage` serialised against the SDK camera receive thread; see
+/// [`rgb_holder_mutex`] for the race this closes. It falls back to an unguarded call only while
+/// `lib_base` is unpublished, which cannot happen once the camera has started.
 ///
 /// # Safety
 /// `acquire` must be the live `TryAcquireLatestImage` export and the three out-pointers valid.
@@ -446,9 +449,9 @@ unsafe fn rgb_acquire_latest_locked(
 /// samples, reusing `out`'s allocation.
 ///
 /// Fixed-width stores into a pre-sized buffer, deliberately: the obvious `push` loop carries a
-/// capacity check per byte, cannot vectorise, and measured 903us/frame on the X4000 (0.51 GB/s,
-/// the slowest stage of the whole grab). This shape is what LLVM lowers to a NEON two-channel
-/// interleaving store — 167us for the same work.
+/// capacity check per byte, cannot vectorise, and measured 903 us per frame on the X4000, at
+/// 0.51 GB/s, the slowest stage of the whole grab. This shape is what LLVM lowers to a NEON
+/// two-channel interleaving store, which does the same work in 167 us.
 pub fn interleave_cbcr(u: &[u8], v: &[u8], width: i32, height: i32, out: &mut Vec<u8>) {
     let n = (width.max(0) as usize) * (height.max(0) as usize);
     let m = n.min(u.len()).min(v.len());
@@ -464,13 +467,13 @@ pub fn interleave_cbcr(u: &[u8], v: &[u8], width: i32, height: i32, out: &mut Ve
 }
 
 /// Per-stage cost of one grab, in microseconds, so the SDK's own calls can be told apart from the
-/// client-side work around them. Reported by `XrealCameraFeed` when
-/// `debug.xreal.camera_timing` is set.
+/// client-side work around them. `XrealCameraFeed` reports it when `debug.xreal.camera_timing` is
+/// set.
 ///
 /// This settled the open question in `docs/archive/codex-camera-acquire-analysis.md`: the
 /// disassembly said the SDK getters were hash lookups and pointer arithmetic, and the measurement
-/// agreed — `acquire` is ~4us and `planes` is 0. Every microsecond of the old ~3.5 ms/frame was on
-/// our side. Kept because it is how any future regression here gets found.
+/// agreed, with `acquire` at about 4 us and `planes` at 0. Every microsecond of the old 3.5 ms per
+/// frame was on our side. It is kept because it is how any future regression here gets found.
 #[derive(Clone, Copy, Default, Debug)]
 pub struct GrabTimings {
     /// `TryAcquireLatestImage`.
@@ -566,21 +569,21 @@ unsafe impl Send for XrealNative {}
 impl XrealNative {
     /// `dlopen` the XREAL libraries and resolve the symbols the extension needs.
     ///
-    /// Returns `Err` (without panicking) when the libraries are missing — the expected
-    /// case on desktop/editor builds.
+    /// It returns `Err`, without panicking, when the libraries are missing, which is the expected case
+    /// on desktop and editor builds.
     pub fn load() -> Result<Self, String> {
         unsafe {
             let session_lib =
                 Library::new(SESSION_LIB).map_err(|e| format!("dlopen {SESSION_LIB}: {e}"))?;
             let plugin_lib = Library::new(PLUGIN_LIB).ok();
-            // Pin both XREAL libs for the process lifetime (RTLD_NODELETE). `load()` runs on every
-            // session bring-up retry, and a FAILED attempt drops this XrealNative — dlclosing the
-            // libraries. That opens an unload window in which `signal_guard::lib_base()` (published
-            // on load), the code patches, and every callback pointer the SDK stored all dangle;
-            // scudo reuses the address range and the next `blr lib_base+offset` (e.g.
-            // hand_tracking::ensure_enabled) executes heap memory. Observed on-device: SIGSEGV
-            // SEGV_ACCERR on GLThread at exactly lib_base+0x47a10. The XREAL runtime is a
-            // process-global singleton — unloading it is never useful, so pin it.
+            // Pin both XREAL libs for the process lifetime with RTLD_NODELETE. `load()` runs on every session
+            // bring-up retry, and a FAILED attempt drops this XrealNative, which dlcloses the libraries. That
+            // opens an unload window in which `signal_guard::lib_base()`, published on load, the code patches,
+            // and every callback pointer the SDK stored all dangle. Scudo reuses the address range and the
+            // next `blr lib_base+offset`, from hand_tracking::ensure_enabled for instance, executes heap
+            // memory. Observed on device: a SIGSEGV with SEGV_ACCERR on the GLThread at exactly
+            // lib_base+0x47a10. The XREAL runtime is a process-global singleton, and unloading it is never
+            // useful, so pin it.
             #[cfg(target_os = "android")]
             for name in [SESSION_LIB, PLUGIN_LIB] {
                 let cname = std::ffi::CString::new(name).unwrap();
@@ -802,9 +805,10 @@ impl XrealNative {
                             crate::signal_guard::patch_update_metrics(lib_base);
                         });
                     }
-                    // Publish the library base so LIB_BASE readers (reassert_update_metrics_on_render_thread) work.
-                    // On Android publish it WITHOUT installing the SIGSEGV sigaction (a no-op there —
-                    // libsigchain wins — and it destabilised the process); off-Android use install().
+                    // Publish the library base so LIB_BASE readers, such as
+                    // reassert_update_metrics_on_render_thread, work. On Android publish it WITHOUT installing the
+                    // SIGSEGV sigaction, which is a no-op there, since libsigchain wins, and destabilised the process.
+                    // Off Android, use install().
                     #[cfg(target_os = "android")]
                     crate::signal_guard::publish_lib_base(lib_base);
                     #[cfg(not(target_os = "android"))]
@@ -924,9 +928,9 @@ impl XrealNative {
         }
     }
 
-    /// Resume the session — Unity calls this on app resume; it activates the perception
-    /// subsystem (a freshly `CreateSession`'d session stays paused, so `IsSessionStarted`
-    /// is false and no pose flows until this runs). No-op if the symbol is unavailable.
+    /// Resume the session. Unity calls this on app resume, and it activates the perception subsystem: a
+    /// freshly `CreateSession`'d session stays paused, so `IsSessionStarted` is false and no pose flows
+    /// until this runs. It does nothing when the symbol is unavailable.
     pub fn resume_session(&self) {
         if let Some(f) = self.resume_session {
             unsafe { f() }
@@ -959,10 +963,11 @@ impl XrealNative {
         matches!(status, 0 | 1)
     }
 
-    /// Fetch the **display** subsystem head pose (libXREALXRPlugin.so `GetHeadPoseAtTime`) as the
-    /// raw 16-float block it writes — the pose the compositor reprojects with. `None` when the
-    /// export is absent or the query fails. The 16-float layout (a 4×4 row-major transform,
-    /// device-pinned) is decoded caller-side; see the RE map in `docs/archive/multiview-investigation.md`.
+    /// Fetch the **display** subsystem head pose, libXREALXRPlugin.so's `GetHeadPoseAtTime`, as the raw
+    /// 16-float block it writes, which is the pose the compositor reprojects with. It returns `None`
+    /// when the export is absent or the query fails. The caller decodes the 16-float layout, a
+    /// device-pinned 4x4 row-major transform; see the RE map in
+    /// `docs/archive/multiview-investigation.md`.
     pub fn head_pose_display(&self, time_ns: u64) -> Option<[f32; 16]> {
         let f = self.xp_get_head_pose?;
         let mut raw = [0.0_f32; 16];
@@ -1063,8 +1068,8 @@ impl XrealNative {
         let mut changes = ArSubsystemChanges::default();
         unsafe { f(&mut changes) };
         let stride = changes.element_size as usize;
-        // A stride smaller than the fields we read means an unexpected layout — bail rather than
-        // read out of bounds (expected element_size == `bounded_plane::ELEMENT_SIZE`).
+        // A stride smaller than the fields we read means an unexpected layout, so bail rather than read
+        // out of bounds; the expected element_size is `bounded_plane::ELEMENT_SIZE`.
         if stride < bounded_plane::TRACKING_STATE + 4 {
             if changes.added_count != 0 || changes.updated_count != 0 {
                 godot::global::godot_warn!(
@@ -1167,8 +1172,8 @@ impl XrealNative {
         let mut changes = ArSubsystemChanges::default();
         unsafe { f(&mut changes) };
         let stride = changes.element_size as usize;
-        // A stride smaller than the fields we read means an unexpected layout — bail rather than read
-        // out of bounds (expected element_size == `xr_anchor::ELEMENT_SIZE`).
+        // A stride smaller than the fields we read means an unexpected layout, so bail rather than read
+        // out of bounds; the expected element_size is `xr_anchor::ELEMENT_SIZE`.
         if stride < xr_anchor::SESSION_ID + std::mem::size_of::<Guid>() {
             if changes.added_count != 0 || changes.updated_count != 0 {
                 godot::global::godot_warn!(
@@ -1342,14 +1347,15 @@ impl XrealNative {
             && self.rgb_dispose_handle.is_some()
     }
 
-    /// Start RGB-camera capture in **poll mode** (null callback). Returns the capture handle for
-    /// [`Self::rgb_camera_stop`], or `None` if the export is unavailable or the SDK reports failure.
-    /// NOTE: in poll mode a successful start returns a `0` handle (there is no callback registration
-    /// to track) — that is **not** a failure; capture is enabled and [`Self::rgb_camera_grab_y`] then
-    /// works (device-confirmed). A wedged glasses camera — e.g. an unclean prior exit left it holding
-    /// the connection, so NRSDK rejects the new one ("RgbCamera Recv Frame, -99" / "Plugin Start
-    /// failed") — instead returns the `u64::MAX` (-1) error sentinel; surface that as `None` so the
-    /// caller doesn't cache a dead handle and drive an unfed (pink) panel.
+    /// Start RGB-camera capture in **poll mode**, with a null callback. It returns the capture handle
+    /// for [`Self::rgb_camera_stop`], or `None` when the export is unavailable or the SDK reports
+    /// failure. NOTE: in poll mode a successful start returns a `0` handle, since there is no callback
+    /// registration to track, and that is **not** a failure: capture is enabled and
+    /// [`Self::rgb_camera_grab_y`] then works, as confirmed on device. A wedged glasses camera, where
+    /// an unclean prior exit left it holding the connection so NRSDK rejects the new one with
+    /// "RgbCamera Recv Frame, -99" or "Plugin Start failed", returns the `u64::MAX`, that is -1, error
+    /// sentinel instead. Surface that as `None`, so the caller never caches a dead handle and drives an
+    /// unfed, pink panel.
     pub fn rgb_camera_start(&self) -> Option<u64> {
         let f = self.rgb_start_capture?;
         let handle = unsafe { f(std::ptr::null_mut(), std::ptr::null_mut()) };
@@ -1377,7 +1383,7 @@ impl XrealNative {
             let mut frame_handle: i32 = 0;
             let mut resolution = NrSize2i::default();
             let mut timestamp: u64 = 0;
-            // Serialise the acquire against the SDK camera receive thread — see `rgb_holder_mutex`.
+            // Serialise the acquire against the SDK camera receive thread; see `rgb_holder_mutex`.
             if !rgb_acquire_latest_locked(
                 acquire,
                 &mut frame_handle,
@@ -1405,10 +1411,10 @@ impl XrealNative {
         }
     }
 
-    /// Poll the latest RGB-camera frame and copy its planes as **Y** (full-res 8-bit) plus a
-    /// **CbCr** buffer interleaved from the chroma planes (I420: plane 1 = V/Cr, plane 2 = U/Cb, both
-    /// half-res). Returns `(y, y_w, y_h, cbcr, c_w, c_h)` where `cbcr` is `[Cb, Cr, Cb, Cr, …]`
-    /// (`Cb = U`, `Cr = V`) — the RG8 layout Godot's `set_ycbcr_images` + a YCbCr shader expect.
+    /// Poll the latest RGB-camera frame and copy its planes as **Y**, full-res 8-bit, plus a **CbCr**
+    /// buffer interleaved from the chroma planes; in I420 plane 1 is V/Cr and plane 2 is U/Cb, both
+    /// half-res. It returns `(y, y_w, y_h, cbcr, c_w, c_h)`, where `cbcr` is `[Cb, Cr, Cb, Cr, …]` with
+    /// `Cb = U` and `Cr = V`, the RG8 layout Godot's `set_ycbcr_images` and a YCbCr shader expect.
     /// The frame handle is disposed before returning.
     ///
     /// `last_timestamp` gates the copy. `TryAcquireLatestImage` hands out a fresh handle to the
@@ -1418,11 +1424,11 @@ impl XrealNative {
     /// `None` is returned; on a new frame `*last_timestamp` advances. A timestamp of `0` never
     /// gates, so an SDK build that leaves the field untouched keeps working.
     ///
-    /// Comparing timestamps is deliberate: the SDK also exports `TryGetRGBCameraFrame`, a cheaper
-    /// "new frame?" flag, but reading it is a *destructive*, unlocked read-and-clear of shared
-    /// state — only one caller in the process may use it, and a publish landing between its load
-    /// and store is lost. The timestamp is already an out-parameter of the acquire we do anyway,
-    /// and the extra cost over the flag is one hash-map insert/erase. See
+    /// Comparing timestamps is deliberate. The SDK also exports `TryGetRGBCameraFrame`, a cheaper
+    /// "new frame?" flag, but reading it is a *destructive*, unlocked read-and-clear of shared state:
+    /// only one caller in the process may use it, and a publish landing between its load and store is
+    /// lost. The timestamp is already an out-parameter of the acquire we do anyway, and the extra cost
+    /// over the flag is one hash-map insert and erase. See
     /// `docs/archive/codex-camera-acquire-analysis.md`.
     pub fn rgb_camera_grab_yuv(
         &self,
@@ -1449,16 +1455,17 @@ impl XrealNative {
         out
     }
 
-    /// Acquire the latest RGB frame and hand its planes to `consume` **without copying them** — the
-    /// slices point straight into the SDK's frame buffer. The handle is disposed as soon as
-    /// `consume` returns, which is why [`RgbPlanes`] borrows: the lifetime stops the slices from
-    /// outliving the frame. `consume` returning `None` leaves `last_timestamp` unadvanced, so the
-    /// same frame is retried on the next poll.
+    /// Acquire the latest RGB frame and hand its planes to `consume` **without copying them**: the
+    /// slices point straight into the SDK's frame buffer. The handle is disposed as soon as `consume`
+    /// returns, which is why [`RgbPlanes`] borrows, since the lifetime stops the slices from outliving
+    /// the frame. When `consume` returns `None` the `last_timestamp` stays unadvanced, so the same
+    /// frame is retried on the next poll.
     ///
-    /// Gating and timestamp semantics are as described on [`Self::rgb_camera_grab_yuv`], which is
-    /// implemented on top of this. `timings` receives the acquire / plane-fetch / dispose costs;
-    /// whatever `consume` does with the pixels is the caller's to measure. Note `planes_us` here is
-    /// the three `TryGetRGBCameraDataPlane` calls *only* — no copy — so it should be microseconds.
+    /// The gating and timestamp semantics are as described on [`Self::rgb_camera_grab_yuv`], which is
+    /// implemented on top of this. `timings` receives the acquire, plane-fetch and dispose costs, and
+    /// whatever `consume` does with the pixels is the caller's to measure. Note that `planes_us` here
+    /// covers the three `TryGetRGBCameraDataPlane` calls *only*, with no copy, so it should be a
+    /// handful of microseconds.
     pub fn rgb_camera_with_frame<R>(
         &self,
         last_timestamp: &mut u64,
@@ -1473,14 +1480,14 @@ impl XrealNative {
         let mut resolution = NrSize2i::default();
         let mut timestamp: u64 = 0;
         let t_acquire = std::time::Instant::now();
-        // Serialise the acquire against the SDK camera receive thread — see `rgb_holder_mutex`.
+        // Serialise the acquire against the SDK camera receive thread; see `rgb_holder_mutex`.
         if !unsafe {
             rgb_acquire_latest_locked(acquire, &mut frame_handle, &mut resolution, &mut timestamp)
         } {
             return None;
         }
         timings.acquire_us = t_acquire.elapsed().as_micros() as u32;
-        // Same frame as the last poll — drop the handle without touching the planes.
+        // Same frame as the last poll, so drop the handle without touching the planes.
         if timestamp != 0 && timestamp == *last_timestamp {
             if let Some(d) = dispose {
                 unsafe { d(frame_handle) };
@@ -1553,10 +1560,11 @@ impl XrealNative {
             .map(|f| unsafe { f(bypass as i32) })
     }
 
-    /// `SetGlassesSpaceMode(NRGlassesSpaceMode)` (libXREALXRPlugin.so) — how the glasses' X1
-    /// chip anchors the virtual screen in space (follow / world-anchor / …). RE / unverified
-    /// enum values; exposed so the mode can be probed at runtime from GDScript. The C wrapper
-    /// safely returns 0 until NativeGlasses is ready. `None` when the symbol is absent.
+    /// `SetGlassesSpaceMode(NRGlassesSpaceMode)`, from libXREALXRPlugin.so: how the glasses' X1 chip
+    /// anchors the virtual screen in space, whether follow, world-anchor or another mode. The enum
+    /// values are RE'd and unverified, and it is exposed so the mode can be probed at runtime from
+    /// GDScript. The C wrapper safely returns 0 until NativeGlasses is ready, and this returns `None`
+    /// when the symbol is absent.
     pub fn set_glasses_space_mode(&self, mode: i32) -> Option<i32> {
         self.set_glasses_space_mode.map(|f| unsafe { f(mode) })
     }
@@ -1634,13 +1642,13 @@ impl XrealNative {
             read_u64_at(0x580)
         );
 
-        // DO NOT call CreateFrame() or SubmitCurrentFrame() here:
-        // DisplayManager+0x120 is managed by the XREAL SDK's own rendering thread (GLThread).
-        // Calling CreateFrame tries to destroy the SDK's live frame via NativeRendering::DestroyFrame,
-        // which fails (frame is locked by the render thread) and crashes in LogHelper::Error
-        // (fault addr 0xb9a40998bac55c8a — a valid SDK frame handle passed to fprintf-style log).
-        // Device-confirmed: both CreateFrame and SubmitCurrentFrame crash with SIGSEGV at
-        // the DestroyFrame path when the SDK's rendering thread owns DisplayManager+0x120.
+        // DO NOT call CreateFrame() or SubmitCurrentFrame() here.
+        // The XREAL SDK's own rendering thread, the GLThread, manages DisplayManager+0x120.
+        // Calling CreateFrame tries to destroy the SDK's live frame through NativeRendering::DestroyFrame,
+        // which fails because the render thread holds the frame, and then crashes in LogHelper::Error at
+        // fault address 0xb9a40998bac55c8a, a valid SDK frame handle passed to an fprintf-style log.
+        // Device-confirmed: both CreateFrame and SubmitCurrentFrame crash with SIGSEGV on the DestroyFrame
+        // path while the SDK's rendering thread owns DisplayManager+0x120.
         //
         // Next step: hook into the SDK's rendering loop properly by providing Godot textures
         // to the SetBufferViewport path BEFORE the SDK calls SubmitCurrentFrame on its own thread.

@@ -12,7 +12,7 @@ demo/addons/
 jniLibs
 
 # Build artifacts (incl. the desktop dummy stubs built into dummy/ by
-# scripts/build_dummy_libs.ps1 / .sh — build locally, don't commit)
+# scripts/build_dummy_libs.ps1 / .sh: build locally, don't commit)
 *.dll
 *.so
 *.dylib
@@ -36,24 +36,24 @@ jniLibs
 Thumbs.db
 
 
-# XREAL addon vendored binaries (AARs) — vendored locally
+# XREAL addon vendored binaries (AARs), vendored locally
 # (see docs/plans/android-export-plugin-migration.md), like jniLibs/*.so.
 /addons/godot_xreal/android/*.aar
 
-# XREAL NR perception manifest — SDK-derived and may change across SDK versions, so it is vendored
+# XREAL NR perception manifest: SDK-derived, and it may change across SDK versions, so it is vendored
 # locally by scripts/vendor_xreal_libs.* (like the .aar), not committed. Staged into the APK's
 # assets/ by export_plugin.gd; loads libnr_image_tracking.so for image tracking.
 /addons/godot_xreal/android/nr_plugins.json
 
-# XREAL host build tools (trackableImageTools — the image-tracking DB blob generator), vendored
+# XREAL host build tools (trackableImageTools, the image-tracking DB blob generator), vendored
 # locally by scripts/vendor_xreal_libs.*; large SDK binaries, not committed.
 /addons/godot_xreal/tools/
 
 # XREAL addon built libraries (Android GDExtension .so + desktop dummy stubs), placed by
-# scripts/build.* and scripts/build_dummy_libs.* — build artifacts, not committed.
+# scripts/build.* and scripts/build_dummy_libs.*: build artifacts, not committed.
 /addons/godot_xreal/bin/
 
-# Image-tracking reference data — SDK-derived / large binaries, kept local only.
+# Image-tracking reference data: SDK-derived or large binaries, kept local only.
 # The reference.json manifest, the built .bin databases, and the source images
 # (and their Godot .import metadata) are provided per-project, not committed.
 /demo/image_tracking/reference.json

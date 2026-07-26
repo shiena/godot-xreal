@@ -1,21 +1,21 @@
 extends Control
-## On-screen touch controller for the phone screen — the Godot analog of the XREAL SDK's
+## On-screen touch controller for the phone screen, the Godot analog of the XREAL SDK's
 ## `XREALVirtualController` prefab (a customizable phone-side controller).
 ##
-## Built from standard Control nodes (Button / containers), created in _ready from the
-## `_buttons` / `_toggles` / `_tabs` data tables below (the prefab-editing equivalent: edit the
-## lists to customize). Multitouch needs no custom routing: since Godot 4.7 each BaseButton
-## tracks its own touch index and the Viewport routes each touch's drags to the Control that
-## claimed it, so holding TRIGGER while dragging the touchpad just works. Only the touchpad is
-## a custom widget (the `Touchpad` class at the bottom) — there is no built-in analog-pad Control.
+## It is built from standard Control nodes (Buttons and containers), created in _ready from the
+## `_buttons`, `_toggles` and `_tabs` data tables below; editing those lists is the equivalent of
+## editing the prefab. Multitouch needs no custom routing: since Godot 4.7 each BaseButton tracks
+## its own touch index and the Viewport routes each touch's drags to the Control that claimed it,
+## so holding TRIGGER while dragging the touchpad just works. Only the touchpad is a custom
+## widget (the `Touchpad` class at the bottom), because no built-in analog-pad Control exists.
 ##
-## It lives on the phone's root viewport only, so it never reaches the glasses eye
-## SubViewports — the glasses show the 3D world while the phone shows this controller.
-## Portrait-only layout (the project locks the handheld orientation to portrait).
+## It lives on the phone's root viewport only, so it never reaches the glasses eye SubViewports:
+## the glasses show the 3D world while the phone shows this controller. The layout is
+## portrait-only (the project locks the handheld orientation to portrait).
 
-## Emitted when the trigger button goes down (true) / up (false).
+## Emitted when the trigger button goes down (true) or up (false).
 signal trigger_changed(pressed: bool)
-## Emitted when the grip button goes down (true) / up (false).
+## Emitted when the grip button goes down (true) or up (false).
 signal grip_changed(pressed: bool)
 ## Emitted once when the (momentary) menu button is pressed.
 signal menu_pressed()
@@ -40,17 +40,17 @@ signal mesh_toggled(on: bool)
 signal record_toggled(on: bool)
 ## First-person-view streaming toggle flipped (true = on).
 signal stream_toggled(on: bool)
-## Momentary "配置" button — place a spatial anchor at the hand fingertip now.
+## Momentary "Place" button: place a spatial anchor at the hand fingertip now.
 signal place_pressed()
-## Momentary "画像切替" button — cycle the active image-tracking set.
+## Momentary "Cycle Image" button: cycle the active image-tracking set.
 signal image_cycle_pressed()
-## Momentary "撮影" button — capture a photo from the RGB camera.
+## Momentary "Photo" button: capture a photo from the RGB camera.
 signal capture_pressed()
-## Momentary "合成撮影" button — capture a blended camera+AR (mixed-reality) photo.
+## Momentary "Blend Photo" button: capture a blended camera+AR (mixed-reality) photo.
 signal blend_pressed()
-## The user confirmed "Yes" on the Exit dialog — the app should quit. (The "Exit" button first shows a
-## Yes/No confirmation overlay; this fires only on Yes.) A phone-menu exit for glasses without physical
-## keys (the Air 2 Ultra has only an EC-dimming button).
+## The user confirmed "Yes" on the Exit dialog, so the app should quit. The "Exit" button first
+## shows a Yes/No confirmation overlay, and this fires only on Yes. It is the phone-menu exit for
+## glasses without physical keys (the Air 2 Ultra has only an EC-dimming button).
 signal exit_confirmed()
 
 ## Backdrop fill. Opaque by default so the phone shows only the controller (the glasses-bound
@@ -75,8 +75,8 @@ const _buttons := {
 }
 
 # Toggle buttons (name -> label). Unlike the momentary buttons above they hold an on/off state
-# (highlighted while on) and fire once on press. Used for the camera / plane / anchor switches;
-# main.gd drives the actual XrealSystem calls and can push state back via set_toggle().
+# (highlighted while on) and fire once on press. They drive the camera, plane and anchor
+# switches; main.gd makes the actual XrealSystem calls and can push state back with set_toggle().
 const _toggles := {
 	"camera": "Camera",
 	"plane": "Plane",
@@ -87,15 +87,18 @@ const _toggles := {
 	"stream": "Stream",
 }
 
-# Tabs, grouped by which glasses support each feature (per XREAL's Feature Compatibility table) so the
-# right controls are easy to find per device. The touchpad stays visible above; each tab shows only its
-# own buttons. Each item must be a key of `_buttons` or `_toggles`.
-#   Control — the virtual controller (3DoF): ALL glasses (One Series / Air·Air 2·Air 2 Pro / Air 2 Ultra).
-#   Camera  — the RGB camera: XREAL One Series only (Air/Air 2/Air 2 Pro and Air 2 Ultra have no RGB cam).
-#   AR      — perception (plane / spatial anchor / image tracking / depth mesh): Air 2 Ultra only.
-# Streaming (FPV) and Record (mp4 -> gallery) live in the Camera tab because they cast/record the
-# camera+AR blend when the camera is on, but they do NOT require the camera: they feed on our own
-# SubViewport (the AR-only view with no camera), so they work on the camera-less Air 2 Ultra too.
+# Tabs, grouped by which glasses support each feature (per XREAL's Feature Compatibility table),
+# so the right controls are easy to find per device. The touchpad stays visible above, and each
+# tab shows only its own buttons. Each item must be a key of `_buttons` or `_toggles`.
+#   Control: the virtual controller (3DoF), on ALL glasses (One Series, Air, Air 2, Air 2 Pro,
+#            Air 2 Ultra).
+#   Camera:  the RGB camera, on the XREAL One Series only (Air, Air 2, Air 2 Pro and Air 2 Ultra
+#            have none).
+#   AR:      perception (plane, spatial anchor, image tracking, depth mesh), on the Air 2 Ultra
+#            only.
+# Streaming (FPV) and Record (mp4 -> gallery) live in the Camera tab because they cast and record
+# the camera+AR blend when the camera is on. They do NOT require the camera, though: they feed on
+# our own SubViewport (the AR-only view), so they work on the camera-less Air 2 Ultra too.
 const _tabs := [
 	{"label": "Control", "items": ["trigger", "grip", "menu", "hand_l", "hand_r", "exit"]},
 	{"label": "Camera", "items": ["capture", "blend", "camera", "record", "stream"]},
@@ -119,8 +122,8 @@ var _tab_buttons: Array[Button] = []   # the tab-bar radio Buttons
 var _pair_boxes: Array[HBoxContainer] = []
 var _active_tab := 0
 # trigger/grip currently held down. Needed because hiding a pressed Button (tab switch) resets its
-# state WITHOUT emitting button_up — _show_page releases held ones explicitly so the consumer never
-# sees a stuck-held trigger.
+# state WITHOUT emitting button_up, so _show_page releases held ones explicitly and the consumer
+# never sees a stuck-held trigger.
 var _held := {}
 var _margin: MarginContainer
 var _column: VBoxContainer
@@ -144,7 +147,7 @@ func _ready() -> void:
 	_apply_metrics()
 	_show_page(0)
 
-## Backdrop only — everything else is real Control nodes drawn by themselves.
+## Backdrop only: everything else is real Control nodes drawn by themselves.
 func _draw() -> void:
 	draw_rect(Rect2(Vector2.ZERO, size), background_color)
 
@@ -170,8 +173,8 @@ func _build_ui() -> void:
 	_pad.released.connect(touchpad_released.emit)
 	_column.add_child(_pad)
 
-	# Tab bar: a row of equal-width radio Buttons (a shared ButtonGroup). TabBar is not used —
-	# it cannot stretch its tabs evenly, which the 1/3-width touch targets need.
+	# Tab bar: a row of equal-width radio Buttons (a shared ButtonGroup). TabBar will not do,
+	# because it cannot stretch its tabs evenly, which the 1/3-width touch targets need.
 	_tab_row = HBoxContainer.new()
 	_tab_row.name = "TabRow"
 	_tab_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -313,8 +316,8 @@ func _flat(fill: Color, border: Color, border_width: int) -> StyleBoxFlat:
 	return sb
 
 ## The controller's look (the drawn version's colors), as Button theme variations:
-## "MomentaryButton" (gray, flash while down), "ToggleButton" (gray OFF / green ON),
-## "TabButton" (dim / active blue), "DangerButton" (the red Yes) + "DialogPanel".
+## "MomentaryButton" (gray, flashing while down), "ToggleButton" (gray OFF, green ON),
+## "TabButton" (dim, active blue), "DangerButton" (the red Yes) and "DialogPanel".
 func _build_theme() -> Theme:
 	var t := Theme.new()
 	var disabled_style := _flat(Color(0.15, 0.15, 0.17, 0.5), Color(1, 1, 1, 0.12), 2)
@@ -359,10 +362,11 @@ func _build_theme() -> Theme:
 	t.set_color(&"font_color", &"Label", Color.WHITE)
 	return t
 
-## All screen-proportional metrics in one place, re-applied on every resize: font sizes (via the
-## Theme, so one call restyles every Button), the square touchpad, margins/gaps, and the row
-## height clamp so the tallest tab still fits (no stretch settings — the app runs at native
-## resolution, so everything scales off the control's size like the drawn version did).
+## All screen-proportional metrics in one place, re-applied on every resize: font sizes (through
+## the Theme, so one call restyles every Button), the square touchpad, the margins and gaps, and
+## the row height clamp that keeps the tallest tab fitting. There are no stretch settings, because
+## the app runs at native resolution, so everything scales off the control's size like the drawn
+## version did.
 func _apply_metrics() -> void:
 	var s := size
 	if s.x <= 0.0 or s.y <= 0.0:
@@ -388,8 +392,8 @@ func _apply_metrics() -> void:
 	for tab in _tab_buttons:
 		tab.custom_minimum_size = Vector2(0, tab_h)
 	# Row height: fit the tallest page into the space under the tab bar, capped at 9% of the
-	# screen so a sparse tab keeps normal-sized buttons instead of giant ones (the drawn
-	# version's clamp — needed on tall 20:9 phones where 5 fixed-height rows would overflow).
+	# screen so a sparse tab keeps normal-sized buttons instead of giant ones. That is the drawn
+	# version's clamp, needed on tall 20:9 phones where 5 fixed-height rows would overflow.
 	var rows := 0
 	for tab_def in _tabs:
 		rows = maxi(rows, _row_count(tab_def["items"]))
@@ -414,7 +418,7 @@ func _pair_at(items: Array, i: int) -> bool:
 			return true
 	return false
 
-## Number of stacked rows for `items` — each `_paired_rows` pair collapses two items into one row.
+## Number of stacked rows for `items`: each `_paired_rows` pair collapses two items into one row.
 func _row_count(items: Array) -> int:
 	var rows := 0
 	var i := 0
@@ -425,9 +429,9 @@ func _row_count(items: Array) -> int:
 
 ## Tab selection changed. Driven by `toggled`, NOT `button_down`: a PRESS-mode toggle clears
 ## touch_index when it flips (base_button.cpp), so the touch release no longer matches and
-## `pressed_down_with_focus` is never reset — meaning `button_down` fires only on a tab's FIRST
-## press. `toggled` fires on every selection change (it's what already moved the tab highlight),
-## so the page follows the highlight instead of sticking after the first switch.
+## `pressed_down_with_focus` is never reset, which leaves `button_down` firing only on a tab's
+## FIRST press. `toggled` fires on every selection change, and it is what already moved the tab
+## highlight, so the page follows the highlight instead of sticking after the first switch.
 func _on_tab_toggled(on: bool, idx: int) -> void:
 	# The deselected tab also emits toggled(false); act only on the newly-selected one.
 	if not on or idx == _active_tab:
@@ -437,8 +441,8 @@ func _on_tab_toggled(on: bool, idx: int) -> void:
 
 ## Show one tab's page (BoxContainer skips hidden children, so visibility is the whole switch).
 func _show_page(idx: int) -> void:
-	# Hiding a pressed Button resets its state without emitting button_up — release held
-	# trigger/grip explicitly first so the consumer never sees them stuck held.
+	# Hiding a pressed Button resets its state without emitting button_up, so release held
+	# trigger and grip explicitly first and the consumer never sees them stuck held.
 	_release_held()
 	_active_tab = idx
 	for i in _pages.size():
@@ -505,11 +509,11 @@ func _on_hold_up(control_name: String) -> void:
 	else:
 		grip_changed.emit(false)
 
-## A toggle's label carries its state ("Camera: ON" / "Camera: OFF", "Camera: —" while disabled).
+## A toggle's label carries its state ("Camera: ON" and "Camera: OFF", or "Camera: -" while disabled).
 func _update_toggle_label(control_name: String) -> void:
 	var btn: Button = _controls[control_name]
 	if _unsupported.has(control_name):
-		btn.text = "%s: —" % _toggles[control_name]
+		btn.text = "%s: -" % _toggles[control_name]
 	elif _busy.has(control_name):
 		btn.text = "%s: …" % _toggles[control_name]
 	else:
@@ -521,16 +525,17 @@ func _vibrate(ms: int) -> void:
 
 # ---------------------------------------------------------------- public API ---
 
-## Programmatically set a toggle's on/off state without emitting its signal — keeps the UI in
-## sync when the app changes it (e.g. reflecting a camera start that failed, or a plane mode the
-## device rejected). No-op for unknown names.
+## Programmatically set a toggle's on/off state without emitting its signal, which keeps the UI
+## in sync when the app changes it, e.g. after a camera start that failed or a plane mode the
+## device rejected. No-op for unknown names.
 func set_toggle(name: String, on: bool) -> void:
 	if _toggles.has(name):
 		(_controls[name] as Button).set_pressed_no_signal(on)
 		_update_toggle_label(name)
 
-## Enable/disable a button or toggle by name. A disabled Button is drawn greyed and inert (taps do
-## nothing) — used to reflect a capability the device lacks (no RGB camera, no plane detection, …).
+## Enable or disable a button or toggle by name. A disabled Button is drawn greyed and inert, so
+## taps do nothing. Use it to reflect a capability the device lacks (no RGB camera, no plane
+## detection, and so on).
 func set_disabled(name: String, disabled: bool) -> void:
 	if not _controls.has(name):
 		return
@@ -540,10 +545,11 @@ func set_disabled(name: String, disabled: bool) -> void:
 		_unsupported.erase(name)
 	_apply_inert(name)
 
-## Mark a toggle as mid-switch: inert like a disabled one, but labelled "…" instead of "—". The two
-## are different things to whoever is looking at the phone — "—" says this device does not have the
-## feature at all, "…" says it is changing and will answer shortly. Kept separate from set_disabled
-## so a busy control cannot be handed back to a device that never supported it, or vice versa.
+## Mark a toggle as mid-switch: inert like a disabled one, but labelled "…" instead of "-". The
+## two mean different things to whoever is looking at the phone: "-" says this device does not
+## have the feature at all, "…" says it is changing and will answer shortly. Kept separate from
+## set_disabled so a busy control cannot be handed back to a device that never supported it, or
+## the other way round.
 func set_busy(name: String, busy: bool) -> void:
 	if not _controls.has(name):
 		return
@@ -567,11 +573,11 @@ func set_button_label(name: String, text: String) -> void:
 
 # ---------------------------------------------------------------- touchpad widget ---
 
-## The analog touchpad — the one widget with no built-in Control equivalent. Claims one touch on
+## The analog touchpad, the one widget with no built-in Control equivalent. It claims one touch on
 ## press and follows that finger's drags (the Viewport keeps routing them here even outside the
 ## rect), emitting the normalized [-1, 1] position (+y up, clamped to the circle). One finger
-## only: while claimed, other touches are ignored. Also handles a real mouse for desktop test
-## runs (touch-emulated mouse events are ignored to avoid double handling on device).
+## only: while claimed, other touches are ignored. It also handles a real mouse for desktop test
+## runs, ignoring touch-emulated mouse events to avoid double handling on device.
 class Touchpad extends Control:
 	## The claiming touch went down (haptics hook).
 	signal pad_pressed()

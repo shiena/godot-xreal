@@ -15,19 +15,19 @@ use crate::ffi::GlassesEventData;
 /// queue without limit; oldest events are dropped first.
 const QUEUE_CAP: usize = 256;
 
-/// `XREALActionType.ACTION_TYPE_TEMPERATURE_STATE` — `para` carries the temperature level.
+/// `XREALActionType.ACTION_TYPE_TEMPERATURE_STATE`, whose `para` carries the temperature level.
 const ACTION_TYPE_TEMPERATURE_STATE: i32 = 2028;
 
 static QUEUE: Mutex<VecDeque<GlassesEventData>> = Mutex::new(VecDeque::new());
 
-/// Latest glasses temperature level seen on the event funnel: `0` NORMAL / `1` WARM /
-/// `2` HOT (mirrors the SDK's `XREALTemperatureLevel`), or `-1` until the glasses first
-/// report one. Cached here on the SDK thread so a getter can poll it without draining the
-/// queue — and so it survives queue overflow (the notification is the actionable bit).
+/// Latest glasses temperature level seen on the event funnel: `0` NORMAL, `1` WARM or
+/// `2` HOT, mirroring the SDK's `XREALTemperatureLevel`, or `-1` until the glasses first
+/// report one. It is cached here on the SDK thread so a getter can poll it without draining
+/// the queue, and so it survives queue overflow; the notification is the actionable bit.
 static TEMPERATURE_LEVEL: AtomicI32 = AtomicI32::new(-1);
 
-/// The `extern "C"` callback handed to `SetGlassesEventCallback`. Runs on an SDK thread:
-/// no Godot calls, no logging — just cache the poll-able state and queue the 16-byte payload.
+/// The `extern "C"` callback handed to `SetGlassesEventCallback`. It runs on an SDK thread, so
+/// no Godot calls and no logging: cache the poll-able state and queue the 16-byte payload.
 pub extern "C" fn on_glasses_event(data: GlassesEventData) {
     if data.action_type == ACTION_TYPE_TEMPERATURE_STATE {
         TEMPERATURE_LEVEL.store(data.para as i32, Ordering::Relaxed);
@@ -42,8 +42,8 @@ pub extern "C" fn on_glasses_event(data: GlassesEventData) {
     queue.push_back(data);
 }
 
-/// Latest cached glasses temperature level (see [`TEMPERATURE_LEVEL`]): `0`/`1`/`2`, or
-/// `-1` if none has arrived yet. A plain poll — no signal, no queue drain.
+/// Latest cached glasses temperature level (see [`TEMPERATURE_LEVEL`]): `0`, `1` or `2`, or
+/// `-1` when none has arrived yet. A plain poll, with no signal and no queue drain.
 pub fn temperature_level() -> i32 {
     TEMPERATURE_LEVEL.load(Ordering::Relaxed)
 }
@@ -110,7 +110,7 @@ mod tests {
         }
         let events = drain();
         assert_eq!(events.len(), QUEUE_CAP);
-        // The 10 oldest were dropped; the first remaining is #10.
+        // The 10 oldest were dropped, so the first remaining is #10.
         assert_eq!(events[0].para, 10);
         assert_eq!(events.last().unwrap().para, (QUEUE_CAP + 9) as u32);
     }

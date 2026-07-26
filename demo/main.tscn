@@ -17,7 +17,7 @@
 [ext_resource type="PackedScene" uid="uid://dcampreviewsc1" path="res://demo/camera_preview.tscn" id="15_preview"]
 
 ; Front/back-coloured tracked-image marker (green front / red back via FRONT_FACING) so the
-; tracked pose's facing is readable — assigned to XrealImageTracking's marker_material override.
+; tracked pose's facing is readable. It is assigned to XrealImageTracking's marker_material override.
 [sub_resource type="ShaderMaterial" id="ShaderMaterial_marker"]
 shader = ExtResource("13_marker")
 
@@ -28,7 +28,7 @@ script = ExtResource("1_main")
 
 [node name="PhoneScreen" parent="." unique_id=1941116838 instance=ExtResource("3_phone")]
 
-; The godot_xreal feature components — each is self-contained; delete the ones you don't need.
+; The godot_xreal feature components. Each is self-contained, so delete the ones you don't need.
 ; All sit under Main (a world-fixed node), which the world-locked features (planes, anchors,
 ; image tracking, mesh, hands) require: under the head rig they would appear head-locked.
 [node name="XrealCamera" parent="." instance=ExtResource("4_camera")]
@@ -81,7 +81,7 @@ layout_mode = 2
 
 [node name="Title" type="Label" parent="UI/Panel/Margin/VBox" unique_id=463082749]
 layout_mode = 2
-text = "Godot XREAL — feature demo"
+text = "Godot XREAL feature demo"
 
 [node name="Status" type="Label" parent="UI/Panel/Margin/VBox" unique_id=1163076066]
 layout_mode = 2

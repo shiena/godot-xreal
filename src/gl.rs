@@ -5,21 +5,21 @@
 //! is that engine side: it `dlopen`s `libGLESv3.so` and exposes just enough GL to allocate a
 //! texture and copy pixels into it.
 //!
-//! **Call everything here from Godot's rendering thread** (via
-//! `RenderingServer::call_on_render_thread`) — the one place an EGL context is guaranteed current.
+//! **Call everything here from Godot's rendering thread**, through
+//! `RenderingServer::call_on_render_thread`, the one place an EGL context is guaranteed current.
 //!
 //! This header used to add "there is no EGL context on the main thread". That is wrong, at least on
-//! Android: measured on the X4000 (2026-07-21), [`has_current_context`] called from `_process`
+//! Android: measured on the X4000 on 2026-07-21, [`has_current_context`] called from `_process`
 //! returns `Some(true)`, because Godot's Android main loop *is* the GL thread. Keep using
-//! `call_on_render_thread` anyway — the contract, not the coincidence, is what holds across
-//! platforms and thread models — but note the consequence: on Android that call reorders work
-//! within one thread rather than moving it to another core.
+//! `call_on_render_thread` anyway, since the contract rather than the coincidence is what holds
+//! across platforms and thread models. Note the consequence, though: on Android that call reorders
+//! work within one thread rather than moving it to another core.
 //!
-//! On desktop the `dlopen` fails and every entry point returns `None`/does nothing, matching the
-//! rest of the crate's "native libs absent → no-op" behaviour.
+//! On desktop the `dlopen` fails and every entry point returns `None` or does nothing, matching the
+//! rest of the crate's behaviour when the native libs are absent.
 
-// GL helpers: some entry points (e.g. delete_texture) are retained for completeness/unused, and on
-// desktop every entry point is a dummy no-op. Allow dead code on both targets.
+// GL helpers. Some entry points, delete_texture among them, are retained for completeness and go
+// unused, and on desktop every entry point is a dummy no-op. Allow dead code on both targets.
 #![allow(dead_code)]
 
 use std::ffi::c_void;
@@ -45,15 +45,16 @@ type FnClearColor = unsafe extern "C" fn(f32, f32, f32, f32);
 type FnClear = unsafe extern "C" fn(u32);
 type FnTexImage3D =
     unsafe extern "C" fn(u32, i32, i32, i32, i32, i32, i32, u32, u32, *const c_void);
-// glTexStorage3D(target, levels, internalformat, width, height, depth) — immutable-storage allocation.
+// glTexStorage3D(target, levels, internalformat, width, height, depth): immutable-storage allocation.
 type FnTexStorage3D = unsafe extern "C" fn(u32, i32, u32, i32, i32, i32);
 type FnFramebufferTextureLayer = unsafe extern "C" fn(u32, u32, u32, i32, i32);
 // glCopyImageSubData(srcName, srcTarget, srcLevel, srcX,srcY,srcZ, dstName, dstTarget, dstLevel,
-// dstX,dstY,dstZ, srcW,srcH,srcD) — GLES 3.2 direct texel copy (writes any array layer, no FBO/blit).
+// dstX,dstY,dstZ, srcW,srcH,srcD): the GLES 3.2 direct texel copy. It writes any array layer and
+// needs no FBO or blit.
 type FnCopyImageSubData =
     unsafe extern "C" fn(u32, u32, i32, i32, i32, i32, u32, u32, i32, i32, i32, i32, i32, i32, i32);
-// glGetTexLevelParameteriv(target, level, pname, params) — GLES 3.1. Used to probe the source
-// texture's internal format (gates the direct same-format layer copy).
+// glGetTexLevelParameteriv(target, level, pname, params), from GLES 3.1. It probes the source
+// texture's internal format, which gates the direct same-format layer copy.
 type FnGetTexLevelParameteriv = unsafe extern "C" fn(u32, i32, u32, *mut i32);
 type FnGetIntegerv = unsafe extern "C" fn(u32, *mut i32);
 /// `glGetFloatv`, for the one piece of state we touch that is not an integer: the clear colour.
@@ -142,9 +143,9 @@ struct Gl {
     buffer_sub_data: FnBufferSubData,
     tex_sub_image_2d: FnTexSubImage2D,
     pixel_storei: FnPixelStorei,
-    /// `eglGetCurrentContext`, from `libEGL.so`. Only used by [`has_current_context`] to check this
-    /// module's threading assumption on a live device. Optional — a missing symbol just makes the
-    /// probe report "unknown".
+    /// `eglGetCurrentContext`, from `libEGL.so`. Only [`has_current_context`] uses it, to check this
+    /// module's threading assumption on a live device. It is optional, and a missing symbol simply
+    /// makes the probe report "unknown".
     egl_get_current_context: Option<FnEglGetCurrentContext>,
     _lib: Library,
     _egl_lib: Option<Library>,
@@ -191,7 +192,8 @@ impl Gl {
                     .get::<FnCopyImageSubData>(b"glCopyImageSubData\0")
                     .map(|s| *s)
                     .ok(),
-                // Optional (GLES 3.1). Absent → the direct copy is never taken (probe stays unknown).
+                // Optional, from GLES 3.1. When it is absent the direct copy is never taken, since the probe stays
+                // unknown.
                 get_tex_level_parameteriv: lib
                     .get::<FnGetTexLevelParameteriv>(b"glGetTexLevelParameteriv\0")
                     .map(|s| *s)
@@ -236,19 +238,20 @@ fn gl() -> Option<&'static Gl> {
     .as_ref()
 }
 
-/// Does the calling thread have a current EGL context — i.e. is it legal to call anything else in
-/// this module from here? `Some(false)` means "no context", `None` means the probe is unavailable
-/// (no `libEGL.so` / symbol) and the answer is unknown.
+/// Does the calling thread have a current EGL context, that is, is it legal to call anything else
+/// in this module from here? `Some(false)` means there is no context, and `None` means the probe is
+/// unavailable, with no `libEGL.so` or no symbol, so the answer is unknown.
 ///
-/// This module's header asserts there is no context on the main thread; the probe exists to check
-/// that on a live device before anyone relies on it either way.
+/// This module's header asserts there is no context on the main thread, and the probe exists to
+/// check that on a live device before anyone relies on it either way.
 pub fn has_current_context() -> Option<bool> {
     let f = gl()?.egl_get_current_context?;
     Some(!unsafe { f() }.is_null())
 }
 
-/// Scratch framebuffers reused for every `fill`/`blit`, created lazily on the render thread so no
-/// FBO name is generated or deleted per frame. Index 0 = draw/fill target, index 1 = blit source.
+/// Scratch framebuffers reused for every fill and blit, created lazily on the render thread so no
+/// FBO name is generated or deleted per frame. Index 0 is the draw and fill target, index 1 the
+/// blit source.
 static SCRATCH_FBO: [AtomicU32; 2] = [AtomicU32::new(0), AtomicU32::new(0)];
 
 /// Pixel-unpack buffers reused by [`upload_plane_pbo`], one per plane slot so the two uploads never
@@ -267,15 +270,16 @@ unsafe fn scratch_pbo(g: &Gl, slot: usize) -> u32 {
 }
 
 /// Upload one tightly-packed 8-bit plane into an existing `GL_TEXTURE_2D` through a persistent
-/// pixel-unpack buffer. `slot` selects which PBO to reuse (0 = luma, 1 = chroma), `components` is
-/// [`GL_RED`] or [`GL_RG`], and `tex` is the GL name from
-/// `RenderingServer::texture_get_native_handle`. Returns `false` if GL is unavailable, the sizes
-/// disagree, or the driver raised an error.
+/// pixel-unpack buffer. `slot` selects which PBO to reuse, 0 for luma and 1 for chroma;
+/// `components` is [`GL_RED`] or [`GL_RG`]; and `tex` is the GL name from
+/// `RenderingServer::texture_get_native_handle`. It returns `false` when GL is unavailable, the
+/// sizes disagree, or the driver raised an error.
 ///
-/// **Why a PBO.** Measured on the X4000 (Adreno 710), a plain `glTexSubImage2D` from client memory
-/// costs ~1.78 ns per *texel* regardless of bytes per texel (1651us for 921,600 R8 texels; 409us
-/// for 230,400 RG8 texels) — that signature is the driver tiling/swizzling every texel on the CPU.
-/// With the source in a buffer object the driver is free to do that pass on the GPU instead.
+/// **Why a PBO.** Measured on the X4000 with an Adreno 710, a plain `glTexSubImage2D` from client
+/// memory costs about 1.78 ns per *texel* whatever the bytes per texel: 1651 us for 921,600 R8
+/// texels and 409 us for 230,400 RG8 texels. That signature is the driver tiling and swizzling
+/// every texel on the CPU. With the source in a buffer object the driver is free to do that pass on
+/// the GPU instead.
 ///
 /// Godot's renderer owns the GL state, so every binding this touches is saved and restored.
 pub fn upload_plane_pbo(
@@ -308,8 +312,8 @@ pub fn upload_plane_pbo(
         while (g.get_error)() != 0 {} // drop any pre-existing error so ours is attributable
 
         (g.bind_buffer)(GL_PIXEL_UNPACK_BUFFER, pbo);
-        // Orphan, then refill: re-specifying the store lets the driver hand back fresh memory
-        // instead of stalling until the previous frame's transfer has been consumed.
+        // Orphan, then refill: re-specifying the store lets the driver hand back fresh memory instead of
+        // stalling until the previous frame's transfer has been consumed.
         (g.buffer_data)(
             GL_PIXEL_UNPACK_BUFFER,
             expected as isize,
@@ -359,24 +363,24 @@ unsafe fn scratch_fbo(g: &Gl, slot: usize) -> u32 {
     fbo
 }
 
-/// Allocate a 2D `GL_RGB10_A2` texture of the given size and return its GL name (`None` on
-/// failure). Used for the Multipass per-eye swapchain textures.
+/// Allocate a 2D `GL_RGB10_A2` texture of the given size and return its GL name, or `None` on
+/// failure. It backs the Multipass per-eye swapchain textures.
 ///
-/// `_srgb` is intentionally ignored: the eye texture must be a UNORM format (NOT sRGB-typed),
+/// `_srgb` is intentionally ignored: the eye texture has to be a UNORM format and NOT sRGB-typed,
 /// confirmed on device 2026-07-17. Godot's `gl_compatibility` renderer outputs display-ready,
 /// sRGB-encoded values, and the XREAL compositor passthrough-samples the eye texture and writes the
 /// sampled value to the display without re-encoding. An A/B test allocating the eye texture as
-/// `GL_SRGB8_ALPHA8` (same bytes, sRGB-typed) came out ~26% too dark — the compositor applies a
-/// sample-time sRGB→linear decode. (Unity's port uses an sRGB-typed target because it renders in
-/// *linear* space; our display-ready values must not be decoded.) See
-/// `docs/archive/multiview-investigation.md` (2026-07-17 color-space test).
+/// `GL_SRGB8_ALPHA8`, the same bytes but sRGB-typed, came out about 26% too dark, because the
+/// compositor applies a sample-time sRGB-to-linear decode. Unity's port uses an sRGB-typed target
+/// because it renders in *linear* space, whereas our display-ready values must not be decoded. See
+/// `docs/archive/multiview-investigation.md`, the 2026-07-17 color-space test.
 ///
-/// **`GL_RGB10_A2`** (UNORM, like the previous `GL_RGBA8`) deliberately matches Godot's
-/// `gl_compatibility` 3D render-target format (probed `0x8059` on device 2026-07-21 — see
-/// [`alloc_texture_array`], which made the same switch first): identical formats let
-/// [`blit_texture`] fill the eye with one exact `glCopyImageSubData` (no conversion, no FBO state)
-/// instead of a converting `glBlitFramebuffer`. Verified on device 2026-07-21: colours match the
-/// blit path.
+/// **`GL_RGB10_A2`**, a UNORM format like the previous `GL_RGBA8`, deliberately matches Godot's
+/// `gl_compatibility` 3D render-target format, probed as `0x8059` on device 2026-07-21; see
+/// [`alloc_texture_array`], which made the same switch first. Identical formats let
+/// [`blit_texture`] fill the eye with one exact `glCopyImageSubData`, with no conversion and no FBO
+/// state, instead of a converting `glBlitFramebuffer`. Verified on device 2026-07-21: the colours
+/// match the blit path.
 pub fn alloc_texture(width: i32, height: i32, _srgb: bool) -> Option<u32> {
     let g = gl()?;
     unsafe {
@@ -411,32 +415,35 @@ pub fn alloc_texture(width: i32, height: i32, _srgb: bool) -> Option<u32> {
     }
 }
 
-/// Allocate a `GL_TEXTURE_2D_ARRAY` with `layers` layers, for the SDK's Multiview /
-/// Single-Pass-Instanced path (`CreateTexture` with `textureArrayLength == 2`). The compositor
-/// binds this as a layered multiview framebuffer; a plain 2D texture there yields
-/// `GL_INVALID_FRAMEBUFFER_OPERATION` (black). Returns the GL name (`None` on failure).
+/// Allocate a `GL_TEXTURE_2D_ARRAY` with `layers` layers, for the SDK's Multiview, or
+/// Single-Pass-Instanced, path, where `CreateTexture` passes `textureArrayLength == 2`. The
+/// compositor binds this as a layered multiview framebuffer, and a plain 2D texture there yields
+/// `GL_INVALID_FRAMEBUFFER_OPERATION` and a black image. It returns the GL name, or `None` on
+/// failure.
 ///
 /// **Format: `GL_RGB10_A2`**, deliberately matching Godot's `gl_compatibility` 3D render-target
-/// format (probed on device: SubViewport internal format = `0x8059`, 2026-07-21). Matching formats
-/// let [`blit_texture_to_layer`] fill each eye layer with ONE exact `glCopyImageSubData` straight
-/// from the SubViewport — GLES forbids format-converting copies (`glCopyTexSubImage3D`
-/// RGB10_A2→RGBA8 raises `GL_INVALID_OPERATION`, tested 2026-07-21), so an RGBA8 array forces a
-/// converting blit through a scratch texture first (2× bandwidth). Like RGBA8, RGB10_A2 is UNORM
-/// (no sRGB decode at the compositor's passthrough sample — see [`alloc_texture`]), so colours
-/// match; only precision differs (10-bit, a superset of the source's own values).
+/// format, probed on device as a SubViewport internal format of `0x8059` on 2026-07-21. Matching
+/// formats let [`blit_texture_to_layer`] fill each eye layer with ONE exact `glCopyImageSubData`
+/// straight from the SubViewport. GLES forbids format-converting copies, and
+/// `glCopyTexSubImage3D` from RGB10_A2 to RGBA8 raises `GL_INVALID_OPERATION`, tested 2026-07-21,
+/// so an RGBA8 array would force a converting blit through a scratch texture first, at twice the
+/// bandwidth. Like RGBA8, RGB10_A2 is UNORM, so the compositor's passthrough sample applies no sRGB
+/// decode (see [`alloc_texture`]) and the colours match; only the precision differs, 10-bit being a
+/// superset of the source's own values.
 ///
-/// **Immutable storage.** The array is allocated with `glTexStorage3D` (immutable) when available,
-/// falling back to mutable `glTexImage3D` otherwise — mirroring Unity's `ApiGLES::CreateTexture`,
-/// which takes `glTexStorage3DEXT` for a `Tex2DArray` when the driver supports immutable storage
-/// (the Adreno 710 does) and only uses `glTexImage3D` as a fallback.
+/// **Immutable storage.** The array is allocated with the immutable `glTexStorage3D` when that is
+/// available, falling back to the mutable `glTexImage3D` otherwise, mirroring Unity's
+/// `ApiGLES::CreateTexture`, which takes `glTexStorage3DEXT` for a `Tex2DArray` when the driver
+/// supports immutable storage, as the Adreno 710 does, and uses `glTexImage3D` only as a fallback.
 ///
-/// NOTE: this matching-Unity change was an *experiment* to fix Multiview's black right eye (the
-/// theory: libnr_api imports the array via per-layer 2D `glTextureView`s, which need immutable
-/// storage). It was **tested on device 2026-07-17 and did NOT fix the right eye** — immutable
-/// allocation succeeds (`immutable=true`) and layer 1 fills, but the compositor still presents black
-/// on the right (screencap right stddev=0.0). So immutable is not the blocker; the wall is inside
-/// libnr_api. The change is kept dormant (Multiview is opt-in and shelved) as a faithful Unity match.
-/// See `docs/archive/multiview-investigation.md` (2026-07-17). The mutable path is the fallback for GL
+/// NOTE: this matching-Unity change was an *experiment* to fix Multiview's black right eye, on the
+/// theory that libnr_api imports the array through per-layer 2D `glTextureView`s, which need
+/// immutable storage. It was **tested on device 2026-07-17 and did NOT fix the right eye**:
+/// immutable allocation succeeds, reporting `immutable=true`, and layer 1 fills, but the compositor
+/// still presents black on the right, with a screencap right stddev of 0.0. Immutable storage is
+/// therefore not the blocker, and the wall is inside libnr_api. The change stays dormant, since
+/// Multiview is opt-in and shelved, as a faithful Unity match. See
+/// `docs/archive/multiview-investigation.md`, 2026-07-17. The mutable path is the fallback for GL
 /// implementations lacking immutable storage.
 pub fn alloc_texture_array(width: i32, height: i32, layers: i32, _srgb: bool) -> Option<u32> {
     let g = gl()?;
@@ -453,8 +460,9 @@ pub fn alloc_texture_array(width: i32, height: i32, layers: i32, _srgb: bool) ->
         (g.tex_parameteri)(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
         (g.tex_parameteri)(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 
-        // Prefer immutable storage (matches Unity). A single mip level; pin BASE/MAX level so the
-        // texture is mip-complete for whatever sampler state the compositor binds it with.
+        // Prefer immutable storage, which matches Unity. There is a single mip level, and pinning the BASE
+        // and MAX levels keeps the texture mip-complete for whatever sampler state the compositor binds it
+        // with.
         let immutable = match g.tex_storage_3d {
             Some(tex_storage_3d) => {
                 (g.tex_parameteri)(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_BASE_LEVEL, 0);
@@ -470,8 +478,8 @@ pub fn alloc_texture_array(width: i32, height: i32, layers: i32, _srgb: bool) ->
                 if (g.get_error)() == 0 {
                     true
                 } else {
-                    // Immutable allocation failed (e.g. format/driver quirk): drain the error and
-                    // retry mutable on the same, still-mutable texture object.
+                    // Immutable allocation failed, perhaps from a format or driver quirk, so drain the error and retry
+                    // mutable on the same, still-mutable texture object.
                     while (g.get_error)() != 0 {}
                     false
                 }
@@ -508,13 +516,14 @@ pub fn alloc_texture_array(width: i32, height: i32, layers: i32, _srgb: bool) ->
     }
 }
 
-/// A persistent 2D scratch texture (same `GL_RGB10_A2` format as the eye array) used to normalise
-/// the eye SubViewport's format before copying it into an array layer, when the SubViewport's own
-/// format does NOT already match the array (see [`blit_texture_to_layer`]). Created lazily at eye
-/// size.
+/// A persistent 2D scratch texture, in the same `GL_RGB10_A2` format as the eye array, used to
+/// normalise the eye SubViewport's format before copying it into an array layer, for when the
+/// SubViewport's own format does NOT already match the array; see [`blit_texture_to_layer`]. It is
+/// created lazily at eye size.
 static TEMP_LAYER_TEX: AtomicU32 = AtomicU32::new(0);
 
-/// Get (create once) the array-format scratch texture at `w`×`h`. Assumes a stable eye size.
+/// Get the array-format scratch texture at `w` by `h`, creating it once. It assumes a stable eye
+/// size.
 unsafe fn temp_layer_tex(g: &Gl, w: i32, h: i32) -> Option<u32> {
     let existing = TEMP_LAYER_TEX.load(Ordering::Relaxed);
     if existing != 0 {
@@ -551,51 +560,54 @@ unsafe fn temp_layer_tex(g: &Gl, w: i32, h: i32) -> Option<u32> {
     Some(tex)
 }
 
-/// Copy 2D `src` into a single `layer` of a `GL_TEXTURE_2D_ARRAY` (`dst_array`). Used to fill the
+/// Copy the 2D `src` into a single `layer` of a `GL_TEXTURE_2D_ARRAY`, `dst_array`. It fills the
 /// per-eye layers of the Multiview swapchain texture.
 ///
 /// Two GL quirks force a two-step path on this hardware:
-///   1. `glBlitFramebuffer` straight into a `glFramebufferTextureLayer` attachment at **layer > 0 is a
-///      silent no-op on the Adreno GLES driver** (returns a complete framebuffer, writes nothing) —
-///      the true cause of the black Multiview right eye (layer 1). `glClear` there *does* work, so the
-///      NR compositor was never the problem.
+///   1. `glBlitFramebuffer` straight into a `glFramebufferTextureLayer` attachment at **layer > 0
+///      is a silent no-op on the Adreno GLES driver**: it returns a complete framebuffer and writes
+///      nothing. That is the true cause of the black Multiview right eye, layer 1. `glClear` there
+///      *does* work, so the NR compositor was never the problem.
 ///   2. `glCopyImageSubData` **can** write layer > 0, but it is a raw byte copy with no format
-///      conversion — copying the eye SubViewport (whose GL format is not plain `RGBA8`) directly into
-///      the `RGBA8` array scrambles the colours (Multiview looked colour-corrupted vs Multipass).
+///      conversion, so copying the eye SubViewport, whose GL format is not plain `RGBA8`, directly
+///      into the `RGBA8` array scrambles the colours, and Multiview looked colour-corrupted next to
+///      Multipass.
 ///
-/// Preferred path: since [`alloc_texture_array`] allocates the array in `GL_RGB10_A2` — the same
-/// format Godot's `gl_compatibility` renderer gives the eye SubViewport — the layer fill is ONE
-/// direct **`glCopyImageSubData` from the source into the layer** (identical formats → exact texel
-/// copy, quirk 2 moot; and it writes layer > 0 fine, quirk 1 moot). Gated on a one-shot probe of
-/// the source's actual internal format (`glGetTexLevelParameteriv`), so a renderer/config change
-/// that alters the SubViewport format degrades safely instead of scrambling.
+/// Preferred path: because [`alloc_texture_array`] allocates the array in `GL_RGB10_A2`, the same
+/// format Godot's `gl_compatibility` renderer gives the eye SubViewport, the layer fill is ONE
+/// direct **`glCopyImageSubData` from the source into the layer**. Identical formats make it an
+/// exact texel copy, so quirk 2 is moot, and it writes layer > 0 fine, so quirk 1 is moot too. It
+/// is gated on a one-shot probe of the source's actual internal format,
+/// `glGetTexLevelParameteriv`, so a renderer or config change that alters the SubViewport format
+/// degrades safely instead of scrambling.
 ///
-/// (A `glCopyTexSubImage3D` read→convert→write single-pass was tried first, 2026-07-21: GLES's
-/// copy-conversion table forbids RGB10_A2 → RGBA8 — `GL_INVALID_OPERATION` on device — which is
-/// why the array format is matched to the source instead.)
+/// A single-pass `glCopyTexSubImage3D` read, convert and write was tried first, on 2026-07-21:
+/// GLES's copy-conversion table forbids RGB10_A2 to RGBA8, raising `GL_INVALID_OPERATION` on
+/// device, which is why the array format is matched to the source instead.
 ///
-/// Fallback (source format ≠ array format, probe unavailable, or the direct copy errors): **blit
-/// the source into a scratch texture in the array's format first** (`glBlitFramebuffer` converts,
-/// giving the same colours as the Multipass eye blit), **then `glCopyImageSubData` the scratch into
-/// the array layer** (same-format, exact, and layer > 0 works). Falls back further to the direct
-/// FBO blit only if `glCopyImageSubData`/scratch is unavailable or the sizes differ (pre-3.2
-/// devices; the layer > 0 no-op means a black right eye there, as before).
+/// Fallback, taken when the source format differs from the array format, the probe is unavailable,
+/// or the direct copy errors: **blit the source into a scratch texture in the array's format
+/// first**, where `glBlitFramebuffer` converts and gives the same colours as the Multipass eye
+/// blit, **then `glCopyImageSubData` the scratch into the array layer**, which is same-format,
+/// exact, and works at layer > 0. It falls back further to the direct FBO blit only when
+/// `glCopyImageSubData` or the scratch is unavailable, or the sizes differ, which means pre-3.2
+/// devices, where the layer > 0 no-op still leaves a black right eye as before.
 static LAYER_LOG: AtomicU32 = AtomicU32::new(0);
-/// One-shot gate for the eye-source format probe: 0 = not yet probed, 1 = probe ran (result in
-/// [`PROBED_SRC_FMT`]).
+/// One-shot gate for the eye-source format probe: 0 means not yet probed, 1 means the probe ran and
+/// the result is in [`PROBED_SRC_FMT`].
 static PROBE_LOG: AtomicU32 = AtomicU32::new(0);
-/// The probed source internal format (0 until probed / if the probe is unavailable). The direct
-/// same-format copies require this to equal the eye textures' `GL_RGB10_A2`.
+/// The probed source internal format, 0 until it is probed and when the probe is unavailable. The
+/// direct same-format copies require it to equal the eye textures' `GL_RGB10_A2`.
 static PROBED_SRC_FMT: AtomicU32 = AtomicU32::new(0);
 /// Set after the direct same-format `glCopyImageSubData` into an array layer first fails, so later
 /// frames skip the doomed attempt and go straight to the scratch fallback.
 static DIRECT_COPY_BROKEN: AtomicBool = AtomicBool::new(false);
 
-/// Probe (once) the eye SubViewport texture's internal format and return it (0 = unknown: not yet
-/// probed successfully, or `glGetTexLevelParameteriv` unavailable pre-GLES-3.1). Gates the direct
-/// same-format copies in [`blit_texture`] / [`blit_texture_to_layer`]: GLES restricts which format
-/// pairs the copy entry points may move between, so anything but an exact match degrades to the
-/// converting-blit paths instead of scrambling.
+/// Probe the eye SubViewport texture's internal format once and return it; 0 means unknown, either
+/// not yet probed successfully or `glGetTexLevelParameteriv` unavailable before GLES 3.1. It gates
+/// the direct same-format copies in [`blit_texture`] and [`blit_texture_to_layer`], because GLES
+/// restricts which format pairs the copy entry points may move between, so anything but an exact
+/// match degrades to the converting-blit paths instead of scrambling.
 unsafe fn probed_src_format(g: &Gl, src: u32) -> u32 {
     if PROBE_LOG
         .compare_exchange(0, 1, Ordering::Relaxed, Ordering::Relaxed)
@@ -644,7 +656,7 @@ pub fn blit_texture_to_layer(
         return;
     }
     unsafe {
-        // Preferred path: identical formats (probed) → ONE exact copy straight into the layer.
+        // Preferred path: with identical formats, as probed, ONE exact copy goes straight into the layer.
         if let Some(copy_image_sub_data) = g.copy_image_sub_data {
             if src_w == dst_w
                 && src_h == dst_h
@@ -679,7 +691,7 @@ pub fn blit_texture_to_layer(
                 if err == 0 {
                     return;
                 }
-                // Failed — remember and fall through to the scratch two-step below.
+                // It failed, so remember that and fall through to the scratch two-step below.
                 DIRECT_COPY_BROKEN.store(true, Ordering::Relaxed);
             }
         }
@@ -719,7 +731,7 @@ pub fn blit_texture_to_layer(
                     if err == 0 {
                         return;
                     }
-                    // CopyImageSubData failed (unexpected) — fall through to the blit path below.
+                    // CopyImageSubData failed, which is unexpected, so fall through to the blit path below.
                 }
             }
         }
@@ -807,11 +819,11 @@ pub fn delete_texture(id: u32) {
 
 /// Clear the given texture to a solid RGBA colour via the scratch framebuffer.
 ///
-/// Started life as the bring-up validation fill (proving the XREAL compositor displays an
-/// engine-owned texture at all); it now serves the frame-tick's last-resort branch, which clears the
-/// eye textures to black before Godot has published a source size. Preserves the previously bound
-/// draw framebuffer, the scissor-test enable and the clear colour, so Godot's own rendering is left
-/// undisturbed.
+/// It started life as the bring-up validation fill, proving the XREAL compositor displays an
+/// engine-owned texture at all, and now serves the frame-tick's last-resort branch, which clears
+/// the eye textures to black before Godot has published a source size. It preserves the previously
+/// bound draw framebuffer, the scissor-test enable and the clear colour, so Godot's own rendering
+/// is left undisturbed.
 static FILL_LOG_COUNT: AtomicU32 = AtomicU32::new(0);
 
 pub fn fill_texture(tex: u32, r: f32, g_: f32, b: f32) {
@@ -871,17 +883,17 @@ pub fn fill_texture(tex: u32, r: f32, g_: f32, b: f32) {
     }
 }
 
-/// Copy `src` (size `src_w`×`src_h`) into `dst` (size `dst_w`×`dst_h`) as a straight copy (no
-/// Y-flip; both share GL bottom-left origin — see the body comment).
+/// Copy `src`, sized `src_w` by `src_h`, into `dst`, sized `dst_w` by `dst_h`, as a straight copy
+/// with no Y-flip, since both share the GL bottom-left origin; see the body comment.
 ///
-/// Fills a Multipass eye texture from Godot's rendered SubViewport each frame. Preferred path:
-/// since [`alloc_texture`] allocates the eye texture in `GL_RGB10_A2` — the SubViewport's own
-/// format — a same-size fill is ONE exact `glCopyImageSubData` (no format conversion, no FBO
-/// binds/completeness checks/state save-restore). Gated on the same one-shot source-format probe
-/// as [`blit_texture_to_layer`]; a format mismatch, size mismatch, or copy failure falls back to
-/// the converting `glBlitFramebuffer` below.
+/// It fills a Multipass eye texture from Godot's rendered SubViewport each frame. Preferred path:
+/// because [`alloc_texture`] allocates the eye texture in `GL_RGB10_A2`, the SubViewport's own
+/// format, a same-size fill is ONE exact `glCopyImageSubData`, with no format conversion and no FBO
+/// binds, completeness checks or state save and restore. It is gated on the same one-shot
+/// source-format probe as [`blit_texture_to_layer`], and a format mismatch, a size mismatch or a
+/// copy failure falls back to the converting `glBlitFramebuffer` below.
 static BLIT2D_LOG: AtomicU32 = AtomicU32::new(0);
-/// Set after the direct same-format 2D `glCopyImageSubData` first fails, so later frames skip the
+/// Set once the direct same-format 2D `glCopyImageSubData` first fails, so later frames skip the
 /// doomed attempt and go straight to the blit fallback.
 static DIRECT_COPY_2D_BROKEN: AtomicBool = AtomicBool::new(false);
 pub fn blit_texture(src: u32, src_w: i32, src_h: i32, dst: u32, dst_w: i32, dst_h: i32) {
@@ -890,7 +902,8 @@ pub fn blit_texture(src: u32, src_w: i32, src_h: i32, dst: u32, dst_w: i32, dst_
         return;
     }
     unsafe {
-        // Preferred path: identical formats (probed) → ONE exact copy, no FBO/state churn.
+        // Preferred path: with identical formats, as probed, ONE exact copy runs with no FBO or state
+        // churn.
         if let Some(copy_image_sub_data) = g.copy_image_sub_data {
             if src_w == dst_w
                 && src_h == dst_h
@@ -924,7 +937,7 @@ pub fn blit_texture(src: u32, src_w: i32, src_h: i32, dst: u32, dst_w: i32, dst_
                 if err == 0 {
                     return;
                 }
-                // Failed — remember and fall through to the blit below.
+                // It failed, so remember that and fall through to the blit below.
                 DIRECT_COPY_2D_BROKEN.store(true, Ordering::Relaxed);
             }
         }
@@ -1009,9 +1022,10 @@ pub fn blit_texture(src: u32, src_w: i32, src_h: i32, dst: u32, dst_w: i32, dst_
     }
 }
 
-/// Blit Godot's just-rendered window content (the default framebuffer / back buffer, fbo 0) into an
-/// eye texture. Godot's root viewport renders direct-to-screen, so it has no sampleable offscreen
-/// texture (`texture_get_native_handle` returns 0); reading fbo 0 gets its pixels instead. Straight copy, no Y-flip.
+/// Blit Godot's just-rendered window content, the default framebuffer or back buffer, fbo 0, into
+/// an eye texture. Godot's root viewport renders direct to screen, so it has no sampleable
+/// offscreen texture and `texture_get_native_handle` returns 0; reading fbo 0 gets its pixels
+/// instead. It is a straight copy, with no Y-flip.
 pub fn blit_default_framebuffer(dst: u32, src_w: i32, src_h: i32, dst_w: i32, dst_h: i32) {
     let Some(g) = gl() else { return };
     if dst == 0 {

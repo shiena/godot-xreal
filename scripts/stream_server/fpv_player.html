@@ -95,7 +95,7 @@ function start() {
   player.load();
   say('waiting for the app to stream…');
   // Do not just play() once here: at this point the element has no data, and a play() that lands on
-  // an empty buffer can be left paused when frames finally arrive — which looks exactly like a
+  // an empty buffer can be left paused when frames finally arrive, which looks exactly like a
   // frozen first frame. Ask again whenever the element says it has something.
   tryPlay();
 }
@@ -134,7 +134,7 @@ function tryPlay() {
 video.addEventListener('click', tryPlay);
 
 // mpegts.js defers everything until the MediaSource opens (deferLoadAfterSourceOpen), and Chrome
-// will not open one for a hidden tab — so a page opened in the background, or backgrounded before
+// will not open one for a hidden tab, so a page opened in the background, or backgrounded before
 // the app started streaming, sits there forever with nothing buffered. Rebuild when it comes back.
 document.addEventListener('visibilitychange', () => {
   if (document.hidden || !player) return;
@@ -157,7 +157,7 @@ function stop() {
   if (!player) return;
   // mpegts.js wants the full teardown, in this order. Calling destroy() alone leaves the old
   // MediaSource attached to the element, and the next attachMediaElement() then quietly does
-  // nothing — which is why "resync" did not recover a stalled stream.
+  // nothing, which is why "resync" did not recover a stalled stream.
   try { player.pause(); player.unload(); player.detachMediaElement(); } catch (e) { /* already gone */ }
   player.destroy();
   player = null;

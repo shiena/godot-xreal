@@ -1,18 +1,20 @@
-//! NRController raw-IMU reader (`libnr_loader.so`) — the sensor source for the phone-as-3D-pointer
+//! NRController raw-IMU reader (`libnr_loader.so`), the sensor source for the phone-as-3D-pointer
 //! (docs/plans/input-plan.md Phase C). Signatures RE-confirmed by disassembly (codex, 2026-07-14).
 //!
-//! Findings on this host (XREAL One Pro + phone): the controller registers as a touch+button
-//! "handset" (`handheld_type=2`) and its **raw IMU is live** (accelerometer / gyroscope /
-//! magnetometer), but the fused `NRControllerGetPose` never returns a real orientation (identity or
-//! not-ready), and Godot's own `Input.get_gyroscope()` etc. read all-zero. So the pointer orientation
-//! is fused in GDScript (`demo/phone_pointer.gd`) from this accelerometer (gravity → pitch/roll) +
-//! gyroscope (yaw).
+//! Findings on this host, an XREAL One Pro with a phone: the controller registers as a touch and
+//! button "handset" (`handheld_type=2`) and its **raw IMU is live**, covering accelerometer,
+//! gyroscope and magnetometer, but the fused `NRControllerGetPose` never returns a real
+//! orientation, only identity or not-ready, and Godot's own `Input.get_gyroscope()` and friends
+//! read all-zero. The pointer orientation is therefore fused in GDScript
+//! (`demo/phone_pointer.gd`) from this accelerometer, whose gravity gives pitch and roll, plus the
+//! gyroscope, which gives yaw.
 //!
-//! Flow (from the disassembly): `GroupCreate(&group)` → `GroupGetCount(group,&n)` →
-//! `GroupGetControllerId(group,0,&id)` → `Create(id,&ctrl)` → `Start(ctrl)`, then per frame
-//! `StateUpdate(ctrl,&state)` + `StateGet*(state, …)`. `NRControllerCreate` is `(int32 id, uint64*
-//! out)` — the arity matters (a wrong signature corrupts memory and hangs the app). Loader stubs
-//! guard on the dispatch table (return 1 before the NR runtime is up), so calling early is safe.
+//! Flow, from the disassembly: `GroupCreate(&group)`, `GroupGetCount(group,&n)`,
+//! `GroupGetControllerId(group,0,&id)`, `Create(id,&ctrl)`, `Start(ctrl)`, then per frame
+//! `StateUpdate(ctrl,&state)` and `StateGet*(state, …)`. `NRControllerCreate` is `(int32 id,
+//! uint64* out)`, and the arity matters: a wrong signature corrupts memory and hangs the app. The
+//! loader stubs guard on the dispatch table, returning 1 before the NR runtime is up, so calling
+//! early is safe.
 
 use libloading::Library;
 use std::sync::Mutex;
@@ -39,14 +41,14 @@ struct Controller {
     handle: u64,
 }
 
-// SAFETY: the fn-pointers resolve into libnr_loader.so (kept mapped by `_lib`); `handle` is an opaque
-// u64 owned by the NR runtime. Only touched under the Mutex, from the main thread.
+// SAFETY: the fn-pointers resolve into libnr_loader.so, which `_lib` keeps mapped, and `handle` is
+// an opaque u64 owned by the NR runtime. It is touched only under the Mutex, from the main thread.
 unsafe impl Send for Controller {}
 
 static CONTROLLER: Mutex<Option<Controller>> = Mutex::new(None);
 
-/// Discover + create + start the controller and keep it alive for [`poll_raw`]. Returns a one-line
-/// diagnostic (controller count / id / connected & handheld type).
+/// Discover, create and start the controller, then keep it alive for [`poll_raw`]. It returns a
+/// one-line diagnostic carrying the controller count, id, connected flag and handheld type.
 pub fn start() -> String {
     let mut slot = CONTROLLER.lock().unwrap_or_else(|e| e.into_inner());
     if slot.is_some() {
@@ -110,8 +112,8 @@ pub fn start() -> String {
             return format!("[xreal] controller Create failed (result={cr})");
         }
         if sr != 0 {
-            // Start failed: do NOT store a controller that never started (poll_raw would then drive a
-            // dead handle). Bail — the discovery group is already destroyed above.
+            // Start failed, so do NOT store a controller that never started, or poll_raw would drive a dead
+            // handle. Bail out; the discovery group is already destroyed above.
             return format!("[xreal] controller Start failed (result={sr})");
         }
 
@@ -166,8 +168,9 @@ pub fn start() -> String {
     }
 }
 
-/// Raw controller state for one frame (the phone IMU + touch/buttons). `accel` is proper
-/// acceleration (gravity dir = `-normalize(accel)`); `gyro` is angular rate (rad/s).
+/// Raw controller state for one frame: the phone IMU plus touch and buttons. `accel` is proper
+/// acceleration, so the gravity direction is `-normalize(accel)`, and `gyro` is the angular rate
+/// in rad/s.
 #[derive(Default)]
 pub struct Raw {
     pub ok: bool,
@@ -179,7 +182,8 @@ pub struct Raw {
     pub buttons: i32,
 }
 
-/// One `StateUpdate` + read of every live sensor. `ok=false` if the controller isn't started.
+/// One `StateUpdate` and a read of every live sensor. `ok=false` when the controller is not
+/// started.
 pub fn poll_raw() -> Raw {
     let slot = CONTROLLER.lock().unwrap_or_else(|e| e.into_inner());
     let Some(c) = slot.as_ref() else {

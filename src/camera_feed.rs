@@ -1,12 +1,13 @@
-//! [`XrealCameraFeed`] — the XREAL glasses' RGB camera exposed as a Godot `CameraFeed`.
+//! [`XrealCameraFeed`], the XREAL glasses' RGB camera exposed as a Godot `CameraFeed`.
 //!
-//! Subclasses `CameraFeed` (the idiomatic custom-camera-source pattern): `activate_feed` starts the
-//! XREAL RGB capture, `deactivate_feed` stops it, and `poll_frame()` — called each frame by a driver
-//! (e.g. the addon's `xreal_camera.gd`) — publishes the latest frame as **Y + CbCr textures** for a
-//! YCbCr→RGB shader (no CPU colour conversion). See `docs/plans/camera-feed-plan.md`.
+//! It subclasses `CameraFeed`, the idiomatic custom-camera-source pattern: `activate_feed` starts
+//! the XREAL RGB capture, `deactivate_feed` stops it, and `poll_frame()`, which a driver such as
+//! the addon's `xreal_camera.gd` calls each frame, publishes the latest frame as **Y and CbCr
+//! textures** for a YCbCr-to-RGB shader, with no CPU colour conversion. See
+//! `docs/plans/camera-feed-plan.md`.
 //!
-//! **Consumers read the custom getters, NOT the standard `CameraServer` texture route** — see the
-//! class docs on [`XrealCameraFeed`] for the full story (this trips up readers who know `CameraFeed`).
+//! **Consumers read the custom getters, NOT the standard `CameraServer` texture route.** The class
+//! docs on [`XrealCameraFeed`] tell the full story; this trips up readers who know `CameraFeed`.
 //!
 //! Usage (GDScript):
 //! ```gdscript
@@ -16,7 +17,7 @@
 //! # each frame:
 //! feed.poll_frame()
 //! # display: sample feed.get_y_texture() / feed.get_cbcr_texture() in a YCbCr->RGB shader
-//! # (addons/godot_xreal/shaders/xreal_ycbcr*.gdshader) — NOT via CameraTexture.
+//! # (addons/godot_xreal/shaders/xreal_ycbcr*.gdshader), NOT through CameraTexture.
 //! ```
 
 use godot::classes::image::Format;
@@ -28,8 +29,8 @@ use std::time::Instant;
 /// Per-stage grab cost (see `crate::native::GrabTimings`): microseconds accumulated over the frames
 /// since the last report, so the reported figure is a mean rather than one jittery sample.
 ///
-/// Collecting this costs ~8 `Instant::now()` calls per grabbed frame — well under a microsecond
-/// against a ~525us grab — so it always runs; only the report line is gated (see
+/// Collecting this costs about 8 `Instant::now()` calls per grabbed frame, well under a microsecond
+/// against a grab of roughly 525 us, so it always runs and only the report line is gated (see
 /// [`TIMING_PROP`]). It is what found every win in the optimisation pass recorded in
 /// `docs/plans/camera-feed-plan.md`, so it is kept rather than deleted.
 #[derive(Default)]
@@ -42,41 +43,42 @@ struct PollTiming {
     packed_us: u64,
     image_us: u64,
     feed_us: u64,
-    /// Split by plane: Y is 921,600 bytes and CbCr 460,800 — exactly 2:1. If the two times come out
-    /// 2:1 the upload is bandwidth/copy bound; if they come out ~1:1 a fixed per-call cost (a sync
-    /// or flush) dominates and shrinking the payload will not help.
+    /// Split by plane: Y is 921,600 bytes and CbCr 460,800, exactly 2:1. When the two times come out
+    /// 2:1 the upload is bound by bandwidth and copying; when they come out near 1:1 a fixed per-call
+    /// cost, a sync or a flush, dominates and shrinking the payload will not help.
     upload_y_us: u64,
     upload_cbcr_us: u64,
-    /// The `cpu_luma_step` retain copy; zero unless it is enabled.
+    /// The `cpu_luma_step` retain copy, zero unless it is enabled.
     cpu_luma_us: u64,
 }
 
 /// Feed-image plumbing:
-/// - `poll_frame` grabs the XREAL frame as Y + interleaved CbCr and keeps two plain `ImageTexture`s
-///   (`get_y_texture` / `get_cbcr_texture`) updated — the textures every addon shader samples
-///   directly (matching the XREAL SDK's YUVTransRGB sample). Only with `feed_camera_server = true`
-///   does it ALSO call `set_ycbcr_images` so the base `CameraFeed` carries data for standard
-///   `CameraServer` consumers; that route is off by default because a `CameraTexture` bound to a
-///   *script-fed* feed shows only the placeholder on this build, so the extra per-frame GPU upload
-///   would feed a route nothing displays.
+/// - `poll_frame` grabs the XREAL frame as Y plus interleaved CbCr and keeps two plain
+///   `ImageTexture`s updated, `get_y_texture` and `get_cbcr_texture`, which are the textures every
+///   addon shader samples directly, matching the XREAL SDK's YUVTransRGB sample. Only with
+///   `feed_camera_server = true` does it ALSO call `set_ycbcr_images`, so the base `CameraFeed`
+///   carries data for standard `CameraServer` consumers. That route is off by default, because a
+///   `CameraTexture` bound to a *script-fed* feed shows only the placeholder on this build, so the
+///   extra per-frame GPU upload would feed a route nothing displays.
 use crate::session;
 
-/// The XREAL glasses' RGB camera exposed as a Godot `CameraFeed` (full colour, via the native C ABI).
+/// The XREAL glasses' RGB camera exposed as a Godot `CameraFeed`, in full colour, through the
+/// native C ABI.
 ///
-/// Add it to the `CameraServer` and call `poll_frame()` each frame to grab the latest frame; sample
-/// `get_y_texture()` (R8 luma) and `get_cbcr_texture()` (RG8 chroma) in a YCbCr→RGB shader to
-/// display it (`addons/godot_xreal/shaders/xreal_ycbcr*.gdshader` do exactly that). Present only on
-/// glasses that carry an RGB camera (e.g. the One Pro, not the Air 2 Ultra — gate on
-/// `XrealSystem.is_camera_supported()`).
+/// Add it to the `CameraServer` and call `poll_frame()` each frame to grab the latest frame, then
+/// sample `get_y_texture()`, the R8 luma, and `get_cbcr_texture()`, the RG8 chroma, in a
+/// YCbCr-to-RGB shader to display it; `addons/godot_xreal/shaders/xreal_ycbcr*.gdshader` do exactly
+/// that. It is present only on glasses that carry an RGB camera, such as the One Pro but not the
+/// Air 2 Ultra, so gate on `XrealSystem.is_camera_supported()`.
 ///
-/// **Read frames via the custom getters, not `CameraTexture`.** If you know Godot's `CameraFeed`
-/// this is the surprise: frames do NOT flow through the standard `CameraServer` texture route by
-/// default. On this build a `CameraTexture` bound to a script-fed feed shows only the placeholder,
-/// so the addon bypasses it — `poll_frame()` updates the two plain `ImageTexture`s above and every
-/// consumer (camera panel, blend capture, stream, photo capture) samples those directly. Code that
-/// consumes feeds through the standard `CameraFeed` API can opt in via `feed_camera_server`, which
-/// additionally pushes each frame into the base feed (`set_ycbcr_images`) at the cost of a second
-/// per-frame GPU upload.
+/// **Read frames through the custom getters, not `CameraTexture`.** If you know Godot's
+/// `CameraFeed` this is the surprise: frames do NOT flow through the standard `CameraServer`
+/// texture route by default. On this build a `CameraTexture` bound to a script-fed feed shows only
+/// the placeholder, so the addon bypasses it: `poll_frame()` updates the two plain `ImageTexture`s
+/// above and every consumer, whether the camera panel, blend capture, the stream or photo capture,
+/// samples those directly. Code that consumes feeds through the standard `CameraFeed` API can opt
+/// in with `feed_camera_server`, which additionally pushes each frame into the base feed through
+/// `set_ycbcr_images`, at the cost of a second per-frame GPU upload.
 #[derive(GodotClass)]
 #[class(base = CameraFeed)]
 pub struct XrealCameraFeed {
@@ -84,55 +86,56 @@ pub struct XrealCameraFeed {
     /// Capture handle from `StartRGBCameraDataCapture`, while active.
     capture_handle: Option<u64>,
     /// Frames actually grabbed, and `poll_frame()` calls made. The camera publishes slower than we
-    /// poll, so `polls` runs ahead of `frames` — their ratio is how much duplicate work the
+    /// poll, so `polls` runs ahead of `frames`, and their ratio is how much duplicate work the
     /// timestamp gate in `rgb_camera_grab_yuv` is skipping.
     frames: u64,
     polls: u64,
     /// Timestamp of the last grabbed frame; gates the grab (see `XrealNative::rgb_camera_grab_yuv`).
     last_timestamp: u64,
-    /// Reused CbCr interleave buffer for the direct path — the only per-frame pixel copy left there.
+    /// Reused CbCr interleave buffer for the direct path, the only per-frame pixel copy left there.
     cbcr_buf: Vec<u8>,
-    /// Retained CPU copy of the luma plane, filled only while `cpu_luma_step > 0`. Held as a
-    /// `PackedByteArray` rather than a `Vec` deliberately: it is copy-on-write refcounted, so
-    /// `get_y_data()` is a refcount bump instead of a second 0.9 MB copy, and a worker thread that
-    /// keeps a reference sees its snapshot fork rather than tear when the next frame overwrites this.
+    /// Retained CPU copy of the luma plane, filled only while `cpu_luma_step > 0`. It is deliberately a
+    /// `PackedByteArray` rather than a `Vec`, because that is copy-on-write refcounted: `get_y_data()`
+    /// becomes a refcount bump instead of a second 0.9 MB copy, and a worker thread holding a reference
+    /// sees its snapshot fork rather than tear when the next frame overwrites this.
     y_cpu: PackedByteArray,
     y_cpu_size: Vector2i,
     /// Per-stage timing accumulator; reported and reset with the periodic frame log when
     /// [`TIMING_PROP`] is set.
     timing: PollTiming,
-    /// Whether to print the per-stage timing line. Sampled from [`TIMING_PROP`] at capture start, so
-    /// `setprop` then a camera off/on cycle is enough — no rebuild.
+    /// Whether to print the per-stage timing line. It is sampled from [`TIMING_PROP`] at capture start,
+    /// so a `setprop` followed by a camera off and on cycle is enough, with no rebuild.
     timing_report: bool,
-    /// Plain textures the shader samples directly (Y = R8, CbCr = RG8). Kept in sync with the frame.
+    /// Plain textures the shader samples directly, Y as R8 and CbCr as RG8, kept in sync with the
+    /// frame.
     y_tex: Option<Gd<ImageTexture>>,
     cbcr_tex: Option<Gd<ImageTexture>>,
-    /// Also push each frame into the base `CameraFeed` via `set_ycbcr_images` — the route standard
-    /// `CameraServer` consumers read. **Off by default**: nothing in the addon reads it (a
-    /// `CameraTexture` bound to this script-fed feed shows only the placeholder on this build) and
-    /// it duplicates every frame's GPU upload. Turn on only for external code that consumes
+    /// Also push each frame into the base `CameraFeed` through `set_ycbcr_images`, the route standard
+    /// `CameraServer` consumers read. It is **off by default**, because nothing in the addon reads it,
+    /// a `CameraTexture` bound to this script-fed feed showing only the placeholder on this build, and
+    /// it duplicates every frame's GPU upload. Turn it on only for external code that consumes
     /// `CameraServer` feeds through the standard API.
     #[export]
     feed_camera_server: bool,
-    /// Retain a CPU-readable copy of the **luma** plane each frame, for [`Self::get_y_data`] — the
-    /// path for OpenCV and friends, since the GPU-upload path deliberately keeps no CPU copy.
+    /// Retain a CPU-readable copy of the **luma** plane each frame, for [`Self::get_y_data`], which is
+    /// the path for OpenCV and friends, since the GPU-upload path deliberately keeps no CPU copy.
     ///
-    /// `0` (default) = off, no copy is made. `1` = full 1280x720. `2` / `4` = every 2nd / 4th pixel
-    /// and row (640x360 / 320x180). The luma plane is already a dense 8-bit greyscale image, so the
-    /// result needs no conversion — it is directly a `CV_8UC1` Mat.
+    /// `0`, the default, is off and makes no copy. `1` is the full 1280x720. `2` and `4` take every
+    /// 2nd or 4th pixel and row, giving 640x360 or 320x180. The luma plane is already a dense 8-bit
+    /// greyscale image, so the result needs no conversion: it is directly a `CV_8UC1` Mat.
     ///
-    /// Cost is one copy per grabbed frame: measured **~296us at `step = 1` and ~278us at `step = 2`**
-    /// on the X4000. Note those are 6% apart, not 4x — a strided read still touches every cache line
-    /// of the source, so this is read-bound whatever the step. **Do not raise `step` expecting to
-    /// save copy time**; its value is entirely downstream, in the 4x fewer pixels the CV code then
-    /// has to process.
+    /// The cost is one copy per grabbed frame, measured at **about 296 us at `step = 1` and about
+    /// 278 us at `step = 2`** on the X4000. Those are 6% apart, not 4x apart: a strided read still
+    /// touches every cache line of the source, so this is read-bound whatever the step. **Do not raise
+    /// `step` expecting to save copy time.** Its value is entirely downstream, in the 4x fewer pixels
+    /// the CV code then has to process.
     ///
-    /// Read the result from the `frame_changed` signal rather than polling the getters — see
+    /// Read the result from the `frame_changed` signal rather than polling the getters; see
     /// [`Self::get_y_data`] and `docs/plans/camera-feed-plan.md`.
     ///
-    /// Only luma: chroma is not retained. Colour CV would need the other two planes and a
-    /// `cvtColor` (note the plane order is **YV12**, not I420), whose ~1-3 ms would dominate this
-    /// copy entirely — so it is left unimplemented until something actually needs it.
+    /// Luma only: the chroma is not retained. Colour CV would need the other two planes and a
+    /// `cvtColor`, and note that the plane order is **YV12**, not I420. Its 1-3 ms would dominate this
+    /// copy entirely, so it stays unimplemented until something actually needs it.
     #[export]
     cpu_luma_step: i32,
 }
@@ -167,7 +170,7 @@ impl ICameraFeed for XrealCameraFeed {
             godot_warn!("[xreal] camera: RGB camera C ABI unavailable (libXREALXRPlugin.so)");
             return false;
         }
-        // Sampled per capture start so `setprop` + a camera off/on cycle takes effect immediately.
+        // Sampled per capture start, so a `setprop` plus a camera off and on cycle takes effect at once.
         self.timing_report = crate::session::android_prop_i32(TIMING_PROP).unwrap_or(0) != 0;
         match session.rgb_camera_start() {
             Some(handle) => {
@@ -176,14 +179,14 @@ impl ICameraFeed for XrealCameraFeed {
                 true
             }
             None => {
-                // Start returned the failure sentinel (see `XrealNative::rgb_camera_start`). On this
-                // device that is a wedged glasses camera — an unclean prior exit (e.g. a render-thread
-                // crash) left it holding the capture, so NRSDK rejects the new connection ("Recv
-                // Frame, -99"). Recovery = re-plug the glasses USB AND restart the app: a replug
-                // alone is not enough, because this process's native session stays bound to the old
-                // connection, so retries keep failing (2026-07-21). (Or CAMERA permission denied.)
+                // Start returned the failure sentinel (see `XrealNative::rgb_camera_start`). On this device that
+                // means a wedged glasses camera: an unclean prior exit, such as a render-thread crash, left it
+                // holding the capture, so NRSDK rejects the new connection with "Recv Frame, -99". Recovery takes
+                // re-plugging the glasses USB AND restarting the app, because a replug alone leaves this process's
+                // native session bound to the old connection and retries keep failing (2026-07-21). The other
+                // possible cause is a denied CAMERA permission.
                 godot_warn!(
-                    "[xreal] camera: RGB capture did not start — glasses camera wedged (re-plug the USB and restart the app) or CAMERA permission denied"
+                    "[xreal] camera: RGB capture did not start: glasses camera wedged (re-plug the USB and restart the app) or CAMERA permission denied"
                 );
                 false
             }
@@ -200,11 +203,11 @@ impl ICameraFeed for XrealCameraFeed {
 
 #[godot_api]
 impl XrealCameraFeed {
-    /// Poll the latest RGB-camera frame and refresh `get_y_texture()` / `get_cbcr_texture()` (the
-    /// textures the YCbCr→RGB shaders sample — the display route). With `feed_camera_server` on it
-    /// also pushes the frame into the base `CameraFeed` as **separate Y + CbCr** images
-    /// (`FEED_YCBCR_SEP`) for standard `CameraServer` consumers. Returns `true` if a frame was
-    /// grabbed this call. Call once per frame from a driver.
+    /// Poll the latest RGB-camera frame and refresh `get_y_texture()` and `get_cbcr_texture()`, the
+    /// textures the YCbCr-to-RGB shaders sample, which is the display route. With `feed_camera_server`
+    /// on it also pushes the frame into the base `CameraFeed` as **separate Y and CbCr** images
+    /// (`FEED_YCBCR_SEP`) for standard `CameraServer` consumers. It returns `true` when a frame was
+    /// grabbed on this call. Call it once per frame from a driver.
     ///
     /// The camera publishes slower than a 60 Hz render loop polls, so `false` is the normal result
     /// on the calls in between: the grab is gated on the SDK frame timestamp and does no copy or
@@ -218,11 +221,11 @@ impl XrealCameraFeed {
         self.polls += 1;
         let mut grab = crate::native::GrabTimings::default();
 
-        // Direct path: upload each plane straight out of the SDK's frame buffer, so the only pixel
-        // copy left is the chroma interleave. It needs a current EGL context *on this thread* —
-        // true on Android, where Godot's main loop is the GL thread (see `crate::gl`) — plus
-        // textures to upload into. Everything else takes the Image path below, which is also what
-        // creates those textures on the first frame, and which `feed_camera_server` needs anyway.
+        // Direct path: upload each plane straight out of the SDK's frame buffer, so the only pixel copy
+        // left is the chroma interleave. It needs a current EGL context *on this thread*, which holds on
+        // Android, where Godot's main loop is the GL thread (see `crate::gl`), plus textures to upload
+        // into. Everything else takes the Image path below, which also creates those textures on the
+        // first frame and which `feed_camera_server` needs anyway.
         if self.y_tex.is_some()
             && self.cbcr_tex.is_some()
             && !self.feed_camera_server
@@ -245,7 +248,7 @@ impl XrealCameraFeed {
         let y_data = PackedByteArray::from(y.as_slice());
         let cbcr_data = PackedByteArray::from(cbcr.as_slice());
         let packed_us = t.elapsed().as_micros() as u64;
-        // Y = single-channel R8 (luma); CbCr = two-channel RG8 (Cb in R, Cr in G).
+        // Y is single-channel R8 luma, and CbCr is two-channel RG8, with Cb in R and Cr in G.
         let t = Instant::now();
         let Some(y_img) = Image::create_from_data(yw, yh, false, Format::R8, &y_data) else {
             return false;
@@ -270,8 +273,8 @@ impl XrealCameraFeed {
             self.y_cpu_size = Vector2i::ZERO;
         }
         let cpu_luma_us = t.elapsed().as_micros() as u64;
-        // Feed the base CameraFeed only on request (see the struct docs for why that route is off by
-        // default) — and do it *last*: Godot may emit `frame_changed` from inside this call, and a
+        // Feed the base CameraFeed only on request; the struct docs explain why that route is off by
+        // default. Do it *last*, because Godot may emit `frame_changed` from inside this call and a
         // handler must not observe textures or `get_y_data()` from the previous frame.
         let t = Instant::now();
         if self.feed_camera_server {
@@ -292,10 +295,10 @@ impl XrealCameraFeed {
         true
     }
 
-    /// The direct upload path (see the caller). Acquires the frame, pushes the luma plane to the GPU
-    /// straight from the SDK's buffer, interleaves the chroma planes into the feed's reused buffer
-    /// and pushes that too — no `PackedByteArray`, no `Image`, and no copy of the luma plane at all.
-    /// A GL failure latches [`PBO_FAILED`], returning the feed to the Image path for good.
+    /// The direct upload path; see the caller. It acquires the frame, pushes the luma plane to the GPU
+    /// straight from the SDK's buffer, interleaves the chroma planes into the feed's reused buffer and
+    /// pushes that too, with no `PackedByteArray`, no `Image` and no copy of the luma plane at all. A
+    /// GL failure latches [`PBO_FAILED`], returning the feed to the Image path for good.
     fn poll_frame_direct(
         &mut self,
         session: &session::XrealSession,
@@ -303,7 +306,7 @@ impl XrealCameraFeed {
     ) -> bool {
         let y_rid = self.y_tex.as_ref().expect("checked by caller").get_rid();
         let c_rid = self.cbcr_tex.as_ref().expect("checked by caller").get_rid();
-        // Taken out so the closure can borrow them while `self` is not; put back below.
+        // Taken out so the closure can borrow them while `self` is not, and put back below.
         let mut cbcr = std::mem::take(&mut self.cbcr_buf);
         let mut y_cpu = std::mem::take(&mut self.y_cpu);
         let luma_step = self.cpu_luma_step;
@@ -315,8 +318,8 @@ impl XrealCameraFeed {
             let y_tex = rs.texture_get_native_handle(y_rid) as u32;
             let c_tex = rs.texture_get_native_handle(c_rid) as u32;
             if y_tex == 0 || c_tex == 0 {
-                // The textures exist but the renderer has not realised them yet. Returning `None`
-                // leaves the timestamp unadvanced, so this frame is simply retried next poll.
+                // The textures exist but the renderer has not realised them yet. Returning `None` leaves the
+                // timestamp unadvanced, so this frame is simply retried on the next poll.
                 return None;
             }
             let t = Instant::now();
@@ -358,7 +361,7 @@ impl XrealCameraFeed {
         self.cbcr_buf = cbcr;
         self.y_cpu = y_cpu;
         if luma_step <= 0 && !self.y_cpu.is_empty() {
-            // Turned off at runtime — drop the snapshot so `get_y_data()` cannot return a stale one.
+            // Turned off at runtime, so drop the snapshot and `get_y_data()` cannot return a stale one.
             self.y_cpu = PackedByteArray::new();
             self.y_cpu_size = Vector2i::ZERO;
         }
@@ -366,8 +369,8 @@ impl XrealCameraFeed {
         let Some(uploaded) = outcome else {
             return false; // no new frame, or the textures were not ready
         };
-        // Only now: on a gated poll the closure never ran, so `y_cpu_size` is still its ZERO
-        // initialiser and assigning it above would have blanked a perfectly good size.
+        // Only now: on a gated poll the closure never ran, so `y_cpu_size` is still its ZERO initialiser
+        // and assigning it above would have blanked a perfectly good size.
         if luma_step > 0 {
             self.y_cpu_size = y_cpu_size;
         }
@@ -391,17 +394,17 @@ impl XrealCameraFeed {
         true
     }
 
-    /// Emit `CameraFeed`'s own `frame_changed`, last thing in a successful grab, so a handler sees
-    /// the textures and `get_y_data()` already updated for *this* frame. Reading the data from this
-    /// signal rather than polling the getters is the recommended pattern: the "no new frame this
-    /// poll" state then simply cannot be observed, which is the whole class of staleness bug that
+    /// Emit `CameraFeed`'s own `frame_changed` as the last thing in a successful grab, so a handler
+    /// sees the textures and `get_y_data()` already updated for *this* frame. Reading the data from
+    /// this signal rather than polling the getters is the recommended pattern: the "no new frame this
+    /// poll" state then simply cannot be observed, and that is the whole class of staleness bug
     /// `get_y_data_size()` briefly had.
     ///
-    /// Skipped when `feed_camera_server` is on, because **`set_ycbcr_images` emits `frame_changed`
-    /// itself** — measured on device 2026-07-21: with the flag on the signal rate doubled to 56.7/s
-    /// against 29.4 grabs/s, and matched the grab rate exactly with it off. Emitting here as well
-    /// would make every handler run twice. The engine's emission is safe to rely on for ordering
-    /// because `set_ycbcr_images` is deliberately the *last* thing that path does.
+    /// It is skipped when `feed_camera_server` is on, because **`set_ycbcr_images` emits
+    /// `frame_changed` itself**, measured on device 2026-07-21: with the flag on, the signal rate
+    /// doubled to 56.7/s against 29.4 grabs/s, and it matched the grab rate exactly with the flag off.
+    /// Emitting here as well would make every handler run twice. Relying on the engine's emission for
+    /// ordering is safe, because `set_ycbcr_images` is deliberately the *last* thing that path does.
     ///
     /// Calling back into this feed from a handler is safe: the handler runs inside `poll_frame`'s
     /// `&mut self`, and a re-entrant `get_y_data()` was verified on device to reborrow rather than
@@ -412,8 +415,8 @@ impl XrealCameraFeed {
         }
     }
 
-    /// Fold one grab's per-stage costs into the running means. `cpu_us` is `(packed, image, feed)`
-    /// — all zero on the direct path, which builds neither — and `upload_us` is `(y, cbcr)`.
+    /// Fold one grab's per-stage costs into the running means. `cpu_us` is `(packed, image, feed)`,
+    /// all zero on the direct path, which builds none of them, and `upload_us` is `(y, cbcr)`.
     fn accumulate(
         &mut self,
         grab: &crate::native::GrabTimings,
@@ -435,8 +438,8 @@ impl XrealCameraFeed {
         acc.cpu_luma_us += cpu_luma_us;
     }
 
-    /// Print the frame line, plus — when [`TIMING_PROP`] is set — the per-stage means since the last
-    /// report. Resets the accumulator either way.
+    /// Print the frame line, and, when [`TIMING_PROP`] is set, the per-stage means since the last
+    /// report. It resets the accumulator either way.
     fn report(&mut self, path: &str, yw: i32, yh: i32, cw: i32, ch: i32, mean: u64) {
         godot_print!(
             "[xreal] camera frame #{} (polls={}) y={yw}x{yh} cbcr={cw}x{ch} mean_luma={mean} path={path}",
@@ -476,20 +479,20 @@ impl XrealCameraFeed {
         );
     }
 
-    /// The luma (Y) plane as an `R8` texture — sample `.r` for Y. `null` until the first frame.
+    /// The luma (Y) plane as an `R8` texture; sample `.r` for Y. It is `null` until the first frame.
     #[func]
     fn get_y_texture(&self) -> Option<Gd<ImageTexture>> {
         self.y_tex.clone()
     }
 
-    /// The retained CPU copy of the luma plane — a dense 8-bit greyscale image, ready to wrap as an
-    /// OpenCV `CV_8UC1` Mat with no conversion. Empty unless [`Self::cpu_luma_step`] is non-zero, and
-    /// until the first frame after enabling it. Use [`Self::get_y_data_size`] for its dimensions —
-    /// they are the camera's divided by `cpu_luma_step`, not the texture's.
+    /// The retained CPU copy of the luma plane, a dense 8-bit greyscale image ready to wrap as an
+    /// OpenCV `CV_8UC1` Mat with no conversion. It is empty unless [`Self::cpu_luma_step`] is
+    /// non-zero, and until the first frame after enabling it. Use [`Self::get_y_data_size`] for its
+    /// dimensions: they are the camera's divided by `cpu_luma_step`, not the texture's.
     ///
-    /// The returned array shares storage with the feed's (copy-on-write), so this call is a refcount
-    /// bump, not a copy. Holding it across frames is safe: the next frame's write forks it rather
-    /// than mutating the snapshot underneath a reader — which is what makes it safe to hand to a
+    /// The returned array shares copy-on-write storage with the feed's, so this call is a refcount
+    /// bump rather than a copy. Holding it across frames is safe: the next frame's write forks it
+    /// instead of mutating the snapshot underneath a reader, which is what makes it safe to hand to a
     /// worker thread.
     #[func]
     fn get_y_data(&self) -> PackedByteArray {
@@ -502,7 +505,8 @@ impl XrealCameraFeed {
         self.y_cpu_size
     }
 
-    /// The chroma plane as an `RG8` texture — `.r` = Cb (U), `.g` = Cr (V). `null` until first frame.
+    /// The chroma plane as an `RG8` texture, with `.r` as Cb (U) and `.g` as Cr (V). It is `null` until
+    /// the first frame.
     #[func]
     fn get_cbcr_texture(&self) -> Option<Gd<ImageTexture>> {
         self.cbcr_tex.clone()
@@ -510,8 +514,8 @@ impl XrealCameraFeed {
 }
 
 /// Copy the luma plane into `out`, taking every `step`-th pixel and row, and return the resulting
-/// size. `step = 1` is a straight memcpy; larger steps decimate (nearest-neighbour — no filtering,
-/// which is what CV front-ends want and what keeps this cheap).
+/// size. `step = 1` is a straight memcpy, and a larger step decimates nearest-neighbour, with no
+/// filtering, which is what CV front-ends want and what keeps this cheap.
 fn copy_luma(y: &[u8], width: i32, height: i32, step: i32, out: &mut PackedByteArray) -> Vector2i {
     let step = step.max(1) as usize;
     let (w, h) = (width.max(0) as usize, height.max(0) as usize);
@@ -539,7 +543,7 @@ fn copy_luma(y: &[u8], width: i32, height: i32, step: i32, out: &mut PackedByteA
     Vector2i::new(ow as i32, oh as i32)
 }
 
-/// Mean luma over a sparse sample of the plane — a cheap "is the image alive?" diagnostic.
+/// Mean luma over a sparse sample of the plane, a cheap "is the image alive?" diagnostic.
 fn mean_luma(y: &[u8]) -> u64 {
     let step = (y.len() / 4096).max(1);
     let (mut sum, mut n) = (0u64, 0u64);
@@ -553,7 +557,7 @@ fn mean_luma(y: &[u8]) -> u64 {
 }
 
 /// Per-stage costs the direct path measures inside the frame closure, plus the frame facts the
-/// periodic report needs (the planes themselves do not outlive that closure).
+/// periodic report needs, since the planes themselves do not outlive that closure.
 #[derive(Default)]
 struct DirectStages {
     cpu_luma_us: u64,
@@ -565,15 +569,17 @@ struct DirectStages {
     mean: u64,
 }
 
-/// `adb shell setprop debug.xreal.camera_timing 1` (then toggle the camera off/on) to print the
-/// per-stage grab breakdown every 120 frames. Off by default — it is a diagnostic, not telemetry.
+/// Run `adb shell setprop debug.xreal.camera_timing 1`, then toggle the camera off and on, to print
+/// the per-stage grab breakdown every 120 frames. It is off by default, being a diagnostic rather
+/// than telemetry.
 const TIMING_PROP: &[u8] = b"debug.xreal.camera_timing\0";
 
 /// Latched on the first GL upload failure; the feed then stays on the Image path for the process's
 /// life. The Image path is Godot's own and always works, so this is a safe permanent fallback.
 static PBO_FAILED: AtomicBool = AtomicBool::new(false);
 
-/// Create the `ImageTexture` on the first frame, then `update()` it in place (cheap, same size).
+/// Create the `ImageTexture` on the first frame, then `update()` it in place, which is cheap at the
+/// same size.
 fn update_texture(slot: &mut Option<Gd<ImageTexture>>, img: &Gd<Image>) {
     match slot {
         Some(tex) => tex.update(img),

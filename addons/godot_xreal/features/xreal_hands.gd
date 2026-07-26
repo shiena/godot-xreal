@@ -1,18 +1,18 @@
 extends Node3D
 ## Hand-tracking visualization as a drop-in feature component: small spheres at each of the 26
-## OpenXR joints per hand. Ensures the shared XrealHandTracker node exists (it registers the
-## XRServer hand trackers), so dropping this scene in is all that's needed.
+## OpenXR joints per hand. It makes sure the shared XrealHandTracker node exists, which registers
+## the XRServer hand trackers, so dropping this scene in is all it takes.
 ##
-## World-locked: add this component under a world-fixed node (e.g. the scene root) — NOT under the
-## head rig. The joint poses are in world/tracking space (fixed as the head moves): under the
-## rotating rig the head rotation would cancel against the eye cameras and the hands would appear
-## head-locked (stuck to the screen); under a fixed node they stay on the real hands.
+## World-locked: add this component under a world-fixed node such as the scene root, NOT under the
+## head rig. The joint poses are in world/tracking space and stay fixed as the head moves. Under
+## the rotating rig the head rotation would cancel against the eye cameras and the hands would
+## appear head-locked, stuck to the screen; under a fixed node they stay on the real hands.
 ##
-## Hardware-gated to the Air 2 Ultra — on unsupported glasses the trackers simply report
+## Hardware-gated to the Air 2 Ultra. On unsupported glasses the trackers simply report
 ## has_tracking_data = false and the spheres stay hidden.
 
 const JOINT_COUNT := 26
-# XRHandTracker.HandJoint fingertip ordinals — drawn a touch larger so the hand shape reads clearly.
+# XRHandTracker.HandJoint fingertip ordinals, drawn a touch larger so the hand shape reads clearly.
 const TIPS := [5, 10, 15, 20, 25]  # thumb/index/middle/ring/pinky tips
 
 var _joints := {}  # tracker_name(String) -> Array[MeshInstance3D]
@@ -39,13 +39,13 @@ func _make_hand(color: Color) -> Array:
 
 func _ready() -> void:
 	# Hand tracking needs the SDK's Hands input bit, which is OFF by default because asking for it
-	# costs ~878ms of cold start (NativePerception::SetHandTrackingEnabled runs synchronously during
-	# input start; see docs/plans/startup-latency.md). Dropping this scene in cannot turn it on for
-	# you - the session bootstraps from the XR rig's first _process and the choice has to be made
-	# before that - so say so loudly instead of failing silently.
+	# costs ~878 ms of cold start: NativePerception::SetHandTrackingEnabled runs synchronously during
+	# input start (see docs/plans/startup-latency.md). Dropping this scene in cannot turn it on for
+	# you, because the session bootstraps from the XR rig's first _process and the choice has to be
+	# made before that, so say so loudly instead of failing silently.
 	if XrealShared.is_native_runtime():
 		var src := int(ProjectSettings.get_setting("xreal/input_source", -1))
-		# -1 ("SDK Default") resolves to controller-only, so it has no Hands bit either. Parenthesise
+		# -1 ("SDK Default") resolves to controller-only, so it carries no Hands bit either. Parenthesise
 		# the mask: in GDScript `==` binds tighter than `&`.
 		if src < 0 or (src & 2) == 0:
 			var shown := "SDK Default (controller only)" if src < 0 else str(src)
@@ -65,6 +65,6 @@ func _process(_delta: float) -> void:
 				mi.visible = false
 			continue
 		for i in JOINT_COUNT:
-			# Joint poses are world/tracking-space; under this fixed parent they stay on the real hand.
+			# Joint poses are world/tracking-space, so under this fixed parent they stay on the real hand.
 			(arr[i] as MeshInstance3D).transform = tracker.get_hand_joint_transform(i)
 			(arr[i] as MeshInstance3D).visible = true

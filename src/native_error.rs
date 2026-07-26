@@ -2,23 +2,23 @@
 //!
 //! The plugin reports asynchronous native errors through the callback registered with
 //! `SetNativeErrorCallback` (`XREALCallbackHandler.SetNativeErrorCallback` in the Unity SDK,
-//! feeding `OnXREALError`). The callback fires on an SDK-owned thread, so — like the glasses
-//! event funnel — it must not touch Godot: it only stores the latest code/message here, and
-//! `XrealSystem` exposes them as plain getters (no signal).
+//! feeding `OnXREALError`). The callback fires on an SDK-owned thread, so, like the glasses
+//! event funnel, it must not touch Godot: it only stores the latest code and message here, and
+//! `XrealSystem` exposes them as plain getters, with no signal.
 
 use std::ffi::{c_char, CStr};
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::Mutex;
 
 /// Latest `XREALErrorCode` reported by the native plugin, or `-1` until one arrives.
-/// (All real codes are `>= 0`, with `0` = `Success`, so `-1` is an unambiguous "none yet".)
+/// Every real code is `>= 0`, with `0` meaning `Success`, so `-1` is an unambiguous "none yet".
 static LAST_ERROR_CODE: AtomicI32 = AtomicI32::new(-1);
 
 /// Optional message that accompanied the latest error (the plugin may pass null).
 static LAST_ERROR_MESSAGE: Mutex<Option<String>> = Mutex::new(None);
 
-/// The `extern "C"` callback handed to `SetNativeErrorCallback`. Runs on an SDK thread: no
-/// Godot calls, no logging — just cache the code and copy the message out of the C string.
+/// The `extern "C"` callback handed to `SetNativeErrorCallback`. It runs on an SDK thread, so no
+/// Godot calls and no logging: cache the code and copy the message out of the C string.
 pub extern "C" fn on_native_error(code: i32, message: *const c_char) {
     // Copy the message while the pointer is still valid (it belongs to the caller's frame).
     let text = if message.is_null() {
@@ -39,12 +39,12 @@ pub extern "C" fn on_native_error(code: i32, message: *const c_char) {
     LAST_ERROR_CODE.store(code, Ordering::Release);
 }
 
-/// Latest cached native error code (`-1` if none has arrived). A plain poll — no signal.
+/// Latest cached native error code, or `-1` when none has arrived. A plain poll, with no signal.
 pub fn last_error_code() -> i32 {
     LAST_ERROR_CODE.load(Ordering::Acquire)
 }
 
-/// Message that came with the latest native error (empty if none / null).
+/// Message that came with the latest native error, empty when there was none or it was null.
 pub fn last_error_message() -> String {
     match LAST_ERROR_MESSAGE.lock() {
         Ok(slot) => slot.clone().unwrap_or_default(),

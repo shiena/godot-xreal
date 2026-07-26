@@ -4,12 +4,12 @@ extends Object
 ## Never instantiated.
 ##
 ## Some native resources are process-global singletons, so the feature scenes must coordinate:
-##   - XrealAR polls native change queues that are CONSUMED on poll — a second XrealAR polling the
-##     same stream would steal events. get_ar() shares exactly one node across all features.
-##   - XrealHandTracker registers the XRServer hand trackers; one instance suffices.
-##   - The XrealHeadTracker owns the stereo eye viewports + render driver: the app owns its
-##     lifecycle (usually via addons/godot_xreal/xreal_rig.tscn), so it is only ever looked up.
-##   - XrealSystem, by contrast, is a stateless facade over that global state — every feature
+##   - XrealAR polls native change queues that are CONSUMED on poll, so a second XrealAR polling
+##     the same stream would steal events. get_ar() shares exactly one node across all features.
+##   - XrealHandTracker registers the XRServer hand trackers, and one instance suffices.
+##   - The XrealHeadTracker owns the stereo eye viewports and the render driver. The app owns its
+##     lifecycle, usually through addons/godot_xreal/xreal_rig.tscn, so it is only ever looked up.
+##   - XrealSystem, by contrast, is a stateless facade over that global state, so every feature
 ##     creates its own instance freely (make_system).
 
 const GROUP_AR := &"xreal_shared_ar"
@@ -19,17 +19,14 @@ const GROUP_HEAD_TRACKER := &"xreal_head_tracker"
 const GROUP_CAMERA := &"xreal_camera_feature"
 
 # Same-frame duplicate-creation guard: the group lookup only sees nodes already INSIDE the tree,
-# and auto-created nodes enter it via call_deferred — so two features enabling in the same frame
-# would both miss the group. These caches are the arbiter between creation and tree entry.
+# and auto-created nodes enter it through call_deferred, so two features enabling in the same
+# frame would both miss the group. These caches arbitrate between creation and tree entry.
 static var _ar: Node = null
 static var _hand_tracker: Node = null
 
-## True only when the REAL native extension is live. The desktop editor loads a dummy stub that
-## registers all the Xreal* classes (for the F1 docs), so class presence alone is not enough —
-## gate on the platform too.
 ## Capture resolution presets, mirroring the SDK VideoCapture sample's Resolution Level. `High` is
-## the RGB camera's own 1280x720 — going above it only upscales, so it is the top of the range.
-## Returns `(width, height, bitrate)`; `CUSTOM` is the caller's own exported values.
+## the RGB camera's own 1280x720, and going above that only upscales, so it tops the range.
+## Returns `(width, height, bitrate)`; `CUSTOM` means the caller's own exported values.
 enum ResolutionLevel { LOW, MIDDLE, HIGH, CUSTOM }
 
 static func resolution_preset(level: int) -> Vector3i:
@@ -41,10 +38,10 @@ static func resolution_preset(level: int) -> Vector3i:
 		_:
 			return Vector3i(1280, 720, 8_000_000)
 
-## Audio sources mixed into a recording/stream, mirroring the SDK VideoCapture sample's Audio State.
-## Both are captured natively by the SDK and mixed by its encoder: `MIC` from a config flag plus
-## RECORD_AUDIO, `APP` from a config flag plus an Android MediaProjection (see
-## [method request_app_audio_consent]). Godot's own mixer is not involved in either.
+## Audio sources mixed into a recording or stream, mirroring the SDK VideoCapture sample's Audio
+## State. The SDK captures both natively and mixes them in its encoder: `MIC` needs a config flag
+## plus RECORD_AUDIO, `APP` a config flag plus an Android MediaProjection (see
+## [method request_app_audio_consent]). Godot's own mixer takes part in neither.
 enum AudioState { NONE, APP, MIC, APP_AND_MIC }
 
 static func audio_wants_app(state: int) -> bool:
@@ -68,10 +65,10 @@ static func _projection_class() -> Object:
 ## Ask the user for screen-capture consent, which is what app ("internal") audio needs.
 ##
 ## Android will only let an app capture playback audio through a MediaProjection, and the XREAL
-## encoder builds its own AudioPlaybackCaptureConfiguration from the one we hand it — so without
-## consent a recording carries the microphone only. Returns immediately; the system dialog is
-## asynchronous, so poll [method is_app_audio_ready]. Calling it again while a dialog is up, or once
-## consent is held, does nothing.
+## encoder builds its own AudioPlaybackCaptureConfiguration from the one we hand it, so without
+## consent a recording carries the microphone alone. This returns immediately, and the system
+## dialog is asynchronous, so poll [method is_app_audio_ready]. Calling it again while a dialog is
+## up, or once consent is held, does nothing.
 static func request_app_audio_consent() -> void:
 	var projection := _projection_class()
 	if projection == null:
@@ -86,19 +83,23 @@ static func is_app_audio_ready() -> bool:
 	var projection := _projection_class()
 	return projection.isReady() if projection != null else false
 
+## True only when the REAL native extension is live. The desktop editor loads a dummy stub that
+## registers all the Xreal* classes for the F1 docs, so class presence alone proves nothing; gate
+## on the platform too.
 static func is_native_runtime() -> bool:
 	return OS.get_name() == "Android" and ClassDB.class_exists(&"XrealSystem")
 
-## A fresh XrealSystem — a stateless facade over process-global native state, so each feature may
-## own one. Returns null off-device (keeps the features inert on desktop).
+## A fresh XrealSystem, a stateless facade over process-global native state, so each feature may
+## own one. It returns null off device, which keeps the features inert on desktop.
 static func make_system() -> Object:
 	return ClassDB.instantiate(&"XrealSystem") if is_native_runtime() else null
 
-## Find-or-create the ONE shared XrealAR poller. An auto-created node has all four AR stream
-## switches (planes/anchors/images/mesh) off — each feature turns its own stream on/off — and is
-## parented under the tree root (it survives scene changes; add_child must be deferred because the
-## root is busy while the initial scene is still entering the tree). A user-placed XrealAR is
-## honoured instead when it joined GROUP_AR (note its stream switches default to ON).
+## Find-or-create the ONE shared XrealAR poller. An auto-created node starts with all four AR
+## stream switches (planes, anchors, images, mesh) off, since each feature turns its own stream on
+## and off, and it is parented under the tree root so it survives scene changes. The add_child has
+## to be deferred, because the root is busy while the initial scene is still entering the tree. A
+## user-placed XrealAR is honoured instead once it joined GROUP_AR; note that its stream switches
+## default to ON.
 static func get_ar(tree: SceneTree) -> Node:
 	var found := tree.get_first_node_in_group(GROUP_AR)
 	if found:
@@ -116,8 +117,8 @@ static func get_ar(tree: SceneTree) -> Node:
 	tree.root.add_child.call_deferred(ar)
 	return ar
 
-## Find-or-create the ONE shared XrealHandTracker (registers the XRServer hand trackers
-## /user/hand_tracker/left|right). Same sharing pattern as get_ar.
+## Find-or-create the ONE shared XrealHandTracker, which registers the XRServer hand trackers
+## /user/hand_tracker/left and /user/hand_tracker/right. Same sharing pattern as get_ar.
 static func get_hand_tracker(tree: SceneTree) -> Node:
 	var found := tree.get_first_node_in_group(GROUP_HAND_TRACKER)
 	if found:
@@ -133,26 +134,29 @@ static func get_hand_tracker(tree: SceneTree) -> Node:
 	tree.root.add_child.call_deferred(ht)
 	return ht
 
-## The XrealHeadTracker (head rig), or null while it doesn't exist yet. Never auto-created — the
-## app owns the rig's lifecycle and may spawn it late, so callers re-poll per frame / per use.
+## The XrealHeadTracker (head rig), or null while it does not exist yet. It is never auto-created,
+## because the app owns the rig's lifecycle and may spawn it late, so callers re-poll each frame or
+## at each use.
 static func find_head_tracker(tree: SceneTree) -> Node3D:
 	return tree.get_first_node_in_group(GROUP_HEAD_TRACKER) as Node3D
 
-## The XrealCamera feature component in the tree, or null. O(1) group lookup — safe per frame.
+## The XrealCamera feature component in the tree, or null. The group lookup is O(1), so calling it
+## every frame is safe.
 static func find_camera_feature(tree: SceneTree) -> Node:
 	return tree.get_first_node_in_group(GROUP_CAMERA)
 
-## The live XrealCameraFeed, or null while the camera is off/absent. Consumers poll this at point
-## of use (per frame / per capture), which makes feed sharing independent of scene-tree insertion
-## order and of when the camera toggles.
+## The live XrealCameraFeed, or null while the camera is off or absent. Consumers poll this at the
+## point of use, each frame or each capture, which makes feed sharing independent of scene-tree
+## insertion order and of when the camera toggles.
 static func find_camera_feed(tree: SceneTree) -> Object:
 	var cam := find_camera_feature(tree)
 	return cam.get_feed() if cam != null and cam.has_method(&"get_feed") else null
 
-## Drive a Camera3D from the glasses RGB camera's real geometry so rendered holograms line up with
-## the camera image: intrinsics -> vertical FOV (from fy, KEEP_HEIGHT), pose-from-head -> the small
-## forward offset, returned in Godot space (this port's Unity->Godot map (x,-y,-z)). Static per
-## device — callers apply once and cache the returned offset. Vector3.ZERO when unavailable.
+## Drive a Camera3D from the glasses RGB camera's real geometry, so rendered holograms line up with
+## the camera image. The intrinsics give the vertical FOV (from fy, KEEP_HEIGHT) and the
+## pose-from-head gives the small forward offset, returned in Godot space through this port's
+## Unity-to-Godot map (x,-y,-z). It is static per device, so callers apply it once and cache the
+## returned offset. Returns Vector3.ZERO when unavailable.
 static func apply_rgb_camera_geometry(system: Object, cam: Camera3D) -> Vector3:
 	var offset := Vector3.ZERO
 	if system == null or cam == null or not system.has_method(&"get_camera_intrinsics"):

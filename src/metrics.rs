@@ -1,33 +1,35 @@
-//! NRMetrics reader (`libnr_loader.so`) — the XREAL SDK's render-metrics source (present FPS / dropped
-//! / early / teared / extended frame counts, composite time, motion-to-photon latency), exposed to
-//! GDScript via [`crate::system::XrealSystem`].
+//! NRMetrics reader (`libnr_loader.so`), the XREAL SDK's render-metrics source: the present FPS and
+//! the dropped, early, teared and extended frame counts, the composite time and the
+//! motion-to-photon latency, exposed to GDScript through [`crate::system::XrealSystem`].
 //!
 //! ## Why not `DisplayManager::UpdateMetrics`
 //!
 //! The SDK's own metrics loop (`DisplayManager::UpdateMetrics @libXREALXRPlugin.so 0x68974`) is a
-//! *reporter/sink*: once per second it fetches the numbers from NR (`NativeMetrics::GetMetricsData` →
-//! the same `NRMetrics*` getters we bind here) and then **pushes** them into a Unity stat sink at
-//! `DisplayManager+0x68` (`[[DM+0x68]+0x10](propertyId, float)`). Godot installs no such sink, so that
-//! slot is garbage and `UpdateMetrics` SIGBUS'd on the render thread ~1 s in — which is why we neuter it
-//! (ret at entry, see [`crate::signal_guard`]). The reporter slot is a consumer, **not** a place to put
-//! an NR function; the numbers themselves already come from NR. So instead of reviving the Unity sink we
-//! read the same source directly.
+//! *reporter*, a sink: once per second it fetches the numbers from NR through
+//! `NativeMetrics::GetMetricsData`, which calls the same `NRMetrics*` getters we bind here, and then
+//! **pushes** them into a Unity stat sink at `DisplayManager+0x68`
+//! (`[[DM+0x68]+0x10](propertyId, float)`). Godot installs no such sink, so that slot is garbage and
+//! `UpdateMetrics` SIGBUS'd on the render thread about 1 s in, which is why we neuter it with a ret
+//! at entry (see [`crate::signal_guard`]). The reporter slot is a consumer, **not** a place to put
+//! an NR function, and the numbers themselves already come from NR. So instead of reviving the Unity
+//! sink we read the same source directly.
 //!
 //! ## Independent handle (RE-confirmed, codex 2026-07-16)
 //!
-//! `NRMetricsCreate` takes only an out-handle; the handle is a control/query token onto the
-//! **process-global** NR compositor metrics service (`libnr_api.so` global at `0x244dde8`), not an
-//! accumulator keyed to a rendering/session handle. So a handle we create + start ourselves reads the
-//! live runtime's real compositor counters for the frames the app submits — no need to recover the SDK's
-//! `NativeMetrics` (`DisplayManager+0x70`). See docs/plans/render-metrics-gdscript-plan.md
-//! ("RE addendum 2026-07-16"). The loader trampolines return `1` before the NR runtime is up, so calling
-//! `start()` early is safe and simply retries.
+//! `NRMetricsCreate` takes only an out-handle, and that handle is a control and query token onto the
+//! **process-global** NR compositor metrics service, a `libnr_api.so` global at `0x244dde8`, rather
+//! than an accumulator keyed to a rendering or session handle. A handle we create and start
+//! ourselves therefore reads the live runtime's real compositor counters for the frames the app
+//! submits, with no need to recover the SDK's `NativeMetrics` at `DisplayManager+0x70`. See
+//! docs/plans/render-metrics-gdscript-plan.md, "RE addendum 2026-07-16". The loader trampolines
+//! return `1` before the NR runtime is up, so calling `start()` early is safe and simply retries.
 //!
-//! ABI: every function returns `NRResult` (`i32`, `0` = success); counts are `i32` (teared uses `-1` as
-//! an "unavailable" sentinel), times are `u64` nanoseconds. Getters write through an out-pointer and
-//! never return the value directly. `NRMetricsGetPresentFps` writes an **`i32`** present rate (~60), not
-//! an `f32` — device-confirmed (reading it as `f32` yields denormal garbage ~8.4e-44 = the raw bits of
-//! integer 60), correcting the static-RE guess.
+//! ABI: every function returns `NRResult`, an `i32` where `0` is success. Counts are `i32`, with
+//! teared using `-1` as an "unavailable" sentinel, and times are `u64` nanoseconds. The getters
+//! write through an out-pointer and never return the value directly. `NRMetricsGetPresentFps`
+//! writes an **`i32`** present rate of about 60, not an `f32`. That is device-confirmed: reading it
+//! as `f32` yields denormal garbage around 8.4e-44, the raw bits of the integer 60, which corrects
+//! the static-RE guess.
 
 use libloading::Library;
 use std::sync::Mutex;
@@ -38,12 +40,13 @@ type FnGetI32 = unsafe extern "C" fn(u64, *mut i32) -> i32;
 type FnGetU64 = unsafe extern "C" fn(u64, *mut u64) -> i32;
 type FnSetFeature = unsafe extern "C" fn(u64, i32, i32) -> i32;
 
-/// `NRMetricsFeature` bitmask values (RE'd from the XREAL Unity SDK's exported
-/// `EnableTearedFrameCount` / `EnableRenderBackColor`, which forward to
-/// `DisplayManager::EnableTearedFrameCount(bool)` @libXREALXRPlugin.so:0x6dbd0 →
-/// `NativeMetrics::SetFeatureEnable(1, enable)` and `EnableRenderBackColor` → `SetFeatureEnable(2, ...)`).
-/// `TearedFrameCount` is a metric we read; `RenderBackColor` (2) is a debug *rendering* feature, not a
-/// metric, so we do not enable it. Composite time / latency are not feature-gated.
+/// `NRMetricsFeature` bitmask values, RE'd from the XREAL Unity SDK's exported
+/// `EnableTearedFrameCount` and `EnableRenderBackColor`. The first forwards to
+/// `DisplayManager::EnableTearedFrameCount(bool)` @libXREALXRPlugin.so:0x6dbd0, which calls
+/// `NativeMetrics::SetFeatureEnable(1, enable)`, and the second calls `SetFeatureEnable(2, ...)`.
+/// `TearedFrameCount` is a metric we read, while `RenderBackColor` (2) is a debug *rendering*
+/// feature rather than a metric, so we leave it off. Composite time and latency are not
+/// feature-gated.
 const NR_METRICS_FEATURE_TEARED_FRAME_COUNT: i32 = 1;
 
 struct Metrics {
@@ -61,15 +64,16 @@ struct Metrics {
     handle: u64,
 }
 
-// SAFETY: the fn-pointers resolve into libnr_loader.so (kept mapped by `_lib`); `handle` is an opaque
-// pointer-sized token owned by the NR runtime. Only touched under the Mutex.
+// SAFETY: the fn-pointers resolve into libnr_loader.so, which `_lib` keeps mapped, and `handle` is
+// an opaque pointer-sized token owned by the NR runtime. It is touched only under the Mutex.
 unsafe impl Send for Metrics {}
 
 static METRICS: Mutex<Option<Metrics>> = Mutex::new(None);
 
-/// `dlopen` libnr_loader.so, `NRMetricsCreate` + `NRMetricsStart` a metrics handle, and keep it alive.
-/// Idempotent and retryable: on failure (e.g. the NR runtime is not up yet — the loader stubs return
-/// `1`) nothing is stored, so a later call retries. Returns a one-line diagnostic.
+/// `dlopen` libnr_loader.so, run `NRMetricsCreate` and `NRMetricsStart` on a metrics handle, and
+/// keep it alive. It is idempotent and retryable: on failure, for instance while the NR runtime is
+/// not up yet and the loader stubs return `1`, nothing is stored, so a later call retries. It
+/// returns a one-line diagnostic.
 fn start_locked(slot: &mut Option<Metrics>) -> String {
     if let Some(m) = slot.as_ref() {
         return format!(
@@ -94,7 +98,7 @@ fn start_locked(slot: &mut Option<Metrics>) -> String {
         let mut handle: u64 = 0;
         let cr = create(&mut handle);
         if cr != 0 || handle == 0 {
-            // NR runtime likely not up yet (loader stub returns 1) — retry on the next call.
+            // The NR runtime is likely not up yet, since the loader stub returns 1, so retry on the next call.
             return format!("[xreal] NRMetricsCreate not ready (result={cr})");
         }
         let sr = start_fn(handle);
@@ -106,8 +110,8 @@ fn start_locked(slot: &mut Option<Metrics>) -> String {
         }
 
         // Enable the TearedFrameCount feature so `NRMetricsGetTearedFrameCount` returns a real value
-        // instead of an error — the same thing the Unity SDK does via its exported
-        // `EnableTearedFrameCount(true)` (→ `NativeMetrics::SetFeatureEnable(1, true)`).
+        // instead of an error. The Unity SDK does the same through its exported
+        // `EnableTearedFrameCount(true)`, which calls `NativeMetrics::SetFeatureEnable(1, true)`.
         let set_feature_enable = lib
             .get::<FnSetFeature>(b"NRMetricsSetFeatureEnable\0")
             .ok()
@@ -163,8 +167,9 @@ fn start_locked(slot: &mut Option<Metrics>) -> String {
     }
 }
 
-/// Ensure the metrics handle is created + started, then run `f` with the live handle. Returns `None`
-/// when the metrics handle could not be started yet (NR runtime not up / symbols missing).
+/// Ensure the metrics handle is created and started, then run `f` with the live handle. It returns
+/// `None` when the handle could not be started yet, whether the NR runtime is not up or the symbols
+/// are missing.
 fn with_metrics<T>(f: impl FnOnce(&Metrics) -> Option<T>) -> Option<T> {
     let mut slot = METRICS.lock().unwrap_or_else(|e| e.into_inner());
     if slot.is_none() {
@@ -173,7 +178,7 @@ fn with_metrics<T>(f: impl FnOnce(&Metrics) -> Option<T>) -> Option<T> {
     slot.as_ref().and_then(f)
 }
 
-/// Force a start attempt and return the one-line diagnostic (for a GDScript status readout).
+/// Force a start attempt and return the one-line diagnostic, for a GDScript status readout.
 pub fn diagnostics() -> String {
     let mut slot = METRICS.lock().unwrap_or_else(|e| e.into_inner());
     start_locked(&mut slot)
@@ -181,7 +186,7 @@ pub fn diagnostics() -> String {
 
 macro_rules! get_i32 {
     ($name:ident, $field:ident) => {
-        /// `None` when the metrics handle is not available or the getter reports an error.
+        /// `None` when the metrics handle is unavailable or the getter reports an error.
         pub fn $name() -> Option<i32> {
             with_metrics(|m| {
                 let f = m.$field?;
@@ -198,7 +203,7 @@ get_i32!(frame_present_count, get_curr_frame_present_count);
 get_i32!(extended_frame_count, get_extended_frame_count);
 get_i32!(teared_frame_count, get_teared_frame_count);
 
-/// Present rate in frames/second (integer, ~60). `None` when the metrics handle is not available.
+/// Present rate in frames per second, an integer around 60. `None` when the handle is unavailable.
 pub fn present_fps() -> Option<i32> {
     with_metrics(|m| {
         let f = m.get_present_fps?;
@@ -216,7 +221,7 @@ pub fn frame_composite_time_ns() -> Option<u64> {
     })
 }
 
-/// App frame latency (motion-to-photon input) in nanoseconds. `None` when unavailable.
+/// App frame latency, the motion-to-photon input, in nanoseconds. `None` when unavailable.
 pub fn app_frame_latency_ns() -> Option<u64> {
     with_metrics(|m| {
         let f = m.get_app_frame_latency?;
@@ -225,7 +230,7 @@ pub fn app_frame_latency_ns() -> Option<u64> {
     })
 }
 
-/// Stop + destroy the metrics handle (best-effort). Called on session teardown.
+/// Stop and destroy the metrics handle, best-effort. Called on session teardown.
 #[allow(dead_code)]
 pub fn shutdown() {
     let mut slot = METRICS.lock().unwrap_or_else(|e| e.into_inner());

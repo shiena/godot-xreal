@@ -1,36 +1,38 @@
 /* Desktop stand-in for the Android-only godot_xreal GDExtension.
  *
  * Godot prints "No GDExtension library found for current OS and architecture" on every
- * editor start when a .gdextension has no [libraries] entry matching the host platform —
- * there is no way to declare an extension platform-only. This stub gives the desktop
+ * editor start when a .gdextension has no [libraries] entry matching the host platform,
+ * because there is no way to declare an extension platform-only. This stub gives the desktop
  * editor a real library to load.
  *
- * It registers a placeholder for every real class (stub_classes.inc): the Node-derived ones
- * (XrealHeadTracker / XrealHandTracker / XrealAR) so scenes that place them (demo/main.tscn,
- * addons/godot_xreal/xreal_rig.tscn) open without "missing type" warnings, plus XrealSystem
- * (RefCounted) and XrealCameraFeed (CameraFeed). Each instantiates as its plain base class and
- * does nothing. The demo scripts must NOT treat class presence as "the real extension is here"
- * (these placeholders exist on desktop): they gate the real path on OS.get_name() == "Android".
+ * It registers a placeholder for every real class, listed in stub_classes.inc. The Node-derived
+ * ones, XrealHeadTracker, XrealHandTracker and XrealAR, let scenes that place them, such as
+ * demo/main.tscn and addons/godot_xreal/xreal_rig.tscn, open without "missing type" warnings, and
+ * XrealSystem (RefCounted) and XrealCameraFeed (CameraFeed) follow. Each instantiates as its plain
+ * base class and does nothing. The demo scripts must NOT treat class presence as proof that the
+ * real extension is here, since these placeholders exist on desktop: they gate the real path on
+ * OS.get_name() == "Android".
  *
- * For the editor F1 help it does two things at the EDITOR init level: registers each class's
- * members (stub_members.inc — methods / signals / constants with their signatures, as no-ops) so
- * the members appear at all, and loads each class's reference XML (stub_docs.inc) into the help
- * database so the descriptions (and class briefs) fill in — both generated from the Rust `///`
- * docs by scripts/gen_docs. The same reference lives standalone in addons/godot_xreal/doc_classes/.
+ * For the editor F1 help it does two things at the EDITOR init level. It registers each class's
+ * members from stub_members.inc, the methods, signals and constants with their signatures, as
+ * no-ops, so the members appear at all, and it loads each class's reference XML from
+ * stub_docs.inc into the help database so the descriptions and class briefs fill in.
+ * scripts/gen_docs generates both from the Rust `///` docs. The same reference lives standalone
+ * in addons/godot_xreal/doc_classes/.
  *
- * Deliberately freestanding (no libc) so every desktop target cross-compiles from any
- * host with clang + lld alone — see scripts/build_dummy_libs.ps1 / .sh. The binaries are
- * not committed: build them once after cloning (rebuild only if this file, the
- * entry_symbol, or the registered class list changes).
+ * It is deliberately freestanding, using no libc, so every desktop target cross-compiles from any
+ * host with clang and lld alone; see scripts/build_dummy_libs.ps1 and .sh. The binaries are not
+ * committed, so build them once after cloning, and rebuild only when this file, the entry_symbol
+ * or the registered class list changes.
  *
- * ABI: gdextension_interface.h alongside this file is the verbatim official header,
- * dumped from the pinned editor with `godot --dump-gdextension-interface` (4.7.1-stable).
- * Registration uses classdb_register_extension_class2 / classdb_construct_object: both
- * exist since 4.1/4.2 (deprecated but kept in official builds), the CreationInfo2 layout
- * is frozen, and the v1 construct_object sends NOTIFICATION_POSTINITIALIZE itself — the
- * newer non-deprecated APIs would force this stub to send that notification through a
- * method bind. Every proc is null-checked; on a Godot that dropped these symbols the
- * stub degrades to registering nothing (the pre-placeholder behavior).
+ * ABI: the gdextension_interface.h alongside this file is the verbatim official header,
+ * dumped from the pinned editor with `godot --dump-gdextension-interface` on 4.7.1-stable.
+ * Registration uses classdb_register_extension_class2 and classdb_construct_object. Both have
+ * existed since 4.1 and 4.2, deprecated but kept in official builds, the CreationInfo2 layout is
+ * frozen, and the v1 construct_object sends NOTIFICATION_POSTINITIALIZE itself, whereas the newer
+ * non-deprecated APIs would force this stub to send that notification through a method bind.
+ * Every proc is null-checked, so on a Godot that dropped these symbols the stub degrades to
+ * registering nothing, the pre-placeholder behavior.
  */
 
 #include "gdextension_interface.h"
@@ -50,8 +52,9 @@ static GDExtensionInterfaceObjectSetInstance g_object_set_instance;
 /* Editor-only (null in a running game / on a Godot that predates 4.3): loads class-reference
  * XML into the editor's help database so the F1 docs work for our placeholder classes. */
 static GDExtensionsInterfaceEditorHelpLoadXmlFromUtf8Chars g_editor_help_load_xml;
-/* PROTOTYPE (temporary): member-registration procs — testing whether registering the members in
- * ClassDB makes the editor F1 help show them (+ whether the signature comes from the loaded XML). */
+/* PROTOTYPE, temporary: the member-registration procs, testing whether registering the members
+ * in ClassDB makes the editor F1 help show them, and whether the signature comes from the loaded
+ * XML. */
 static GDExtensionInterfaceClassdbRegisterExtensionClassMethod g_register_method;
 static GDExtensionInterfaceClassdbRegisterExtensionClassIntegerConstant g_register_constant;
 static GDExtensionInterfaceClassdbRegisterExtensionClassSignal g_register_signal;
@@ -70,9 +73,9 @@ typedef struct {
 
 /* The Node-derived classes of the real extension. The array is generated from the
  * `#[class(base = ...)]` declarations in the .rs sources under src/ by
- * scripts/gen_stub_classes.ps1 (Windows) / .sh (mac/Linux) — run by the matching
- * build_dummy_libs script; the release workflow commits the regenerated list per
- * release — so the Rust source stays the single source of truth. */
+ * scripts/gen_stub_classes.ps1 on Windows and .sh on mac and Linux, which the matching
+ * build_dummy_libs script runs. The release workflow commits the regenerated list per
+ * release, so the Rust source stays the single source of truth. */
 #include "stub_classes.inc"
 enum { STUB_CLASS_COUNT = sizeof(stub_classes) / sizeof(stub_classes[0]) };
 
@@ -82,8 +85,8 @@ enum { STUB_CLASS_COUNT = sizeof(stub_classes) / sizeof(stub_classes[0]) };
 #include "stub_docs.inc"
 
 /* Registered members of each class (methods / signals / constants with their signatures), so the
- * editor F1 help lists them — descriptions come from stub_docs.inc, matched by name. Both are
- * generated from the Rust `///`-documented GDScript API by scripts/gen_docs. */
+ * editor F1 help lists them; the descriptions come from stub_docs.inc, matched by name.
+ * scripts/gen_docs generates both from the Rust `///`-documented GDScript API. */
 typedef struct {
 	int type; /* GDExtensionVariantType */
 	const char *class_name; /* object class when type == OBJECT (24), else "" */
@@ -116,8 +119,8 @@ typedef struct {
 } StubMembers;
 #include "stub_members.inc"
 
-/* The instance is stateless — the StubClass record doubles as the (never dereferenced,
- * merely non-null) instance pointer. construct_object (v1) sends
+/* The instance is stateless, so the StubClass record doubles as the instance pointer, which is
+ * merely non-null and never dereferenced. construct_object (v1) sends
  * NOTIFICATION_POSTINITIALIZE itself. */
 static GDExtensionObjectPtr stub_create_instance(void *p_class_userdata) {
 	StubClass *cls = (StubClass *)p_class_userdata;
@@ -149,8 +152,8 @@ static int str_eq(const char *a, const char *b) {
 	return *a == *b;
 }
 
-/* No-op body for the registered placeholder methods — they exist only so the class carries the
- * method in ClassDB (the editor F1 help needs that); nothing ever calls them on desktop. */
+/* No-op body for the registered placeholder methods. They exist only so the class carries the
+ * method in ClassDB, which the editor F1 help needs; nothing ever calls them on desktop. */
 static void stub_method_noop(void *method_userdata, GDExtensionClassInstancePtr p_instance,
 		const GDExtensionConstVariantPtr *p_args, GDExtensionInt p_argument_count,
 		GDExtensionVariantPtr r_return, GDExtensionCallError *r_error) {
@@ -159,7 +162,7 @@ static void stub_method_noop(void *method_userdata, GDExtensionClassInstancePtr 
 	(void)p_args;
 	(void)p_argument_count;
 	/* Return nil rather than leaving r_return uninitialised, in case a method is ever called (these
-	 * placeholders only run on desktop, where the demo gates the extension off — but be safe). */
+	 * placeholders only run on desktop, where the demo gates the extension off, but be safe). */
 	if (r_return && g_variant_new_nil) {
 		g_variant_new_nil(r_return);
 	}
@@ -168,8 +171,9 @@ static void stub_method_noop(void *method_userdata, GDExtensionClassInstancePtr 
 	}
 }
 
-/* Persistent StringName storage — Godot may hold the pointers we register, so they must outlive the
- * registration calls (freestanding: a fixed static pool, sized by the generator in stub_members.inc). */
+/* Persistent StringName storage. Godot may hold the pointers we register, so they have to
+ * outlive the registration calls. Being freestanding, this is a fixed static pool, sized by the
+ * generator in stub_members.inc. */
 static void *g_sn_pool[STUB_SN_POOL];
 static int g_sn_next;
 static void *g_empty_string; /* one empty String, reused for every PropertyInfo.hint_string */
@@ -241,7 +245,7 @@ static void gdext_dummy_initialize(void *userdata, GDExtensionInitializationLeve
 	(void)userdata;
 	/* EDITOR level (editor only; never reached in an exported game): load each class's reference
 	 * XML so the F1 help fills in the descriptions for the members registered at the SCENE level.
-	 * The proc is null on a running game and on pre-4.3 editors — degrade to no docs. */
+	 * The proc is null on a running game and on pre-4.3 editors, where this degrades to no docs. */
 	if (p_level == GDEXTENSION_INITIALIZATION_EDITOR) {
 		if (g_editor_help_load_xml) {
 			for (int i = 0; i < STUB_DOC_COUNT; i++) {
@@ -256,7 +260,7 @@ static void gdext_dummy_initialize(void *userdata, GDExtensionInitializationLeve
 	if (!g_string_name_new || !g_register_class || !g_construct_object || !g_object_set_instance) {
 		return;
 	}
-	/* Static, zero-initialized (.bss — no memset in a freestanding build); only the
+	/* Static and zero-initialized in .bss, since a freestanding build has no memset; only the
 	 * fields below are ever non-null. register copies it, so one struct serves all. */
 	static GDExtensionClassCreationInfo2 info;
 	info.is_exposed = 1;

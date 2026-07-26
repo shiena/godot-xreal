@@ -5,9 +5,9 @@
 # register empty placeholders for the Node-derived classes so scenes that place them open
 # warning-free (see the comment in gdext_dummy.c).
 #
-# The source is freestanding (no libc, no SDKs), so a single clang + lld cross-compiles
-# all six targets from any host. The binaries are tiny and NOT committed — run this once
-# after cloning; rerun only if gdext_dummy.c or the entry_symbol changes.
+# The source is freestanding, with no libc and no SDKs, so a single clang and lld
+# cross-compile all six targets from any host. The binaries are tiny and NOT committed, so run
+# this once after cloning, and rerun it only when gdext_dummy.c or the entry_symbol changes.
 #
 #   pwsh scripts/build_dummy_libs.ps1              # clang on PATH
 #   pwsh scripts/build_dummy_libs.ps1 -Clang <path-to-clang>
@@ -19,7 +19,7 @@ param(
 $ErrorActionPreference = 'Stop'
 
 if (-not (Get-Command $Clang -ErrorAction SilentlyContinue)) {
-	throw "clang not found ('$Clang') — install LLVM (e.g. 'scoop install llvm') or pass -Clang / set `$env:CLANG."
+	throw "clang not found ('$Clang'): install LLVM (e.g. 'scoop install llvm') or pass -Clang / set `$env:CLANG."
 }
 
 $root = Split-Path -Parent $PSScriptRoot
@@ -31,8 +31,9 @@ $src = Join-Path $root 'dummy/gdext_dummy.c'
 # That file is a committed prerequisite regenerated separately by scripts/gen_docs.ps1 (it needs a
 # Rust host toolchain, kept out of this clang-only build); CI checks it stays in sync.
 
-# Built into per-platform folders under the addon's bin/ (Godot convention); the .gdextension
-# points its desktop entries there. Gitignored — built locally, not committed.
+# They are built into per-platform folders under the addon's bin/, the Godot convention, and the
+# .gdextension points its desktop entries there. They are gitignored: built locally, not
+# committed.
 $binRoot = Join-Path $root 'addons/godot_xreal/bin'
 # -Wl,-noentry: no CRT means no DllMainCRTStartup; a resident DLL needs no entry point.
 $targets = @(

@@ -9,7 +9,7 @@ set -euo pipefail
 
 CLANG="${CLANG:-clang}"
 command -v "$CLANG" >/dev/null 2>&1 || {
-	echo "clang not found ('$CLANG') — install LLVM or set CLANG=…" >&2
+	echo "clang not found ('$CLANG'): install LLVM or set CLANG=…" >&2
 	exit 1
 }
 
@@ -22,15 +22,16 @@ bash "$root/scripts/gen_stub_classes.sh"
 # That file is a committed prerequisite regenerated separately by scripts/gen_docs.sh (it needs a
 # Rust host toolchain, kept out of this clang-only build); CI checks it stays in sync.
 
-# Built into per-platform folders under the addon's bin/ (Godot convention); the .gdextension
-# points its desktop entries there. Gitignored — built locally, not committed.
+# They are built into per-platform folders under the addon's bin/, the Godot convention, and the
+# .gdextension points its desktop entries there. They are gitignored: built locally, not
+# committed.
 bin_root="$root/addons/godot_xreal/bin"
 
 build() { # triple out extra-flags…
 	local triple="$1" out="$2"
 	shift 2
 	mkdir -p "$(dirname "$bin_root/$out")"
-	# -Wl,-noentry (dash form) — the slash form is mangled by MSYS path conversion.
+	# -Wl,-noentry in the dash form, because MSYS path conversion mangles the slash form.
 	# -fno-stack-protector: the freestanding build has no __stack_chk_fail / __stack_chk_guard to
 	# link against, and some targets (e.g. macOS) enable the stack protector by default for
 	# functions with local buffers (register_members' PropertyInfo arrays).

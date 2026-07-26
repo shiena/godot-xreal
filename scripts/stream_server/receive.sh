@@ -4,7 +4,7 @@
 # with ffmpeg when --record is given). Uses stream.sdp and pair_server.py next to this script.
 #
 # You do NOT type an address into the app: it discovers this host itself. Start this script first,
-# then hit Stream in the app — the receiver is launched automatically at the right moment, because
+# then hit Stream in the app, and the receiver launches automatically at the right moment, because
 # ffmpeg gives up probing long before a hand-driven app gets around to sending.
 #
 # Needs python 3 (stdlib only) and ffmpeg/ffplay (e.g. `brew install ffmpeg` / `apt install ffmpeg`).

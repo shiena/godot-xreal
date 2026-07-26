@@ -12,10 +12,10 @@ import android.util.Log;
  * Holds the Android {@link MediaProjection} the XREAL encoder needs to capture app ("internal")
  * audio, and hands it to native code.
  *
- * Why this exists: {@code addInternalAudio:true} in the encoder config does not mean "expect pushed
- * PCM" — reverse engineering libmedia_codec.so showed it builds an
- * {@code AudioPlaybackCaptureConfiguration} from a MediaProjection and opens its own AudioRecord
- * (see docs/archive/codex-audio-mix-analysis.md). Without a projection that capture cannot start, so
+ * Why this exists: {@code addInternalAudio:true} in the encoder config does not mean "expect
+ * pushed PCM". Reverse engineering libmedia_codec.so showed it builds an
+ * {@code AudioPlaybackCaptureConfiguration} from a MediaProjection and opens its own AudioRecord;
+ * see docs/archive/codex-audio-mix-analysis.md. Without a projection that capture cannot start, so
  * the encoder's own mixer has nothing to add to the microphone blocks.
  *
  * Consent is a two-step Android dance, and the order matters on API 34+: the projection may only be
@@ -40,7 +40,7 @@ public final class XrealProjection {
 
 	/**
 	 * Ask the user for screen-capture consent, unless a projection is already held or a request is
-	 * already on screen. Returns immediately — poll {@link #isReady()}.
+	 * already on screen. It returns immediately, so poll {@link #isReady()}.
 	 */
 	public static void request(Activity activity) {
 		if (activity == null || projection != null || requestInFlight) {
@@ -93,8 +93,8 @@ public final class XrealProjection {
 					Log.i(TAG, "media projection stopped by the system or the user");
 					projection = null;
 					nativeClearMediaProjection();
-					// A status-bar / system revoke tears down the projection but not the foreground
-					// service that startForeground'd for it — stop it here (mirrors release(activity)).
+					// A status-bar or system revoke tears down the projection but not the foreground
+					// service that startForeground'd for it, so stop it here, mirroring release(activity).
 					Context ctx = appContext;
 					if (ctx != null) {
 						try {
