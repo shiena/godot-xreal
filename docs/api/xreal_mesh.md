@@ -27,6 +27,12 @@ Tint each vertex by its semantic class (wall, floor, ceiling, door, table and so
 
 Enable at boot (applied in _ready). At runtime call set_enabled().
 
+<a id="property-snapshot_dir"></a>
+
+### snapshot_dir: String = ""
+
+Where save_snapshot() writes. Empty picks the platform default: on Android the app's own folder on external storage (`/sdcard/Android/data/&lt;package>/files/MeshSave`), which `adb pull` reads without root, and `user://mesh_snapshots` everywhere else. Godot maps `user://` to internal storage on Android, and a scan nobody can copy off the device is of no use in the editor.
+
 ## Signals
 
 <a id="signal-error"></a>
@@ -35,7 +41,25 @@ Enable at boot (applied in _ready). At runtime call set_enabled().
 
 Emitted when the feature is unavailable, e.g. meshing is unsupported on this device, so the load site can react by showing UI, logging, or flipping a toggle.
 
+<a id="signal-snapshot_saved"></a>
+
+### snapshot_saved(path: String, block_count: int)
+
+Emitted after save_snapshot() writes a file, with its path and the number of blocks in it.
+
 ## Methods
+
+<a id="method-save_snapshot"></a>
+
+### save_snapshot() -> String
+
+Write every block currently in the scene to one JSON file and return its path, or "" on failure (reported through `error`). Meant for the same job as the Unity SDK's "Save Mesh": capture a real scan on the glasses, pull it to a PC, and iterate against it in the editor instead of rescanning a room for every change. Unlike that one it keeps the semantic classification, which .obj cannot carry, and one file holds the whole block set rather than a folder of meshes.
+
+Convert a saved file with the "XREAL Mesh Snapshot" editor dock, which turns it into an `ArrayMesh` resource or a .glb. The schema, all little-endian:
+
+{ "format": "godot-xreal.mesh-snapshot", "version": 1, "space": "godot", "encoding": "base64", "saved_at": "&lt;ISO 8601 UTC>", "blocks": [ { "id": "&lt;16 hex digits>", "vertex_count": int, "index_count": int, "vertices": "&lt;base64 float32 xyz>", "normals": "&lt;base64 float32 xyz>", "indices": "&lt;base64 int32>", "labels": "&lt;base64 uint8, may be empty>" } ] }
+
+The arrays are base64 rather than JSON numbers on purpose: a room scan runs to hundreds of thousands of floats, and writing those as text costs roughly ten times the bytes and long enough on the phone to stall the frame. Everything is already in Godot space with Godot winding, so a reader needs no conversion.
 
 <a id="method-set_enabled"></a>
 
@@ -64,3 +88,14 @@ Colour for a label value outside LABEL_COLORS, which only a future SDK taxonomy 
 ### OVERLAY_ALPHA = 0.22
 
 Opacity of the whole overlay, low enough to read the real room through the scan.
+
+<a id="constant-SNAPSHOT_FORMAT"></a>
+
+### SNAPSHOT_FORMAT = "godot-xreal.mesh-snapshot"
+
+Marker and schema revision written into every snapshot, checked by the editor converter before it reads anything else. Bump the version whenever the block schema changes.
+
+<a id="constant-SNAPSHOT_VERSION"></a>
+
+### SNAPSHOT_VERSION = 1
+

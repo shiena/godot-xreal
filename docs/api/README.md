@@ -48,5 +48,6 @@ Supporting GDScript classes in the addon.
 
 | Class | Inherits | Description |
 | --- | --- | --- |
+| [MeshSnapshotDock](mesh_snapshot_dock.md) | [`VBoxContainer`](https://docs.godotengine.org/en/stable/classes/class_vboxcontainer.html) | Editor dock: turns a depth-mesh snapshot written on the glasses into something the editor can open, an `ArrayMesh` resource or a .glb. … |
 | [XrealAndroidBridge](xreal_android_bridge.md) | [`Object`](https://docs.godotengine.org/en/stable/classes/class_object.html) | Bootstrap for the XrealBridge Java helper (addons/godot_xreal/android/src/…/XrealBridge.java). … |
 | [XrealDesktopPreview](xreal_desktop_preview.md) | [`Node`](https://docs.godotengine.org/en/stable/classes/class_node.html) | Desktop-only preview: a second OS window showing what the glasses would draw, flown around with mouse-look and WASD. |
