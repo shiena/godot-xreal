@@ -38,6 +38,7 @@ XREAL SDK for Unity 3.1.0 のネイティブライブラリを用いて、XREAL 
 | **Multiview** ステレオ（single-pass-instanced） | ✅ 動作するが性能向上なし | 両眼を正しく描画します（有効化は `setprop debug.xreal.stereo_mode 2`）。ただし**処理負荷は軽減されません**。本リグは Godot の SubViewport を左右2つ描画（2パス）した結果を配列レイヤーへコピーしており、そのコピーは片眼につき `glCopyImageSubData` 1回で、Multipass のコピーと同一コストです。single-pass-instanced の利得は、エンジンが両眼を1パスのマルチビューで描く場合にだけ得られます（Godot の Compatibility と SubViewport のリグはそれをしません）。よって既定は Multipass のままです。詳細 [`docs/archive/multiview-investigation.md`](docs/archive/multiview-investigation.md)。 |
 | **Recenter** | ✅ | 正面方向をリセットします（SDK の `NativePerception::Recenter`）。 |
 | **レンダーメトリクス**（present FPS、dropped、early、latency） | ✅ | コンポジタの実測値を `NRMetrics*` API で直接取得します（Unity の `UpdateMetrics` sink は使いません）。`XrealSystem` の `get_present_fps()` や `get_dropped_frame_count()` などで読めます。詳細 [`docs/plans/render-metrics-gdscript-plan.md`](docs/plans/render-metrics-gdscript-plan.md)。 |
+| **フォーカス平面**（コンポジタの再投影） | ✅ 実機検証待ち | コンポジタは VSync のたびに直前のフレームを最新の頭部ポーズへワープします。その基準となる平面を SDK は 1.4 m に固定しており、そこから離れた表示ほど尾を引いて二重に見えます。`XrealSystem.set_focus_plane()` が頭部ローカル座標で毎フレーム動かせます。`XrealFocusPlane` コンポーネントは SDK の `FocusManager` と同じく前方レイキャストから駆動します。`SetFocusPlane` export の引数は値渡しの `UnityXRVector3` 2 個（点と法線）で、Unity 側のラッパーが取る 3 個目の velocity はここへ届く前に捨てられます。 |
 | **グラス入力**（物理キー MENU/MULTI のクリック、ダブル、長押し） | ✅ | Godot シグナル `key_event` と `key_state_changed` で受け取ります。 |
 | **装着センサー、明るさ、音量、調光、USB ホットプラグ** | ✅ | `wearing_changed`、`brightness_changed`、`glasses_connected` などのシグナルで受け取ります。 |
 | **診断**（セッションとトラッキングの状態、HMD クロック、プラグイン版） | ✅ | `XrealSystem` 経由で取得します。 |

@@ -16,6 +16,7 @@
 [ext_resource type="Shader" uid="uid://xrimgmarker01" path="res://demo/xreal_image_marker.gdshader" id="13_marker"]
 [ext_resource type="PackedScene" uid="uid://dcampreviewsc1" path="res://demo/camera_preview.tscn" id="15_preview"]
 [ext_resource type="PackedScene" uid="uid://xrdeskprevsc1" path="res://addons/godot_xreal/xreal_desktop_preview.tscn" id="16_desktop"]
+[ext_resource type="PackedScene" uid="uid://xrfocusscn01" path="res://addons/godot_xreal/features/xreal_focus_plane.tscn" id="17_focus"]
 
 ; Front/back-coloured tracked-image marker (green front / red back via FRONT_FACING) so the
 ; tracked pose's facing is readable. It is assigned to XrealImageTracking's marker_material override.
@@ -49,6 +50,11 @@ marker_material = SubResource("ShaderMaterial_marker")
 [node name="XrealMesh" parent="." instance=ExtResource("8_mesh")]
 
 [node name="XrealHands" parent="." instance=ExtResource("9_hands")]
+
+; The compositor's reprojection plane, driven from a forward raycast. The demo's room boxes carry
+; colliders, so the plane follows whichever one is being looked at; elsewhere it falls back to the
+; 1.4 m default. No phone-menu toggle: it is a display-quality setting, not a feature to switch.
+[node name="XrealFocusPlane" parent="." instance=ExtResource("17_focus")]
 
 [node name="XrealPhotoCapture" parent="." instance=ExtResource("10_photo")]
 

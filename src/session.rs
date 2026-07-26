@@ -704,6 +704,15 @@ impl XrealSession {
             .camera_projection_matrix(component, near, far)
     }
 
+    /// Point the compositor's reprojection plane at `point` with surface `normal`, both in
+    /// head-local Unity space. It holds its last value, so callers set it every frame.
+    pub fn set_focus_plane(&self, point: [f32; 3], normal: [f32; 3]) -> bool {
+        self.native
+            .lock()
+            .expect("xreal native mutex")
+            .set_focus_plane(point, normal)
+    }
+
     /// Current `PlaneDetectionMode` flags, or `None` when the export is absent.
     pub fn plane_detection_mode(&self) -> Option<i32> {
         self.native

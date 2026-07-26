@@ -782,6 +782,33 @@ impl XrealSystem {
         session::set_stereo_mode_override(mode as i32);
     }
 
+    /// Point the compositor's reprojection plane at `point`, with surface `normal`, both in
+    /// **head-local Godot space**: the head tracker's own frame, not the world. Returns whether the
+    /// call reached the SDK.
+    ///
+    /// Before every VSync the compositor warps the last rendered frame to the newest head pose, and
+    /// it does that against a plane. Content far from that plane is what smears and doubles when
+    /// the head moves. The SDK pins the plane at a fixed 1.4 m unless an app moves it, so an app
+    /// whose content sits at arm's length gains from setting it to whatever the user is looking at.
+    ///
+    /// This is a per-frame setting, not a mode. It holds its last value, so call it every frame, or
+    /// use `addons/godot_xreal/features/xreal_focus_plane.tscn`, which drives it from a forward
+    /// raycast the way the SDK's `FocusManager` does.
+    ///
+    /// `normal` points back at the viewer, so `Vector3(0, 0, 1)`, the Godot camera's backward axis,
+    /// is the default for a plane square to the gaze.
+    #[func]
+    fn set_focus_plane(&self, point: Vector3, normal: Vector3) -> bool {
+        session::shared()
+            .map(|s| {
+                s.set_focus_plane(
+                    [point.x, -point.y, -point.z],
+                    [normal.x, -normal.y, -normal.z],
+                )
+            })
+            .unwrap_or(false)
+    }
+
     /// Select the head-tracking mode applied when the native session **bootstraps**, a startup
     /// selector: `0` is 6DoF, SLAM position and orientation with no drift, the recommended mode; `1`
     /// is 3DoF, IMU orientation only with no position; and `2` is 0DoF.
