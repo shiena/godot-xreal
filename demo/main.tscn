@@ -15,6 +15,7 @@
 [ext_resource type="PackedScene" uid="uid://xrvidrecscn01" path="res://addons/godot_xreal/features/xreal_video_recorder.tscn" id="14_recorder"]
 [ext_resource type="Shader" uid="uid://xrimgmarker01" path="res://demo/xreal_image_marker.gdshader" id="13_marker"]
 [ext_resource type="PackedScene" uid="uid://dcampreviewsc1" path="res://demo/camera_preview.tscn" id="15_preview"]
+[ext_resource type="PackedScene" uid="uid://xrdeskprevsc1" path="res://addons/godot_xreal/xreal_desktop_preview.tscn" id="16_desktop"]
 
 ; Front/back-coloured tracked-image marker (green front / red back via FRONT_FACING) so the
 ; tracked pose's facing is readable. It is assigned to XrealImageTracking's marker_material override.
@@ -59,6 +60,10 @@ audio_state = 2
 
 [node name="XrealVideoRecorder" parent="." instance=ExtResource("14_recorder")]
 audio_state = 2
+
+; Desktop only: the glasses half of the render split has no eye viewports to go to on PC, so this
+; draws it into a second window with a flycam. It frees itself on device.
+[node name="XrealDesktopPreview" parent="." instance=ExtResource("16_desktop")]
 
 [node name="UI" type="CanvasLayer" parent="." unique_id=1039389148]
 

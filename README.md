@@ -160,6 +160,11 @@ missing.
 2. Instance `addons/godot_xreal/xreal_rig.tscn` (an `XrealHeadTracker` with a `Camera3D`
    child) into your scene, or add an `XrealHeadTracker` and parent a `Camera3D` yourself.
 3. On device, the camera follows the wearer's head (6DoF: rotation and position).
+4. On a PC, add `addons/godot_xreal/xreal_desktop_preview.tscn` too. A desktop run has no eye
+   viewports, so it draws the 3D world into a second window you fly with right-drag and WASD, and
+   it frees itself on device. The
+   [addon README](addons/godot_xreal/README.md#previewing-the-glasses-view-on-desktop) lists the
+   rest of the controls.
 
 The bundled `demo/main.tscn` does exactly this with a ring of boxes and an on-screen
 status panel.

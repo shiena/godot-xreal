@@ -114,3 +114,27 @@ XREAL natives are Android arm64 only, so target a Godot Android app on an XREAL 
 the classes load as documented stubs (F1 help works) and everything else is inert, so you can edit
 and run scenes on PC. Gate device-only code on `OS.get_name() == "Android"`, since class presence
 alone is not enough; that is what `XrealShared.is_native_runtime()` does.
+
+### Previewing the glasses view on desktop
+
+On device the phone's root viewport draws your 2D UI and the extension's eye viewports draw the 3D
+world. A PC run has no eye viewports, so the 3D half has nowhere to go, and a full-screen phone UI
+hides whatever the root viewport drew.
+
+Add `addons/godot_xreal/xreal_desktop_preview.tscn` to your scene to get it back. It opens a second
+window onto the same 3D world, and it frees itself on device, so a shipped scene can keep it. Parent
+head-locked content to its `head` node, the desktop stand-in for the `XrealHeadTracker`;
+`XrealShared.find_preview_head(get_tree())` returns it, as `find_head_tracker` returns the real one.
+
+| Input | Action |
+| --- | --- |
+| Right-drag | Look around |
+| WASD / QE | Move (Shift sprints) |
+| R | Put the flycam back at the origin |
+| Tab | Hand the window's mouse and keys to the app, and take them back |
+
+Once the app holds the mouse and keys, the flycam stops reading them and every event goes to the
+`app_input` signal instead, so you can drive something else with the same mouse.
+`flycam_active_changed` reports each switch, and the window title names who has control. The demo
+aims the phone pointer this way, since that pointer has no IMU to follow off device (see
+`_setup_desktop_pointer` in `demo/main.gd`).
