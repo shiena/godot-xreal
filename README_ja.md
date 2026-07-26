@@ -186,7 +186,9 @@ Unity の `XREALImageLibraryBuildProcessor` に相当する処理を、vendoring
 
 ターミナルからは `pwsh scripts/build_image_db.ps1`（既定 `demo/image_tracking/reference.json`）。
 
-参照画像とビルドした `.bin` は git 管理外で、マニフェスト（`reference.json`）はコミット対象です。
+`demo/image_tracking/` の中身はコミットされません。
+マニフェストも参照画像もビルドした `.bin` も git 管理外で、プロジェクトごとに用意します。
+マニフェストは最初の **Add image** で dock が書き出します。
 実行時は `xreal_image_tracking` 機能の `manifest_path` にマニフェストを指定すると、`XrealSystem.init_image_database` で全セットを登録します。
 
 ### FPV 配信の受信アプリ

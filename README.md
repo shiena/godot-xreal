@@ -228,9 +228,10 @@ enabled):
 
 Or from a terminal: `pwsh scripts/build_image_db.ps1` (defaults to `demo/image_tracking/reference.json`).
 
-The reference images and the built `.bin` are git-ignored; the manifest (`reference.json`) is committed.
-At runtime, point the `xreal_image_tracking` feature's `manifest_path` at the manifest, and it registers
-every set through `XrealSystem.init_image_database`.
+Nothing under `demo/image_tracking/` is committed. The manifest, the reference images and the built
+`.bin` are all git-ignored, because each project supplies its own; the dock writes the manifest there
+on the first **Add image**. At runtime, point the `xreal_image_tracking` feature's `manifest_path` at
+the manifest, and it registers every set through `XrealSystem.init_image_database`.
 
 ### FPV streaming: the receiver app
 
