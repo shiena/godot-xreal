@@ -143,7 +143,7 @@ func _process(_delta: float) -> void:
 		# First-frame watchdog: Start… can "succeed" on a wedged camera that then never delivers a
 		# frame (see FIRST_FRAME_TIMEOUT_MS). get_y_texture() stays null until the first frame.
 		if _feed.get_y_texture() == null and Time.get_ticks_msec() - _started_ms > FIRST_FRAME_TIMEOUT_MS:
-			_fail("[xreal-camera] camera started but no frame arrived within %ds: glasses camera wedged (re-plug the USB AND restart the app), camera disabled" % (FIRST_FRAME_TIMEOUT_MS / 1000))
+			_fail("[xreal-camera] camera started but no frame arrived within %ds: glasses camera wedged (re-plug the USB AND restart the app), camera disabled" % (FIRST_FRAME_TIMEOUT_MS / 1000.0))
 			_feed.set_active(false)
 			CameraServer.remove_feed(_feed)
 			_feed = null

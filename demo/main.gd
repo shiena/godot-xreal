@@ -347,10 +347,10 @@ func _show_no_glasses_and_quit() -> void:
 	get_tree().quit()
 
 ## The active image-tracking set changed, so show its name on the phone-menu "Cycle Image" button.
-func _on_image_set_changed(name: String) -> void:
+func _on_image_set_changed(set_name: String) -> void:
 	var ps := get_node_or_null(^"PhoneScreen")
 	if ps and ps.has_method(&"set_button_label"):
-		ps.set_button_label("image_cycle", "Cycle: %s" % name)
+		ps.set_button_label("image_cycle", "Cycle: %s" % set_name)
 
 ## A feature component reported an error through its `error` signal, so show it on the debug
 ## Status label and log it, which keeps the failure visible at the load site instead of buried in
@@ -394,38 +394,38 @@ func _show_error_dialog(text: String) -> void:
 
 ## Push a toggle's on/off state onto the phone-menu controller. It keeps the UI in sync when the
 ## app, not the user, changes it, e.g. after a failed camera start or an unsupported plane mode.
-func _set_controller_toggle(name: String, on: bool) -> void:
+func _set_controller_toggle(control_name: String, on: bool) -> void:
 	var ps := get_node_or_null(^"PhoneScreen")
 	if ps and ps.has_method(&"set_toggle"):
-		ps.set_toggle(name, on)
+		ps.set_toggle(control_name, on)
 
 ## Mark a phone-menu control as mid-switch (inert, labelled "…").
-func _set_controller_busy(name: String, busy: bool) -> void:
+func _set_controller_busy(control_name: String, busy: bool) -> void:
 	var ps := get_node_or_null(^"PhoneScreen")
 	if ps and ps.has_method(&"set_busy"):
-		ps.set_busy(name, busy)
+		ps.set_busy(control_name, busy)
 
 ## A feature component settled on a state: mirror it onto the phone toggle, and end the switch that
 ## was waiting to hear it.
-func _on_feature_active(active: bool, name: String) -> void:
-	_set_controller_toggle(name, active)
-	_end_switch(name)
+func _on_feature_active(active: bool, control_name: String) -> void:
+	_set_controller_toggle(control_name, active)
+	_end_switch(control_name)
 
 ## Take a toggle out of service until its component reports the resulting state. Camera and stream
 ## both take real time to change: the camera only starts once head tracking is live, and streaming
 ## has to finish pairing first. Left tappable, that window let taps stack up into a start/stop/start
 ## churn on hardware that is slow to open and easy to wedge (a camera killed mid-start stays held
 ## until the USB is re-plugged).
-func _begin_switch(name: String) -> void:
-	_switching[name] = Time.get_ticks_msec() + SWITCH_TIMEOUT_MS
-	_set_controller_busy(name, true)
+func _begin_switch(control_name: String) -> void:
+	_switching[control_name] = Time.get_ticks_msec() + SWITCH_TIMEOUT_MS
+	_set_controller_busy(control_name, true)
 
 ## The switch is over, so the control goes back into service. Whether the device supports it at all
 ## is tracked separately by the controller, so this cannot resurrect a capability-disabled control.
-func _end_switch(name: String) -> void:
-	if not _switching.erase(name):
+func _end_switch(control_name: String) -> void:
+	if not _switching.erase(control_name):
 		return  # not switching - an active_changed the app caused rather than the user
-	_set_controller_busy(name, false)
+	_set_controller_busy(control_name, false)
 
 ## Nothing may leave a control dead forever, so give up waiting eventually. Reaching this is a bug
 ## or a silent component path, hence the warning: the toggle is usable again either way.
@@ -433,11 +433,11 @@ func _check_switch_timeouts() -> void:
 	if _switching.is_empty():
 		return
 	var now := Time.get_ticks_msec()
-	for name in _switching.keys():  # keys() copies, so _end_switch may erase while we walk it
-		if now >= int(_switching[name]):
+	for control_name in _switching.keys():  # keys() copies, so _end_switch may erase while we walk it
+		if now >= int(_switching[control_name]):
 			push_warning("[demo] %s never reported a state within %d s - re-enabling its toggle"
-				% [name, SWITCH_TIMEOUT_MS / 1000])
-			_end_switch(name)
+				% [control_name, SWITCH_TIMEOUT_MS / 1000.0])
+			_end_switch(control_name)
 
 ## Grey out (make inert) the phone-menu controls whose capability the device lacks, once the
 ## session is up and the capabilities are known. Each control maps to a native capability query:

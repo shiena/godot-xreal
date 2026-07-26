@@ -528,48 +528,48 @@ func _vibrate(ms: int) -> void:
 ## Programmatically set a toggle's on/off state without emitting its signal, which keeps the UI
 ## in sync when the app changes it, e.g. after a camera start that failed or a plane mode the
 ## device rejected. No-op for unknown names.
-func set_toggle(name: String, on: bool) -> void:
-	if _toggles.has(name):
-		(_controls[name] as Button).set_pressed_no_signal(on)
-		_update_toggle_label(name)
+func set_toggle(control_name: String, on: bool) -> void:
+	if _toggles.has(control_name):
+		(_controls[control_name] as Button).set_pressed_no_signal(on)
+		_update_toggle_label(control_name)
 
 ## Enable or disable a button or toggle by name. A disabled Button is drawn greyed and inert, so
 ## taps do nothing. Use it to reflect a capability the device lacks (no RGB camera, no plane
 ## detection, and so on).
-func set_disabled(name: String, disabled: bool) -> void:
-	if not _controls.has(name):
+func set_disabled(control_name: String, disabled: bool) -> void:
+	if not _controls.has(control_name):
 		return
 	if disabled:
-		_unsupported[name] = true
+		_unsupported[control_name] = true
 	else:
-		_unsupported.erase(name)
-	_apply_inert(name)
+		_unsupported.erase(control_name)
+	_apply_inert(control_name)
 
 ## Mark a toggle as mid-switch: inert like a disabled one, but labelled "…" instead of "-". The
 ## two mean different things to whoever is looking at the phone: "-" says this device does not
 ## have the feature at all, "…" says it is changing and will answer shortly. Kept separate from
 ## set_disabled so a busy control cannot be handed back to a device that never supported it, or
 ## the other way round.
-func set_busy(name: String, busy: bool) -> void:
-	if not _controls.has(name):
+func set_busy(control_name: String, busy: bool) -> void:
+	if not _controls.has(control_name):
 		return
 	if busy:
-		_busy[name] = true
+		_busy[control_name] = true
 	else:
-		_busy.erase(name)
-	_apply_inert(name)
+		_busy.erase(control_name)
+	_apply_inert(control_name)
 
 ## A control is inert while either reason holds.
-func _apply_inert(name: String) -> void:
-	(_controls[name] as Button).disabled = _unsupported.has(name) or _busy.has(name)
-	if _toggles.has(name):
-		_update_toggle_label(name)
+func _apply_inert(control_name: String) -> void:
+	(_controls[control_name] as Button).disabled = _unsupported.has(control_name) or _busy.has(control_name)
+	if _toggles.has(control_name):
+		_update_toggle_label(control_name)
 
 ## Override a momentary button's label (e.g. show the active image set on the "Cycle Image" button).
 ## Pass "" to clear the override and restore the static label.
-func set_button_label(name: String, text: String) -> void:
-	if _buttons.has(name) and _controls.has(name):
-		(_controls[name] as Button).text = _buttons[name] if text.is_empty() else text
+func set_button_label(control_name: String, text: String) -> void:
+	if _buttons.has(control_name) and _controls.has(control_name):
+		(_controls[control_name] as Button).text = _buttons[control_name] if text.is_empty() else text
 
 # ---------------------------------------------------------------- touchpad widget ---
 

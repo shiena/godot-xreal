@@ -107,14 +107,14 @@ func _load_sets() -> bool:
 
 ## Build and register one set's database, returning its handle; 0 means it failed.
 func _init_set(s: Dictionary) -> int:
-	var name := str(s.get("name", "?"))
+	var set_name := str(s.get("name", "?"))
 	var blob_path := manifest_path.get_base_dir().path_join(str(s.get("blob", "")))
 	if not FileAccess.file_exists(blob_path):
-		_fail("[xreal-image] set '%s' blob missing: %s, so build it (editor dock or build_image_db)" % [name, blob_path])
+		_fail("[xreal-image] set '%s' blob missing: %s, so build it (editor dock or build_image_db)" % [set_name, blob_path])
 		return 0
 	var bf := FileAccess.open(blob_path, FileAccess.READ)
 	if bf == null:
-		_fail("[xreal-image] set '%s' blob open failed: %s (err=%d)" % [name, blob_path, FileAccess.get_open_error()])
+		_fail("[xreal-image] set '%s' blob open failed: %s (err=%d)" % [set_name, blob_path, FileAccess.get_open_error()])
 		return 0
 	var blob := bf.get_buffer(bf.get_length())
 	bf.close()
@@ -129,7 +129,7 @@ func _init_set(s: Dictionary) -> int:
 		sizes.append(Vector2(w, h))
 	var handle: int = _system.init_image_database(blob, guids, sizes)
 	if handle == 0:
-		_fail("[xreal-image] set '%s' init_image_database failed (needs 6DoF + nr_plugins.json + backend)" % name)
+		_fail("[xreal-image] set '%s' init_image_database failed (needs 6DoF + nr_plugins.json + backend)" % set_name)
 	return handle
 
 ## Activate a set (switch the tracking DB) and clear the previous set's markers.

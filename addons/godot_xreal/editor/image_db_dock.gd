@@ -283,9 +283,9 @@ func _reorder_button(up: bool, tip: String) -> Button:
 	var b := Button.new()
 	b.tooltip_text = tip
 	var icon_name := &"ArrowUp" if up else &"ArrowDown"
-	var theme := EditorInterface.get_editor_theme()
-	if theme and theme.has_icon(icon_name, &"EditorIcons"):
-		b.icon = theme.get_icon(icon_name, &"EditorIcons")
+	var editor_theme := EditorInterface.get_editor_theme()
+	if editor_theme and editor_theme.has_icon(icon_name, &"EditorIcons"):
+		b.icon = editor_theme.get_icon(icon_name, &"EditorIcons")
 	else:
 		b.text = "^" if up else "v"
 	b.pressed.connect(func(): _move_set(-1 if up else 1))
@@ -382,8 +382,8 @@ func _gen_guid() -> String:
 # --- build ---------------------------------------------------------------------------------------
 
 func _tool_path() -> String:
-	var name := "trackableImageTools.exe" if OS.get_name() == "Windows" else "trackableImageTools"
-	return ProjectSettings.globalize_path("res://addons/godot_xreal/tools/".path_join(name))
+	var tool_name := "trackableImageTools.exe" if OS.get_name() == "Windows" else "trackableImageTools"
+	return ProjectSettings.globalize_path("res://addons/godot_xreal/tools/".path_join(tool_name))
 
 func _on_build_pressed() -> void:
 	var tool_path := _tool_path()
@@ -421,11 +421,11 @@ func _on_build_pressed() -> void:
 	_set_status("Building …")
 	var code := OS.execute(tool_path, ["--images_config_file", list_path, "--save_path", blob_abs], output, true)
 	DirAccess.remove_absolute(list_path)
-	var log := "\n".join(output)
+	var build_log := "\n".join(output)
 	# Per-image scores: one "Detection score:D, Tracking score:T, Total Score:X" line per image, in
 	# config and image order. Parse all three, like Unity's XREALImageLibraryBuildProcessor.
 	var scores: Array = []  # [{det, track, total}]
-	for line in log.split("\n"):
+	for line in build_log.split("\n"):
 		if line.contains("Total Score:"):
 			scores.append({
 				"det": line.get_slice("Detection score:", 1).to_float(),
@@ -445,7 +445,7 @@ func _on_build_pressed() -> void:
 		summary += "  %s: total %.1f (det %.1f / track %.1f)%s\n" % [nm, s.total, s.det, s.track, " ✗ too low" if reject else ""]
 	var head := "Built: %s (set '%s' / %d image(s))" % [cur.get("blob"), cur.get("name", "?"), images.size()]
 	if not built:
-		_set_status("[color=red]Build failed (exit %d)[/color]\n%s" % [code, log.left(600)])
+		_set_status("[color=red]Build failed (exit %d)[/color]\n%s" % [code, build_log.left(600)])
 	elif any_reject:
 		var p := ProjectSettings.localize_path(blob_abs)
 		DirAccess.remove_absolute(p if FileAccess.file_exists(p) else blob_abs)

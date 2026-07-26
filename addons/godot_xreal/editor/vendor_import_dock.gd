@@ -102,7 +102,7 @@ func _on_selected(path: String) -> void:
 	call_deferred("_import", path)
 
 func _import(path: String) -> void:
-	var log := PackedStringArray()
+	var log_lines := PackedStringArray()
 	var temp := ""
 	var pkg := ""
 
@@ -118,10 +118,10 @@ func _import(path: String) -> void:
 			return
 		temp = OS.get_cache_dir().path_join("xreal_pkg_%d" % Time.get_ticks_usec())
 		DirAccess.make_dir_recursive_absolute(temp)
-		var terr := _extract(path, temp, log)
+		var terr := _extract(path, temp, log_lines)
 		if terr != OK:
 			_rmtree(temp)
-			_fail("Extraction failed:\n%s" % "\n".join(log))
+			_fail("Extraction failed:\n%s" % "\n".join(log_lines))
 			return
 		pkg = _find_package_root(temp)
 		if pkg.is_empty():
@@ -155,14 +155,14 @@ func _import(path: String) -> void:
 
 	# 1) the core .so and libmedia_codec.so, going to jniLibs/arm64-v8a
 	for so in CORE_SO:
-		_copy(src_abi.path_join(so), jni.path_join(so), "so   " + so, log, missing)
-	_copy(pkg.path_join(MEDIA_CODEC_REL), jni.path_join("libmedia_codec.so"), "so   libmedia_codec.so", log, missing)
+		_copy(src_abi.path_join(so), jni.path_join(so), "so   " + so, log_lines, missing)
+	_copy(pkg.path_join(MEDIA_CODEC_REL), jni.path_join("libmedia_codec.so"), "so   libmedia_codec.so", log_lines, missing)
 
 	# 2) the 7 .aar, going to addons/godot_xreal/android
 	for aar in AARS:
-		_copy(src_android.path_join(aar), addon.path_join(aar), "aar  " + aar, log, missing)
+		_copy(src_android.path_join(aar), addon.path_join(aar), "aar  " + aar, log_lines, missing)
 	# nr_plugins.json, the NR perception manifest, going to addons/godot_xreal/android
-	_copy(pkg.path_join(NR_PLUGINS_REL), addon.path_join("nr_plugins.json"), "json nr_plugins.json", log, missing)
+	_copy(pkg.path_join(NR_PLUGINS_REL), addon.path_join("nr_plugins.json"), "json nr_plugins.json", log_lines, missing)
 
 	# 3) the host image-DB tool, going to addons/godot_xreal/tools. It is OS-specific, and Linux has
 	# no prebuilt tool.
@@ -176,8 +176,8 @@ func _import(path: String) -> void:
 			tool_rel = "Tools~/MacOS/trackableImageTools"
 			tool_dst = tools.path_join("trackableImageTools")
 	if tool_rel.is_empty():
-		log.append("skip trackableImageTools (no tool bundled for this OS)")
-	elif _copy(pkg.path_join(tool_rel), tool_dst, "tool " + tool_dst.get_file(), log, missing) and OS.get_name() != "Windows":
+		log_lines.append("skip trackableImageTools (no tool bundled for this OS)")
+	elif _copy(pkg.path_join(tool_rel), tool_dst, "tool " + tool_dst.get_file(), log_lines, missing) and OS.get_name() != "Windows":
 		OS.execute("chmod", ["+x", tool_dst])  # copy drops the exec bit on Unix
 
 	if temp:
@@ -185,7 +185,7 @@ func _import(path: String) -> void:
 	EditorInterface.get_resource_filesystem().scan()
 
 	# Report.
-	var body := "\n".join(log)
+	var body := "\n".join(log_lines)
 	if missing.is_empty():
 		_status.text = "[color=green]Done[/color]: everything staged.\n[code]%s[/code]\n[color=gray]note: the addon's own libgodot_xreal.so comes separately (Rust build or prebuilt release)[/color]" % body
 	else:
@@ -231,7 +231,7 @@ func _version_lt(a: String, b: String) -> bool:
 
 ## Extract a .tar.gz into `dest` with the system tar: bsdtar on Windows 10 and later, the native
 ## tar on macOS and Linux.
-func _extract(archive: String, dest: String, log: PackedStringArray) -> int:
+func _extract(archive: String, dest: String, log_lines: PackedStringArray) -> int:
 	var tar := "tar"
 	if OS.get_name() == "Windows":
 		# Use System32\tar.exe explicitly, because a GNU tar on PATH reads the `C:` in a Windows path as a
@@ -245,7 +245,7 @@ func _extract(archive: String, dest: String, log: PackedStringArray) -> int:
 	var out := []
 	var code := OS.execute(tar, ["-xzf", archive, "-C", dest], out, true)
 	if code != 0:
-		log.append("tar exit %d: %s" % [code, "\n".join(out)])
+		log_lines.append("tar exit %d: %s" % [code, "\n".join(out)])
 	return OK if code == 0 else FAILED
 
 ## Return the package root under `base`: `base` itself when it holds Runtime/Plugins/Android,
@@ -265,19 +265,19 @@ func _find_package_root(base: String) -> String:
 
 ## Copy one file when it is present, appending a log line, or record it as missing. It returns
 ## whether it copied.
-func _copy(src: String, dst: String, label: String, log: PackedStringArray, missing) -> bool:
+func _copy(src: String, dst: String, label: String, log_lines: PackedStringArray, missing) -> bool:
 	if not FileAccess.file_exists(src):
-		log.append("MISS " + label.strip_edges())
+		log_lines.append("MISS " + label.strip_edges())
 		if missing is PackedStringArray or missing is Array:
 			missing.append(label.strip_edges())
 		return false
 	var err := DirAccess.copy_absolute(src, dst)
 	if err != OK:
-		log.append("FAIL " + label.strip_edges() + " (err %d)" % err)
+		log_lines.append("FAIL " + label.strip_edges() + " (err %d)" % err)
 		if missing is PackedStringArray or missing is Array:
 			missing.append(label.strip_edges())
 		return false
-	log.append(label)
+	log_lines.append(label)
 	return true
 
 ## Recursively delete a directory, which Godot has no built-in call for.

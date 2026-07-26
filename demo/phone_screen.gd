@@ -64,17 +64,17 @@ func _ready() -> void:
 	c.exit_confirmed.connect(exit_confirmed.emit)
 
 ## Forward a programmatic toggle-state change to the touch controller (see its set_toggle).
-func set_toggle(name: String, on: bool) -> void:
-	($TouchController as Control).set_toggle(name, on)
+func set_toggle(control_name: String, on: bool) -> void:
+	($TouchController as Control).set_toggle(control_name, on)
 
 ## Forward an enable/disable to the touch controller (greys out unsupported controls; see set_disabled).
-func set_disabled(name: String, disabled: bool) -> void:
-	($TouchController as Control).set_disabled(name, disabled)
+func set_disabled(control_name: String, disabled: bool) -> void:
+	($TouchController as Control).set_disabled(control_name, disabled)
 
 ## Forward a mid-switch marker to the touch controller (inert while a toggle is changing; see set_busy).
-func set_busy(name: String, busy: bool) -> void:
-	($TouchController as Control).set_busy(name, busy)
+func set_busy(control_name: String, busy: bool) -> void:
+	($TouchController as Control).set_busy(control_name, busy)
 
 ## Forward a runtime button-label override to the touch controller (see set_button_label).
-func set_button_label(name: String, text: String) -> void:
-	($TouchController as Control).set_button_label(name, text)
+func set_button_label(control_name: String, text: String) -> void:
+	($TouchController as Control).set_button_label(control_name, text)

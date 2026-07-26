@@ -94,8 +94,8 @@ func update_imu(accel: Vector3, gyro: Vector3, dt: float, head_transform: Transf
 	# Relative rotation from the recenter pose, re-expressed in Godot's frame. Yaw came out correct
 	# but pitch inverted, so flip the pitch (X euler) and keep yaw and roll.
 	var rel := _ref * _q
-	var remap := Basis(Vector3(1, 0, 0), Vector3(0, 0, -1), Vector3(0, 1, 0))
-	var e := (remap * Basis(rel) * remap.transposed()).get_euler()
+	var to_godot := Basis(Vector3(1, 0, 0), Vector3(0, 0, -1), Vector3(0, 1, 0))
+	var e := (to_godot * Basis(rel) * to_godot.transposed()).get_euler()
 	var aim_basis := Basis.from_euler(Vector3(-e.x, e.y, e.z))
 	# Origin at a "hand" offset from the head, not from the eye or the camera.
 	var origin := head_transform.origin + head_transform.basis * hand_offset
