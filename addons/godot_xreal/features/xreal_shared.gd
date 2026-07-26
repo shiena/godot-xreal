@@ -174,6 +174,10 @@ static func eye_offsets(system: Object) -> Array:
 		var pose: PackedFloat32Array = system.get_device_pose_from_head(eye)
 		if pose.size() == 7:
 			out[eye] = Vector3(pose[0], -pose[1], -pose[2])
+	# Logged like the RGB camera geometry beside it: an all-zero pair means the geometry API answered
+	# nothing, which is the difference between a real stereo capture and two identical views.
+	print("[xreal] eye offsets L=%s R=%s (separation %.1f mm)"
+		% [out[0], out[1], ((out[1] as Vector3) - (out[0] as Vector3)).length() * 1000.0])
 	return out
 
 ## Drive a Camera3D from the glasses RGB camera's real geometry, so rendered holograms line up with
