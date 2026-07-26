@@ -120,7 +120,7 @@ dependencies = [
 
 [[package]]
 name = "godot_xreal"
-version = "1.0.9"
+version = "1.0.10"
 dependencies = [
  "godot",
  "jni",
