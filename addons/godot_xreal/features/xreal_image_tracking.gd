@@ -1,18 +1,20 @@
 extends Node3D
 ## Image tracking as a drop-in feature component (Air 2 Ultra). On first enable it loads EVERY set
-## in the manifest JSON (each set = one blob built by scripts/build_image_db.* / the editor dock),
-## builds a database per set (XrealSystem.init_image_database), activates the first, and overlays a
-## world-locked quad on each tracked image. cycle_set() switches the active set. Point `manifest_path`
-## at a reference.json (see demo/image_tracking/reference.json for the schema): top-level `sets[]`,
-## each {name, blob, images:[{guid, width, height?}]} with blob paths relative to the manifest.
+## in the manifest JSON, where one set is one blob built by scripts/build_image_db.* or by the
+## editor dock. It builds a database per set with XrealSystem.init_image_database, activates the
+## first, and overlays a world-locked quad on each tracked image. cycle_set() switches the active
+## set. Point `manifest_path` at a reference.json; demo/image_tracking/reference.json shows the
+## schema: a top-level `sets[]`, each {name, blob, images:[{guid, width, height?}]}, with blob
+## paths relative to the manifest.
 ##
-## World-locked: add this component under a world-fixed node (e.g. the scene root, NOT the head
-## rig) so a marker sits on the real image as the head moves. OFF hides the markers but keeps the
-## databases active so ON restores them.
+## World-locked: add this component under a world-fixed node, such as the scene root and NOT the
+## head rig, so a marker sits on the real image as the head moves. Switching OFF hides the markers
+## but keeps the databases active, so switching ON restores them.
 
-## Emitted whenever an operation fails or the feature is unavailable (unbuilt/missing blob, DB init
-## failure, manifest not set…), so the load site can react — show UI, log, flip a toggle. Carries
-## the same human-readable text also pushed as a warning.
+## Emitted whenever an operation fails or the feature is unavailable, whether from an unbuilt or
+## missing blob, a DB init failure, or an unset manifest, so the load site can react by showing UI,
+## logging, or flipping a toggle. It carries the same human-readable text that is also pushed as a
+## warning.
 signal error(message: String)
 
 ## Emitted with the active set's name when the active tracking set changes (on load and on
@@ -21,11 +23,12 @@ signal set_changed(name: String)
 
 ## Enable at boot (applied in _ready). At runtime call set_enabled().
 @export var enabled := false
-## The reference-image manifest (JSON). Required — set_enabled(true) refuses while empty.
+## The reference-image manifest (JSON). It is required: set_enabled(true) refuses while it is
+## empty.
 @export_file("*.json") var manifest_path := ""
 ## Optional override for the tracked-image overlay material. Each marker gets its own duplicate.
-## A ShaderMaterial declaring a `tracking` bool uniform receives the per-marker tracking state
-## (replacing the default material's green/gray albedo tint).
+## A ShaderMaterial declaring a `tracking` bool uniform receives the per-marker tracking state,
+## which replaces the default material's green and gray albedo tint.
 @export var marker_material: Material
 
 var _system: Object                 # XrealSystem (this feature's own stateless instance)
@@ -33,7 +36,7 @@ var _ar: Object                     # the shared XrealAR poller
 var _connected := false
 var _initialized := false           # sets loaded + registered once
 var _enabled := false
-var _sets := []                     # [{name: String, handle: int}] — one registered DB per set
+var _sets := []                     # [{name: String, handle: int}], one registered DB per set
 var _active_set := -1               # index into _sets of the currently-active set
 var _markers := {}                  # image id(String) -> MeshInstance3D
 
@@ -42,8 +45,8 @@ func _ready() -> void:
 	if enabled:
 		enabled = set_enabled(true)
 
-## Toggle image-tracking mode. Returns the resulting state (false if the ABI / manifest / blobs are
-## unavailable, so a UI toggle can flip itself back off).
+## Toggle image-tracking mode and return the resulting state. It returns false when the ABI, the
+## manifest or the blobs are unavailable, so a UI toggle can flip itself back off.
 func set_enabled(on: bool) -> bool:
 	if not _system or not _system.has_method(&"is_image_tracking_available") or not _system.is_image_tracking_available():
 		enabled = false
@@ -52,7 +55,7 @@ func set_enabled(on: bool) -> bool:
 		return false
 	if on:
 		if manifest_path.is_empty():
-			_fail("[xreal-image] manifest_path not set — point it at a reference.json")
+			_fail("[xreal-image] manifest_path not set, so point it at a reference.json")
 			enabled = false
 			return false
 		_ensure_ar()
@@ -71,8 +74,8 @@ func set_enabled(on: bool) -> bool:
 	enabled = _enabled
 	return _enabled
 
-## Resolve the shared XrealAR and connect its image signals once — BEFORE the stream switch goes
-## on, so no change event is ever polled without a listener.
+## Resolve the shared XrealAR and connect its image signals once, BEFORE the stream switch goes on,
+## so no change event is ever polled without a listener.
 func _ensure_ar() -> void:
 	if _connected:
 		return
@@ -96,18 +99,18 @@ func _load_sets() -> bool:
 		if handle != 0:
 			_sets.append({"name": str(s.get("name", "?")), "handle": handle})
 	if _sets.is_empty():
-		_fail("[xreal-image] no image sets loaded (build the blobs — editor dock / build_image_db)")
+		_fail("[xreal-image] no image sets loaded (build the blobs with the editor dock or build_image_db)")
 		return false
 	_activate(0)
 	print("[xreal-image] %d set(s) loaded; active='%s'" % [_sets.size(), _sets[0].name])
 	return true
 
-## Build + register one set's database. Returns its handle (0 on failure).
+## Build and register one set's database, returning its handle; 0 means it failed.
 func _init_set(s: Dictionary) -> int:
 	var name := str(s.get("name", "?"))
 	var blob_path := manifest_path.get_base_dir().path_join(str(s.get("blob", "")))
 	if not FileAccess.file_exists(blob_path):
-		_fail("[xreal-image] set '%s' blob missing: %s — build it (editor dock / build_image_db)" % [name, blob_path])
+		_fail("[xreal-image] set '%s' blob missing: %s, so build it (editor dock or build_image_db)" % [name, blob_path])
 		return 0
 	var bf := FileAccess.open(blob_path, FileAccess.READ)
 	if bf == null:
@@ -119,7 +122,8 @@ func _init_set(s: Dictionary) -> int:
 	var sizes := PackedVector2Array()
 	for img in s.get("images", []):
 		guids.append(str(img.get("guid", "")))
-		# Physical size X/Y (metres). Height defaults to width for back-compat with width-only manifests.
+		# Physical size X and Y in metres. Height defaults to width, for back-compat with width-only
+		# manifests.
 		var w := float(img.get("width", 0.1))
 		var h := float(img.get("height", w))
 		sizes.append(Vector2(w, h))
@@ -138,7 +142,7 @@ func _activate(index: int) -> void:
 	set_changed.emit(str(_sets[index].name))
 	print("[xreal-image] active set -> '%s' (handle=%d)" % [_sets[index].name, _sets[index].handle])
 
-## Cycle to the next set. No-op with 0/1 set.
+## Cycle to the next set. It does nothing when there are fewer than two sets.
 func cycle_set() -> void:
 	if _sets.size() <= 1:
 		return
@@ -163,7 +167,7 @@ func _on_image_added(im: Dictionary) -> void:
 	_update_marker(im)
 	print("[xreal-image] detected %s" % str(im.get("source_image", "")))
 
-## XrealAR signal: a tracked image's pose/state updated.
+## XrealAR signal: a tracked image's pose or state updated.
 func _on_image_updated(im: Dictionary) -> void:
 	if _enabled:
 		_update_marker(im)
@@ -183,11 +187,11 @@ func _update_marker(im: Dictionary) -> void:
 		add_child(mi)
 		_markers[id] = mi
 	# The SDK reports the tracked-image pose with its normal along a different axis than Godot's
-	# QuadMesh, so the raw pose lays the quad flat. Post-multiply -90° about local X to stand it up
-	# coplanar with the image: this makes it a Godot-friendly frame — device-verified with the
-	# marker cues, +X (yellow) → the image's right and +Y (white) → up, a proper (non-mirrored)
-	# basis, so child content attaches with the expected orientation. (Which face reads green/red is
-	# just the QuadMesh winding — cosmetic, not an orientation error.)
+	# QuadMesh, so the raw pose lays the quad flat. Post-multiply -90 degrees about local X to stand
+	# it up coplanar with the image, which yields a Godot-friendly frame. The marker cues verified it
+	# on device: +X (yellow) points to the image's right and +Y (white) points up, a proper,
+	# non-mirrored basis, so child content attaches with the expected orientation. Which face reads
+	# green or red is just the QuadMesh winding, cosmetic rather than an orientation error.
 	var t: Transform3D = im.get("transform", Transform3D.IDENTITY)
 	mi.transform = t * Transform3D(Basis(Vector3(1.0, 0.0, 0.0), -PI / 2.0), Vector3.ZERO)
 	var sz: Vector2 = im.get("size", Vector2(0.1, 0.1))
@@ -196,8 +200,9 @@ func _update_marker(im: Dictionary) -> void:
 		qm.size = sz
 	_tint_marker(mi, int(im.get("tracking_state", 0)) == 2)
 
-## Tracking-state tint. Default material: green while tracking, gray when limited/not tracking.
-## A custom `marker_material` (ShaderMaterial) gets the state as its `tracking` uniform instead.
+## Tracking-state tint. The default material is green while tracking and gray when limited or not
+## tracking. A custom `marker_material` (ShaderMaterial) gets the state as its `tracking` uniform
+## instead.
 func _tint_marker(mi: MeshInstance3D, tracking: bool) -> void:
 	var mat := mi.material_override
 	if mat is StandardMaterial3D:
@@ -205,7 +210,7 @@ func _tint_marker(mi: MeshInstance3D, tracking: bool) -> void:
 	elif mat is ShaderMaterial:
 		mat.set_shader_parameter(&"tracking", tracking)
 
-## A translucent quad sized to the tracked image (updated per frame), unshaded + double-sided.
+## A translucent quad sized to the tracked image and updated per frame, unshaded and double-sided.
 func _make_marker() -> MeshInstance3D:
 	var mi := MeshInstance3D.new()
 	var q := QuadMesh.new()
@@ -234,7 +239,7 @@ func _clear_markers() -> void:
 	_markers.clear()
 
 func _exit_tree() -> void:
-	# Release the shared stream switch, then deactivate + free every registered database.
+	# Release the shared stream switch, then deactivate and free every registered database.
 	if _enabled and _ar and is_instance_valid(_ar):
 		_ar.set(&"images", false)
 	if _system and not _sets.is_empty():
@@ -243,7 +248,8 @@ func _exit_tree() -> void:
 			_system.release_image_database(s.handle)
 		_sets.clear()
 
-## Push a warning AND emit `error` so the load site can detect the failure (not just see the log).
+## Push a warning AND emit `error`, so the load site can detect the failure instead of only seeing
+## it in the log.
 func _fail(msg: String) -> void:
 	push_warning(msg)
 	error.emit(msg)

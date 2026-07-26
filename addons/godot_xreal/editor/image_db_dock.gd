@@ -1,24 +1,26 @@
 @tool
 extends VBoxContainer
-## Editor dock: builds the image-tracking reference-image DB blob (the Godot analog of Unity's
-## XREALImageLibraryBuildProcessor). Manages a manifest of reference images (image + physical width +
-## a generated guid), then runs the vendored trackableImageTools CLI to compile the .bin the runtime
-## loads via XrealSystem.init_image_database. See docs/plans/ar-features-plan.md §3.
+## Editor dock: builds the image-tracking reference-image DB blob, the Godot analog of Unity's
+## XREALImageLibraryBuildProcessor. It manages a manifest of reference images, each an image with a
+## physical width and a generated guid, then runs the vendored trackableImageTools CLI to compile
+## the .bin that the runtime loads through XrealSystem.init_image_database. See
+## docs/plans/ar-features-plan.md section 3.
 ##
-## The images (.jpg/.png) and the built .bin are gitignored (SDK-derived / generated); the manifest
-## (reference.json) is committed. trackableImageTools must be vendored first
-## (scripts/vendor_xreal_libs.* → addons/godot_xreal/tools/).
+## The images (.jpg and .png) and the built .bin are gitignored, being SDK-derived or generated,
+## while the manifest (reference.json) is committed. trackableImageTools has to be vendored first,
+## by scripts/vendor_xreal_libs.* into addons/godot_xreal/tools/.
 
 const DEFAULT_MANIFEST := "res://demo/image_tracking/reference.json"
-## Max reference images per set (= per tracking database). The XREAL SDK caps a library at 5
-## unique reference images; adding more fails to build / can crash the runtime loader.
+## Maximum reference images per set, which means per tracking database. The XREAL SDK caps a
+## library at 5 unique reference images, and adding more fails the build or crashes the runtime
+## loader.
 const MAX_IMAGES_PER_SET := 5
-## trackableImageTools quality gate (per image: Detection / Tracking / Total, each 0-100). The
-## criterion is the SDK's own low-quality rule (Unity's XREALImageLibraryBuildProcessor uses
-## detection<20 || tracking<20 || total<50 = "insufficient feature points / high self-similarity"),
-## but where Unity only *warns*, we REJECT: the blob is deleted and the build fails, so a
-## poorly-tracking / crash-prone database is never registered. (Device-observed: a low-scoring
-## image crashed this device's Nebula image-DB loader.)
+## trackableImageTools quality gate, scoring each image on Detection, Tracking and Total, all
+## 0-100. The criterion is the SDK's own low-quality rule: Unity's
+## XREALImageLibraryBuildProcessor treats detection<20, tracking<20 or total<50 as insufficient
+## feature points or high self-similarity. Where Unity only *warns*, we REJECT: the blob is deleted
+## and the build fails, so a poorly-tracking, crash-prone database is never registered. Observed on
+## device: a low-scoring image crashed this device's Nebula image-DB loader.
 const SCORE_MIN_DET := 20.0
 const SCORE_MIN_TRACK := 20.0
 const SCORE_MIN_TOTAL := 50.0
@@ -54,7 +56,7 @@ func _build_ui() -> void:
 	mrow.add_child(_manifest_edit)
 	add_child(mrow)
 
-	# Set selector + add/remove (each set = one tracking DB / blob).
+	# Set selector, plus add and remove. Each set is one tracking DB, and one blob.
 	var srow := HBoxContainer.new()
 	var slabel := Label.new()
 	slabel.text = "Set:"
@@ -63,9 +65,10 @@ func _build_ui() -> void:
 	_set_selector.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_set_selector.item_selected.connect(func(i): _current_set = i; _refresh_list())
 	srow.add_child(_set_selector)
-	# Reorder the current set within the manifest (the runtime activates sets[0] first and cycles in
-	# manifest order, so order is meaningful). Use the editor's built-in ArrowUp/ArrowDown icons so
-	# no glyph-coverage issues (▲/▼ aren't guaranteed in the editor's non-CJK UI font).
+	# Reorder the current set within the manifest. Order is meaningful, because the runtime activates
+	# sets[0] first and cycles in manifest order. Use the editor's built-in ArrowUp and ArrowDown
+	# icons to sidestep glyph coverage, since the editor's non-CJK UI font does not guarantee the
+	# triangle arrows.
 	srow.add_child(_reorder_button(true, "Move set up (earlier)"))
 	srow.add_child(_reorder_button(false, "Move set down (later)"))
 	var add_set := Button.new()
@@ -78,7 +81,8 @@ func _build_ui() -> void:
 	srow.add_child(rm_set)
 	add_child(srow)
 
-	# Rename the current set (its `name` in the manifest, i.e. the tracking-set label the runtime cycles).
+	# Rename the current set, meaning its `name` in the manifest, the tracking-set label the runtime
+	# cycles through.
 	var nrow := HBoxContainer.new()
 	var nlabel := Label.new()
 	nlabel.text = "Set name:"
@@ -93,9 +97,9 @@ func _build_ui() -> void:
 
 	var scroll := ScrollContainer.new()
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	# Floor only (~2 rows) — EXPAND_FILL takes whatever height the dock really has. A dock slot is a
-	# TabContainer whose minimum is the max over *all* its tabs, so a tall minimum here would push the
-	# dock below it (FileSystem) out of view.
+	# A floor only, about 2 rows, since EXPAND_FILL takes whatever height the dock really has. A dock
+	# slot is a TabContainer whose minimum is the maximum over *all* its tabs, so a tall minimum here
+	# would push the dock below it, FileSystem, out of view.
 	scroll.custom_minimum_size = Vector2(0, 64)
 	_list = VBoxContainer.new()
 	_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -114,11 +118,11 @@ func _build_ui() -> void:
 	add_child(buttons)
 
 	_status = RichTextLabel.new()
-	# Floor only, and deliberately no fit_content: fit_content makes the minimum height the *content*
-	# height measured at the current width, and a dock tab that has never been active was never laid
-	# out (~17px wide), so the build summary asks for thousands of px — which the editor's dock slot
-	# honours for hidden tabs, pushing the dock below it (FileSystem) off-screen. It shares the
-	# leftover height with the image list instead (half its share) and scrolls internally.
+	# A floor only, and deliberately no fit_content: fit_content makes the minimum height the
+	# *content* height measured at the current width, and a dock tab that has never been active was
+	# never laid out, leaving it about 17 px wide, so the build summary asks for thousands of px. The
+	# editor honours that for hidden tabs, pushing the dock below it, FileSystem, off-screen. It
+	# shares the leftover height with the image list instead, taking half, and scrolls internally.
 	_status.custom_minimum_size = Vector2(0, 48)
 	_status.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	_status.size_flags_stretch_ratio = 0.5
@@ -140,7 +144,8 @@ func _manifest_path() -> String:
 func _manifest_dir() -> String:
 	return _manifest_path().get_base_dir()
 
-## Load the manifest as a `{ sets: [...] }` dict (normalizing a legacy `{ blob, images }` into one set).
+## Load the manifest as a `{ sets: [...] }` dict, normalizing a legacy `{ blob, images }` into one
+## set.
 func _load_manifest() -> Dictionary:
 	var path := _manifest_path()
 	var data = null
@@ -157,7 +162,7 @@ func _load_manifest() -> Dictionary:
 			data = {"sets": []}
 	return data
 
-## The current set dict (creating a default one if the manifest has none).
+## The current set dict, creating a default one when the manifest has none.
 func _cur_set(data: Dictionary) -> Dictionary:
 	var sets: Array = data["sets"]
 	if sets.is_empty():
@@ -201,7 +206,7 @@ func _refresh_list() -> void:
 		_list.add_child(_make_row(i, images[i]))
 	if images.is_empty():
 		var empty := Label.new()
-		empty.text = "(No images — use \"Add image\".)"
+		empty.text = "(No images. Use \"Add image\".)"
 		empty.modulate = Color(1, 1, 1, 0.6)
 		_list.add_child(empty)
 
@@ -213,8 +218,8 @@ func _make_row(index: int, img: Dictionary) -> Control:
 	name_label.clip_text = true
 	row.add_child(name_label)
 
-	# Physical size X / Y in metres — the per-image size passed to init_image_database at runtime
-	# (ManagedReferenceImage.size). Height defaults to width for back-compat with width-only manifests.
+	# Physical size X and Y in metres, the per-image size passed to init_image_database at runtime as
+	# ManagedReferenceImage.size. Height defaults to width, for back-compat with width-only manifests.
 	var w := float(img.get("width", 0.2))
 	var h := float(img.get("height", w))
 	row.add_child(_size_field("X (m):", w, func(v): _set_image_size(index, false, v)))
@@ -226,7 +231,8 @@ func _make_row(index: int, img: Dictionary) -> Control:
 	row.add_child(rm)
 	return row
 
-## A "<label> [SpinBox]" metres pair for a physical-size field; calls `on_changed(value)` on edit.
+## A "<label> [SpinBox]" metres pair for a physical-size field. It calls `on_changed(value)` on
+## edit.
 func _size_field(label: String, value: float, on_changed: Callable) -> Control:
 	var box := HBoxContainer.new()
 	var l := Label.new()
@@ -241,7 +247,8 @@ func _size_field(label: String, value: float, on_changed: Callable) -> Control:
 	box.add_child(sb)
 	return box
 
-## Update one image's physical width (`is_y=false`) or height (`is_y=true`) in the current set.
+## Update one image's physical width, with `is_y=false`, or height, with `is_y=true`, in the
+## current set.
 func _set_image_size(index: int, is_y: bool, v: float) -> void:
 	var data := _load_manifest()
 	var images: Array = _cur_set(data).get("images", [])
@@ -270,8 +277,8 @@ func _on_add_set() -> void:
 	_refresh_list()
 	_set_status("Added set: set%d" % n)
 
-## An up/down reorder button using the editor's built-in arrow icon (falls back to an ASCII caret
-## only if the icon can't be resolved, e.g. running outside the editor theme).
+## An up or down reorder button using the editor's built-in arrow icon. It falls back to an ASCII
+## caret only when the icon cannot be resolved, e.g. when running outside the editor theme.
 func _reorder_button(up: bool, tip: String) -> Button:
 	var b := Button.new()
 	b.tooltip_text = tip
@@ -284,8 +291,9 @@ func _reorder_button(up: bool, tip: String) -> Button:
 	b.pressed.connect(func(): _move_set(-1 if up else 1))
 	return b
 
-## Move the current set by `delta` (-1 earlier / +1 later) in the manifest, keeping it selected.
-## No-op at the ends. Set order matters: the runtime activates sets[0] first and cycles in order.
+## Move the current set by `delta` in the manifest, -1 for earlier and +1 for later, keeping it
+## selected. It does nothing at the ends. Set order matters: the runtime activates sets[0] first
+## and cycles in order.
 func _move_set(delta: int) -> void:
 	var data := _load_manifest()
 	var sets: Array = data["sets"]
@@ -312,8 +320,8 @@ func _on_remove_set() -> void:
 		_refresh_list()
 		_set_status("Removed set: %s" % removed)
 
-## Rename the current set to the text in the set-name field (updates the manifest + selector). No-op on
-## an empty name or when unchanged.
+## Rename the current set to the text in the set-name field, updating both the manifest and the
+## selector. It does nothing on an empty name, or when the name is unchanged.
 func _rename_current_set() -> void:
 	if _set_name_edit == null:
 		return
@@ -342,8 +350,8 @@ func _on_add_pressed() -> void:
 	_file_dialog.popup_file_dialog()
 
 func _on_file_selected(res_path: String) -> void:
-	# Copy the picked image next to the manifest (so the DB build + the packed demo are self-contained),
-	# then add an entry to the current set with a fresh guid + default width.
+	# Copy the picked image next to the manifest, which keeps the DB build and the packed demo
+	# self-contained, then add an entry to the current set with a fresh guid and the default width.
 	var dir := _manifest_dir()
 	DirAccess.make_dir_recursive_absolute(dir)
 	var dest_name := res_path.get_file()
@@ -388,14 +396,14 @@ func _on_build_pressed() -> void:
 		return
 	var cur := _cur_set(data)
 	if bool(cur.get("prebuilt", false)):
-		_set_status("[color=orange]Set '%s' is prebuilt (%s) — no build needed[/color]" % [cur.get("name", "?"), cur.get("blob", "")])
+		_set_status("[color=orange]Set '%s' is prebuilt (%s), no build needed[/color]" % [cur.get("name", "?"), cur.get("blob", "")])
 		return
 	var images: Array = cur.get("images", [])
 	if images.is_empty():
 		_set_status("[color=orange]This set has no images[/color]")
 		return
 	var dir_abs := ProjectSettings.globalize_path(_manifest_dir())
-	# Image-list config: <guid>|<abs image path>|<width> per line.
+	# Image-list config, one <guid>|<abs image path>|<width> per line.
 	var lines := PackedStringArray()
 	for img in images:
 		var img_abs := dir_abs.path_join(str(img.get("image", "")))
@@ -414,8 +422,8 @@ func _on_build_pressed() -> void:
 	var code := OS.execute(tool_path, ["--images_config_file", list_path, "--save_path", blob_abs], output, true)
 	DirAccess.remove_absolute(list_path)
 	var log := "\n".join(output)
-	# Per-image scores: one "Detection score:D, Tracking score:T, Total Score:X" line per image
-	# (config/image order). Parse all three, like Unity's XREALImageLibraryBuildProcessor.
+	# Per-image scores: one "Detection score:D, Tracking score:T, Total Score:X" line per image, in
+	# config and image order. Parse all three, like Unity's XREALImageLibraryBuildProcessor.
 	var scores: Array = []  # [{det, track, total}]
 	for line in log.split("\n"):
 		if line.contains("Total Score:"):
@@ -425,7 +433,8 @@ func _on_build_pressed() -> void:
 				"total": line.get_slice("Total Score:", 1).to_float(),
 			})
 	var built := code == 0 and (FileAccess.file_exists(ProjectSettings.localize_path(blob_abs)) or FileAccess.file_exists(blob_abs))
-	# Classify: reject (hard error) any image failing the SDK's low-quality rule; no warn-only tier.
+	# Classify the results: any image failing the SDK's low-quality rule is a hard error. There is no
+	# warn-only tier.
 	var summary := ""
 	var any_reject := false
 	for i in scores.size():
@@ -441,7 +450,7 @@ func _on_build_pressed() -> void:
 		var p := ProjectSettings.localize_path(blob_abs)
 		DirAccess.remove_absolute(p if FileAccess.file_exists(p) else blob_abs)
 		EditorInterface.get_resource_filesystem().scan()
-		_set_status("[color=red]Rejected: an image is too featureless (detection<%d, tracking<%d, or total<%d) — poor tracking / crashes this device's image-DB loader. Blob deleted; replace the low-scoring image.[/color]\n%s" % [int(SCORE_MIN_DET), int(SCORE_MIN_TRACK), int(SCORE_MIN_TOTAL), summary])
+		_set_status("[color=red]Rejected: an image is too featureless (detection<%d, tracking<%d, or total<%d): poor tracking, and it crashes this device's image-DB loader. Blob deleted; replace the low-scoring image.[/color]\n%s" % [int(SCORE_MIN_DET), int(SCORE_MIN_TRACK), int(SCORE_MIN_TOTAL), summary])
 	else:
 		EditorInterface.get_resource_filesystem().scan()
 		_set_status("[color=green]%s[/color]\n%s" % [head, summary])

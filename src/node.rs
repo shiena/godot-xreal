@@ -1,10 +1,10 @@
-//! [`XrealHeadTracker`] — the head-tracking node.
+//! [`XrealHeadTracker`], the head-tracking node.
 //!
-//! Add it to a scene and parent a `Camera3D` under it. At runtime on XREAL
-//! hardware it drives its own transform from the native 6DoF head pose (rotation +
-//! position) every frame, so the camera moves and looks around with the wearer's
-//! head, and the stereo rig presents the world to the glasses. On desktop/editor the
-//! native libraries are absent, so the node stays at identity and logs a single warning.
+//! Add it to a scene and parent a `Camera3D` under it. At runtime on XREAL hardware it drives its
+//! own transform from the native 6DoF head pose, rotation and position, every frame, so the camera
+//! moves and looks around with the wearer's head and the stereo rig presents the world to the
+//! glasses. On desktop and in the editor the native libraries are absent, so the node stays at
+//! identity and logs a single warning.
 
 use godot::classes::sub_viewport::UpdateMode;
 use godot::classes::{Camera3D, INode3D, Node3D, ProjectSettings, RenderingServer, SubViewport};
@@ -15,25 +15,28 @@ use crate::session;
 /// Per-eye render size (matches the XREAL swapchain buffers created via CreateTexture).
 const EYE_W: i32 = 1968;
 const EYE_H: i32 = 1134;
-/// Vertical FOV (deg) ≈ XREAL One Pro per-eye (~46° horizontal at 1968×1134 aspect).
+/// Vertical FOV in degrees, approximating the XREAL One Pro per-eye figure of about 46 degrees
+/// horizontal at a 1968x1134 aspect.
 const EYE_FOV: f32 = 27.4;
-/// Half the interpupillary distance (m) — each eye camera is offset ±this along head-local X.
+/// Half the interpupillary distance in metres. Each eye camera is offset by plus or minus this
+/// along head-local X.
 const HALF_IPD: f32 = 0.0315;
 
-/// Two offscreen SubViewports (left/right), each with a Camera3D, rendering the main world from
+/// Two offscreen SubViewports, left and right, each with a Camera3D, rendering the main world from
 /// per-eye viewpoints. Their textures are blitted into the XREAL eye swapchain buffers.
 struct StereoRig {
     viewports: [Gd<SubViewport>; 2],
     cameras: [Gd<Camera3D>; 2],
 }
 
-/// Scene node that drives its own transform from the native XREAL head pose each frame — parent a
+/// Scene node that drives its own transform from the native XREAL head pose each frame. Parent a
 /// `Camera3D` under it for a head-tracked view through the glasses.
 ///
-/// 6DoF by default (rotation + position world-lock); the tracking mode is selectable. Also emits
-/// the glasses hot-plug and hardware-input signals (`key_event`, `key_state_changed`,
-/// `wearing_changed`, `brightness_changed`, …). `is_tracking()` reports whether a native pose was
-/// applied on the last frame; `recenter()` resets the forward direction.
+/// It runs 6DoF by default, world-locking both rotation and position, and the tracking mode is
+/// selectable. It also emits the glasses hot-plug and hardware-input signals: `key_event`,
+/// `key_state_changed`, `wearing_changed`, `brightness_changed` and the rest. `is_tracking()`
+/// reports whether a native pose was applied on the last frame, and `recenter()` resets the
+/// forward direction.
 #[derive(GodotClass)]
 #[class(base = Node3D)]
 pub struct XrealHeadTracker {
@@ -48,20 +51,21 @@ pub struct XrealHeadTracker {
     stereo: Option<StereoRig>,
     /// Whether the `display_started` signal has been emitted (once, on first tracking).
     display_signaled: bool,
-    /// Last-seen glasses hot-plug event counts (from the JNI DisplayManager callbacks); a change
-    /// re-emits `glasses_connected` / `glasses_disconnected` on the Godot main thread.
+    /// Last-seen glasses hot-plug event counts, from the JNI DisplayManager callbacks. A change
+    /// re-emits `glasses_connected` or `glasses_disconnected` on the Godot main thread.
     last_connect_count: u32,
     last_disconnect_count: u32,
-    /// App-side recenter reference. The SDK's `RecenterGlasses` (libXREALXRPlugin.so, display
-    /// subsystem) does NOT reset the pose we read via `XREALGetHeadPoseAtTime` (session-manager
-    /// subsystem) — device-confirmed: the pose quaternion is unchanged after calling it. So
-    /// recentering is done here: `recenter()` captures the current raw rotation and `process()`
-    /// applies `reference.inverse() * raw`, making "wherever you look at recenter" the forward.
+    /// App-side recenter reference. The SDK's `RecenterGlasses`, in libXREALXRPlugin.so's display
+    /// subsystem, does NOT reset the pose we read through `XREALGetHeadPoseAtTime`, which belongs to
+    /// the session-manager subsystem. That is device-confirmed: the pose quaternion is unchanged after
+    /// calling it. Recentering therefore happens here: `recenter()` captures the current raw rotation
+    /// and `process()` applies `reference.inverse() * raw`, making wherever you look at recenter the
+    /// forward direction.
     recenter_reference: Quaternion,
     /// The raw (uncorrected) rotation from the last pose sample; captured by `recenter()`.
     last_raw_rotation: Quaternion,
-    /// Keep the glasses display awake when not worn (bypass the proximity sensor's auto-off). Read
-    /// once in `ready()` from the ProjectSetting `xreal/display_bypass_psensor` (default `true`).
+    /// Keep the glasses display awake when not worn, bypassing the proximity sensor's auto-off. It is
+    /// read once in `ready()` from the ProjectSetting `xreal/display_bypass_psensor`, default `true`.
     bypass_psensor: bool,
 }
 
@@ -84,8 +88,9 @@ impl INode3D for XrealHeadTracker {
     }
 
     fn ready(&mut self) {
-        // Boot-time addon setting: keep the display awake while not worn (default on). Falls back to
-        // `true` when the project never persisted the setting (fresh project / unchanged default).
+        // Boot-time addon setting: keep the display awake while not worn, on by default. It falls back to
+        // `true` when the project never persisted the setting, whether it is fresh or left at the
+        // default.
         let ps = ProjectSettings::singleton();
         self.bypass_psensor = if ps.has_setting("xreal/display_bypass_psensor") {
             ps.get_setting("xreal/display_bypass_psensor")
@@ -94,28 +99,29 @@ impl INode3D for XrealHeadTracker {
         } else {
             true
         };
-        // Kick off initialization early; `shared()` logs its own outcome (and retries on
-        // later frames if the Android Activity has not been published yet).
+        // Kick off initialization early. `shared()` logs its own outcome, and retries on later frames
+        // when the Android Activity has not been published yet.
         let _ = session::shared();
     }
 
     fn process(&mut self, _delta: f64) {
         self.frames = self.frames.wrapping_add(1);
-        // Re-emit glasses hot-plug events before the session check so connect/disconnect are
-        // reported even while no session exists yet (e.g. started without the glasses).
+        // Re-emit glasses hot-plug events before the session check, so connect and disconnect are
+        // reported even while no session exists yet, for instance when the app started without the
+        // glasses.
         self.poll_glasses_events();
-        // Drain glasses hardware events (keys, wear sensor, brightness…) queued by the
-        // native callback on the SDK thread, and re-emit them as signals.
+        // Drain the glasses hardware events (keys, wear sensor, brightness and the rest) that the native
+        // callback queued on the SDK thread, and re-emit them as signals.
         self.poll_hardware_events();
         let Some(session) = session::shared() else {
             self.tracking = false;
             return;
         };
 
-        // Keep the glasses display awake by bypassing the proximity (wear) sensor auto-off (unless
-        // disabled via `xreal/display_bypass_psensor`). The SDK no-ops this until `NativeGlasses` is
-        // ready and its return value is ambiguous, so call it every frame for the first ~10s after
-        // the session appears.
+        // Keep the glasses display awake by bypassing the proximity (wear) sensor auto-off, unless
+        // `xreal/display_bypass_psensor` disabled it. The SDK no-ops this until `NativeGlasses` is ready
+        // and its return value is ambiguous, so call it every frame for the first 10 s or so after the
+        // session appears.
         if self.bypass_psensor && self.frames < 600 {
             let status = session.set_display_bypass_psensor(true);
             if self.frames < 3 || self.frames == 120 || self.frames == 300 {
@@ -126,24 +132,27 @@ impl INode3D for XrealHeadTracker {
             }
         }
 
-        // Build the per-eye offscreen render rig once we're in the tree (has a World3D).
+        // Build the per-eye offscreen render rig once we are in the tree and so have a World3D.
         self.ensure_stereo();
 
-        // Drive the XREAL swapchain on the rendering thread (EGL context required).
-        // First call invokes GfxThreadStart (CreateSwapchainEx → GL textures → SetSwapChainBuffers);
-        // subsequent calls drive PopulateNextFrameDesc so the SDK's GLThread has a frame handle.
+        // Drive the XREAL swapchain on the rendering thread, which the EGL context requires. The first
+        // call invokes GfxThreadStart, running CreateSwapchainEx, then the GL textures, then
+        // SetSwapChainBuffers. Later calls drive PopulateNextFrameDesc so the SDK's GLThread has a frame
+        // handle.
         let callable = Callable::from_fn("xreal_render_tick", |_| {
             crate::unity_plugin::run_render_thread_tick();
             Variant::nil()
         });
         RenderingServer::singleton().call_on_render_thread(&callable);
-        // Primary: drive the eye cameras from the **display** InputManager pose — the exact pose the
-        // compositor reprojects the glasses layer against (full orientation incl. ROLL, which the
-        // compact session-manager NrPose lacks; see docs/archive/roll-tracking-investigation.md). Sharing one
-        // pose between our render and the compositor is what makes a correct peek window on all axes.
-        // CRASH RULE (device-confirmed): never query BOTH head_pose_display() and head_pose() in the
-        // same frame → SIGSEGV 0x3f800000. So the session-manager read is a fallback used ONLY when
-        // the display export is entirely absent (None), never merely when a frame's block is unusable.
+        // Primary path: drive the eye cameras from the **display** InputManager pose, the exact pose the
+        // compositor reprojects the glasses layer against. It carries the full orientation, ROLL
+        // included, which the compact session-manager NrPose lacks; see
+        // docs/archive/roll-tracking-investigation.md. Sharing one pose between our render and the
+        // compositor is what makes the peek window correct on every axis.
+        // CRASH RULE, device-confirmed: never query BOTH head_pose_display() and head_pose() in the same
+        // frame, or the app takes a SIGSEGV at 0x3f800000. The session-manager read is therefore a
+        // fallback used ONLY when the display export is entirely absent (None), never merely when a
+        // frame's block is unusable.
         match session.head_pose_display() {
             Some(raw) => {
                 if let Some(rotation) = Self::display_rotation(&raw) {
@@ -153,23 +162,22 @@ impl INode3D for XrealHeadTracker {
                         self.signals().display_started().emit();
                     }
                     self.last_raw_rotation = rotation;
-                    // Bake the compositor's pose straight into the node. No app-side recenter — the
-                    // peek window needs baked camera rotation == the compositor's reprojection pose;
-                    // recenter is delegated to the SDK (session.recenter → NativePerception::Recenter),
-                    // which shifts this pose source and the layer together.
+                    // Bake the compositor's pose straight into the node. There is no app-side recenter here: the
+                    // peek window needs the baked camera rotation to equal the compositor's reprojection pose, so
+                    // recenter is delegated to the SDK, where session.recenter calls
+                    // NativePerception::Recenter and shifts this pose source and the layer together.
                     self.base_mut().set_quaternion(rotation);
-                    // 6DoF position: the 4×4 pose's translation row (raw[12..15] = x,y,z), with the
-                    // same NRSDK→Godot Y-flip as the rotation. Metres, 1:1 with Godot. Position only
-                    // world-locks because the per-frame updateType-0 UpdateHMDState call keeps the
-                    // SDK's dynamic pose cache (InputManager+0x60) live — the compositor cancels the
-                    // translation otherwise (device-verified 2026-07-18; see
-                    // docs/archive/codex-6dof-crash-analysis.md).
+                    // 6DoF position: the 4x4 pose's translation row, raw[12..15] as x, y and z, with the
+                    // same NRSDK-to-Godot Y-flip as the rotation. It is in metres, 1:1 with Godot. The position only
+                    // world-locks because the per-frame updateType-0 UpdateHMDState call keeps the SDK's dynamic pose
+                    // cache at InputManager+0x60 live; without it the compositor cancels the translation
+                    // (device-verified 2026-07-18, see docs/archive/codex-6dof-crash-analysis.md).
                     self.base_mut()
                         .set_position(Vector3::new(raw[12], -raw[13], raw[14]));
                     let euler = rotation.get_euler() * (180.0 / std::f32::consts::PI);
-                    // Calibration log: extracted Godot euler + the raw 4×4 rows. Move head in a known
-                    // way — nod=pitch/X, turn=yaw/Y, tilt=roll/Z — and check each axis + sign; if one
-                    // reads inverted, flip it in display_rotation().
+                    // Calibration log: the extracted Godot euler plus the raw 4x4 rows. Move the head in a known way,
+                    // where a nod is pitch on X, a turn is yaw on Y and a tilt is roll on Z, then check each axis and
+                    // its sign. If one reads inverted, flip it in display_rotation().
                     if self.frames < 16 || self.frames.is_multiple_of(30) {
                         godot_print!(
                             "[xreal] DISP euler pitch/x={:.1} yaw/y={:.1} roll/z={:.1} | \
@@ -184,9 +192,9 @@ impl INode3D for XrealHeadTracker {
                         euler.x, euler.y, euler.z
                     ));
                 } else {
-                    // Display export present but this frame's block isn't a valid rotation (e.g. a
-                    // startup transient). Hold the previous transform; do NOT fall through to the
-                    // session-manager pose (that would query both pipelines this frame — the crash).
+                    // The display export is present but this frame's block is not a valid rotation, for instance a
+                    // startup transient. Hold the previous transform, and do NOT fall through to the session-manager
+                    // pose, which would query both pipelines this frame and trigger the crash.
                     if self.frames % 120 == 1 {
                         godot_warn!(
                             "[xreal] DISP pose: 16-float block not a valid rotation transform (raw={raw:?})"
@@ -201,8 +209,8 @@ impl INode3D for XrealHeadTracker {
                         self.display_signaled = true;
                         self.signals().display_started().emit();
                     }
-                    // Session-manager fallback (display export absent): app-side recenter, since the
-                    // SDK's RecenterGlasses does not affect this pose source.
+                    // Session-manager fallback, used when the display export is absent. It recenters app-side, since
+                    // the SDK's RecenterGlasses does not affect this pose source.
                     self.last_raw_rotation = rotation;
                     let corrected = (self.recenter_reference.inverse() * rotation).normalized();
                     self.base_mut().set_quaternion(corrected);
@@ -220,16 +228,16 @@ impl INode3D for XrealHeadTracker {
                 }
                 None => {
                     self.tracking = false;
-                    // Throttled (~every 2s at 60fps) so we can diagnose why no pose arrives.
+                    // Throttled to roughly every 2 s at 60 fps, so we can diagnose why no pose arrives.
                     if self.frames % 120 == 1 {
-                        godot_warn!("[xreal] no head pose — {}", session.diagnostics());
+                        godot_warn!("[xreal] no head pose: {}", session.diagnostics());
                     }
                 }
             },
         }
 
-        // Point the eye cameras from the (now-updated) head transform, then publish their
-        // offscreen textures for the frame tick to blit into the XREAL eye buffers.
+        // Point the eye cameras from the now-updated head transform, then publish their offscreen
+        // textures for the frame tick to blit into the XREAL eye buffers.
         self.update_stereo();
     }
 }
@@ -237,19 +245,20 @@ impl INode3D for XrealHeadTracker {
 impl XrealHeadTracker {
     /// Interpret libXREALXRPlugin.so's 16-float display head-pose block as a Godot rotation.
     ///
-    /// DEVICE-CONFIRMED layout (on-device raw log): the 16 floats are a **4×4 row-major transform**
-    /// — the upper-left 3×3 is the head rotation (each row a unit vector), the last row (12,13,14) is
-    /// the tiny position, the last column (3,7,11) is 0 and raw[15] is 1 (it copies
-    /// `NativePerception::GetHeadPose`'s struct return verbatim). We validate that structure, extract
-    /// the quaternion from the 3×3 (Shepperd), then apply the same NRSDK→Godot handedness flip as
-    /// `NrPose::to_godot_quaternion`. Returns `None` if the block isn't a valid rotation transform
-    /// (e.g. before the session is live), so the caller can hold the previous pose.
+    /// DEVICE-CONFIRMED layout, from an on-device raw log: the 16 floats are a **4x4 row-major
+    /// transform**. The upper-left 3x3 is the head rotation, each row a unit vector; the last row,
+    /// 12, 13 and 14, is the tiny position; the last column, 3, 7 and 11, is 0; and raw[15] is 1. It
+    /// copies `NativePerception::GetHeadPose`'s struct return verbatim. We validate that structure,
+    /// extract the quaternion from the 3x3 with Shepperd's method, then apply the same NRSDK-to-Godot
+    /// handedness flip as `NrPose::to_godot_quaternion`. It returns `None` when the block is not a
+    /// valid rotation transform, for instance before the session is live, so the caller can hold the
+    /// previous pose.
     fn display_rotation(raw: &[f32; 16]) -> Option<Quaternion> {
         // Row-major 3×3 rotation.
         let (m00, m01, m02) = (raw[0], raw[1], raw[2]);
         let (m10, m11, m12) = (raw[4], raw[5], raw[6]);
         let (m20, m21, m22) = (raw[8], raw[9], raw[10]);
-        // Validate the homogeneous 4×4 structure so we don't extract from a zero/garbage block.
+        // Validate the homogeneous 4x4 structure so we never extract from a zero or garbage block.
         let unit = |a: f32, b: f32, c: f32| ((a * a + b * b + c * c).sqrt() - 1.0).abs() < 0.05;
         let structured = unit(m00, m01, m02)
             && unit(m10, m11, m12)
@@ -261,7 +270,8 @@ impl XrealHeadTracker {
         if !structured {
             return None;
         }
-        // Standard rotation-matrix → quaternion (Shepperd), in the source (NRSDK/Unity LH) frame.
+        // The standard rotation-matrix to quaternion conversion, Shepperd's, in the source frame, which
+        // is NRSDK and Unity left-handed.
         let trace = m00 + m11 + m22;
         let (x, y, z, w) = if trace > 0.0 {
             let s = (trace + 1.0).sqrt() * 2.0; // s = 4w
@@ -276,15 +286,17 @@ impl XrealHeadTracker {
             let s = (1.0 + m22 - m00 - m11).sqrt() * 2.0; // s = 4z
             ((m02 + m20) / s, (m12 + m21) / s, 0.25 * s, (m10 - m01) / s)
         };
-        // NRSDK → Godot handedness. Device-calibrated with a wearer (DISP calibration log): with
-        // (-x,-y,z,w) roll (Z) and yaw (Y) were correct but PITCH (X) came out inverted — nodding
-        // down clipped the box's bottom instead of its top. Keep pitch un-negated: (x,-y,z,w) makes
-        // nod=pitch/X, turn=yaw/Y, tilt=roll/Z all track world-locked in the correct direction.
+        // NRSDK to Godot handedness, device-calibrated with a wearer against the DISP calibration log.
+        // With (-x,-y,z,w) the roll (Z) and yaw (Y) were correct but the PITCH (X) came out inverted, and
+        // nodding down clipped the box's bottom instead of its top. Keep pitch un-negated: (x,-y,z,w)
+        // makes nod on pitch/X, turn on yaw/Y and tilt on roll/Z all track world-locked in the right
+        // direction.
         Some(Quaternion::new(x, -y, z, w).normalized())
     }
 
-    /// Poll the JNI glasses hot-plug counters and re-emit any new events as signals (called on the
-    /// Godot main thread, where signal emission is safe — the JNI callbacks run on the UI thread).
+    /// Poll the JNI glasses hot-plug counters and re-emit any new events as signals. It is called on
+    /// the Godot main thread, where signal emission is safe, since the JNI callbacks run on the UI
+    /// thread.
     fn poll_glasses_events(&mut self) {
         let connect = crate::jni_bridge::glasses_connect_count();
         if connect != self.last_connect_count {
@@ -303,8 +315,8 @@ impl XrealHeadTracker {
     fn poll_hardware_events(&mut self) {
         use crate::ffi as f;
         for ev in crate::glasses_events::drain() {
-            // Raw event log — this is the Phase A device-verification instrument (one line
-            // per physical key press / wear change / brightness step; low volume).
+            // Raw event log, the Phase A device-verification instrument. It prints one line per physical key
+            // press, wear change or brightness step, so the volume stays low.
             godot_print!(
                 "[xreal] glasses event: type={} para={} para2={} para3={}",
                 ev.action_type,
@@ -314,8 +326,8 @@ impl XrealHeadTracker {
             );
             match ev.action_type {
                 f::ACTION_TYPE_CLICK | f::ACTION_TYPE_DOUBLE_CLICK | f::ACTION_TYPE_LONG_PRESS => {
-                    // para = XREALKeyType, action_type = XREALClickType (same numbering as
-                    // the ACTION_CLICK/DOUBLE_CLICK/LONG_PRESS constants).
+                    // para is an XREALKeyType and action_type an XREALClickType, numbered the same as the
+                    // ACTION_CLICK, ACTION_DOUBLE_CLICK and ACTION_LONG_PRESS constants.
                     self.signals()
                         .key_event()
                         .emit(ev.para as i64, ev.action_type as i64);
@@ -326,7 +338,7 @@ impl XrealHeadTracker {
                         .emit(ev.para as i64, ev.para2 as i64);
                 }
                 f::ACTION_TYPE_PROXIMITY_WEARING_STATE => {
-                    // Mirror the Unity handler: only PUT_ON / TAKE_OFF are forwarded.
+                    // Mirror the Unity handler, which forwards PUT_ON and TAKE_OFF alone.
                     if ev.para == f::WEARING_STATUS_PUT_ON || ev.para == f::WEARING_STATUS_TAKE_OFF
                     {
                         self.signals()
@@ -354,8 +366,8 @@ impl XrealHeadTracker {
         }
     }
 
-    /// Create the two per-eye SubViewports + cameras once, sharing the main World3D so they render
-    /// the same scene. No-op until the node is in the tree (needs a World3D).
+    /// Create the two per-eye SubViewports and their cameras once, sharing the main World3D so they
+    /// render the same scene. It does nothing until the node is in the tree and has a World3D.
     fn ensure_stereo(&mut self) {
         if self.stereo.is_some() {
             return;
@@ -387,7 +399,8 @@ impl XrealHeadTracker {
         godot_print!("[xreal] stereo rig created ({EYE_W}x{EYE_H} per eye)");
     }
 
-    /// Aim the eye cameras from the head transform (±IPD) and publish their GL textures.
+    /// Aim the eye cameras from the head transform, offset by plus or minus the IPD, and publish their
+    /// GL textures.
     fn update_stereo(&mut self) {
         let head = self.base().get_global_transform();
         let Some(rig) = self.stereo.as_mut() else {
@@ -398,8 +411,8 @@ impl XrealHeadTracker {
             }
             return;
         };
-        // Apply the SDK's exact per-eye projection + eye offset when available (pixel-accurate AR),
-        // else fall back to the symmetric IPD + hardcoded FOV.
+        // Apply the SDK's exact per-eye projection and eye offset when available, which makes the AR
+        // pixel-accurate, and otherwise fall back to the symmetric IPD and the hardcoded FOV.
         let proj = crate::unity_plugin::stereo_projection();
         const NEAR: f32 = 0.05;
         const FAR: f32 = 1000.0;
@@ -417,9 +430,10 @@ impl XrealHeadTracker {
             );
 
             if p.valid && (p.r - p.l) > 1e-4 && (p.t - p.b) > 1e-4 {
-                // Half-angle tangents → asymmetric frustum. Godot's Camera3D.set_frustum(size,
-                // offset, near, far) maps to near-plane extents ±size/2 (vert) / ±size*aspect/2
-                // (horiz) shifted by offset; near-plane coord = tangent*near.
+                // Half-angle tangents give an asymmetric frustum. Godot's Camera3D.set_frustum(size, offset,
+                // near, far) maps to near-plane extents of plus or minus size/2 vertically and plus or minus
+                // size*aspect/2 horizontally, shifted by offset, and a near-plane coordinate equals
+                // tangent*near.
                 let (size, offset) = frustum_size_offset(p.l, p.r, p.t, p.b, NEAR);
                 cam.set_frustum(size, offset, NEAR, FAR);
             } else {
@@ -429,8 +443,8 @@ impl XrealHeadTracker {
             }
         }
         let rs = RenderingServer::singleton();
-        // Use the actual render-target texture RID (viewport_get_texture on the viewport RID), not
-        // the ViewportTexture *resource* RID, whose native handle is 0.
+        // Use the actual render-target texture RID, from viewport_get_texture on the viewport RID, and
+        // not the ViewportTexture *resource* RID, whose native handle is 0.
         let handle = |sv: &Gd<SubViewport>| -> u32 {
             let tex_rid = rs.viewport_get_texture(sv.get_viewport_rid());
             rs.texture_get_native_handle(tex_rid) as u32
@@ -443,15 +457,15 @@ impl XrealHeadTracker {
 
 #[godot_api]
 impl XrealHeadTracker {
-    /// Emitted once when the glasses display + head tracking first go live (the first frame a head
-    /// pose arrives). Connect it in GDScript and call `recenter()` to make the current head
+    /// Emitted once when the glasses display and head tracking first go live, on the first frame a
+    /// head pose arrives. Connect it in GDScript and call `recenter()` to make the current head
     /// direction "forward" at startup.
     #[signal]
     fn display_started();
 
-    /// Emitted when the XREAL glasses display is plugged in at runtime (`onDisplayAdded`). Fires
-    /// even if the app started with the glasses disconnected — the native session bootstrap then
-    /// retries `CreateSession` and `display_started` follows once tracking comes up.
+    /// Emitted when the XREAL glasses display is plugged in at runtime, on `onDisplayAdded`. It fires
+    /// even when the app started with the glasses disconnected: the native session bootstrap then
+    /// retries `CreateSession`, and `display_started` follows once tracking comes up.
     #[signal]
     fn glasses_connected();
 
@@ -459,13 +473,13 @@ impl XrealHeadTracker {
     #[signal]
     fn glasses_disconnected();
 
-    /// A physical key on the glasses was clicked. `key` is one of the `KEY_*` constants
-    /// (MULTI / INCREASE / DECREASE / MENU), `action` one of `ACTION_CLICK` /
-    /// `ACTION_DOUBLE_CLICK` / `ACTION_LONG_PRESS`.
+    /// A physical key on the glasses was clicked. `key` is one of the `KEY_*` constants, MULTI,
+    /// INCREASE, DECREASE or MENU, and `action` is `ACTION_CLICK`, `ACTION_DOUBLE_CLICK` or
+    /// `ACTION_LONG_PRESS`.
     #[signal]
     fn key_event(key: i64, action: i64);
 
-    /// Raw down/up transition of a physical key: `state` is `KEY_STATE_DOWN` / `KEY_STATE_UP`.
+    /// Raw down or up transition of a physical key: `state` is `KEY_STATE_DOWN` or `KEY_STATE_UP`.
     #[signal]
     fn key_state_changed(key: i64, state: i64);
 
@@ -473,7 +487,7 @@ impl XrealHeadTracker {
     #[signal]
     fn wearing_changed(wearing: bool);
 
-    /// The glasses brightness level changed (brightness rocker or system UI).
+    /// The glasses brightness level changed, from the brightness rocker or the system UI.
     #[signal]
     fn brightness_changed(level: i64);
 
@@ -481,30 +495,31 @@ impl XrealHeadTracker {
     #[signal]
     fn volume_changed(level: i64);
 
-    /// The electrochromic dimming level changed (One Pro).
+    /// The electrochromic dimming level changed. One Pro only.
     #[signal]
     fn ec_level_changed(level: i64);
 
-    /// Catch-all for every native glasses event, including types without a dedicated
-    /// signal (temperature, screen on/off, disconnect reason…). Values are the raw
+    /// Catch-all for every native glasses event, including the types without a dedicated signal, such
+    /// as temperature, screen on and off, and the disconnect reason. The values are the raw
     /// `GlassesEventData` fields; see `XREALActionType` in `docs/plans/input-plan.md`.
     #[signal]
     fn glasses_event(action_type: i64, para: i64, para2: i64, para3: f64);
 
-    /// `key` value in `key_event` / `key_state_changed` (`XREALKeyType`): the MULTI (function) key.
+    /// `key` value in `key_event` and `key_state_changed`, an `XREALKeyType`: the MULTI, or function,
+    /// key.
     #[constant]
     const KEY_MULTI: i64 = 1;
-    /// `key` value: the brightness/volume INCREASE key.
+    /// `key` value: the brightness and volume INCREASE key.
     #[constant]
     const KEY_INCREASE: i64 = 2;
-    /// `key` value: the brightness/volume DECREASE key.
+    /// `key` value: the brightness and volume DECREASE key.
     #[constant]
     const KEY_DECREASE: i64 = 3;
     /// `key` value: the MENU key.
     #[constant]
     const KEY_MENU: i64 = 4;
 
-    /// `action` value in `key_event` (`XREALClickType`): a single click.
+    /// `action` value in `key_event`, an `XREALClickType`: a single click.
     #[constant]
     const ACTION_CLICK: i64 = 1;
     /// `action` value in `key_event`: a double click.
@@ -514,7 +529,7 @@ impl XrealHeadTracker {
     #[constant]
     const ACTION_LONG_PRESS: i64 = 3;
 
-    /// `state` value in `key_state_changed` (`XREALKeyState`): the key went down.
+    /// `state` value in `key_state_changed`, an `XREALKeyState`: the key went down.
     #[constant]
     const KEY_STATE_DOWN: i64 = 1;
     /// `state` value in `key_state_changed`: the key was released.
@@ -530,9 +545,9 @@ impl XrealHeadTracker {
     /// Re-center the view so the current head direction becomes "forward".
     #[func]
     fn recenter(&mut self) {
-        // App-side recenter: the current head direction becomes "forward" (identity). The
-        // reference is the raw rotation of the latest pose sample, so this also cancels any
-        // pitch offset picked up while the glasses sat on a desk during session start.
+        // App-side recenter: the current head direction becomes "forward", meaning identity. The
+        // reference is the raw rotation of the latest pose sample, so this also cancels any pitch offset
+        // picked up while the glasses sat on a desk during session start.
         self.recenter_reference = self.last_raw_rotation;
         let e = self.last_raw_rotation.get_euler() * (180.0 / std::f32::consts::PI);
         godot_print!(
@@ -541,8 +556,8 @@ impl XrealHeadTracker {
             e.y,
             e.z
         );
-        // Still forward to the SDK's display-side recenter — harmless, and it may matter for
-        // the compositor path even though it does not reset our pose source.
+        // Still forward to the SDK's display-side recenter. It is harmless, and it may matter for the
+        // compositor path even though it does not reset our pose source.
         if let Some(session) = session::shared() {
             session.recenter();
         }
@@ -555,11 +570,11 @@ impl XrealHeadTracker {
     }
 }
 
-/// Asymmetric projection from the SDK's per-eye half-angle tangents (l, r, t, b) into Godot's
+/// Asymmetric projection from the SDK's per-eye half-angle tangents, l, r, t and b, into Godot's
 /// `Camera3D::set_frustum(size, offset, near, far)` parameters. `size` is the vertical near-plane
-/// extent and `offset` shifts the (otherwise centered) near-plane rectangle; a near-plane
-/// coordinate equals `tangent * near`. Kept as a free function so the calibrated mapping is unit
-/// tested (see the tests module) without needing a live Camera3D.
+/// extent and `offset` shifts the otherwise centered near-plane rectangle, and a near-plane
+/// coordinate equals `tangent * near`. It stays a free function so the calibrated mapping is unit
+/// tested, in the tests module, without needing a live Camera3D.
 fn frustum_size_offset(l: f32, r: f32, t: f32, b: f32, near: f32) -> (f32, Vector2) {
     let size = (t - b) * near;
     let offset = Vector2::new((r + l) * 0.5 * near, (t + b) * 0.5 * near);
@@ -572,7 +587,8 @@ mod tests {
 
     #[test]
     fn symmetric_tangents_center_the_frustum() {
-        // Symmetric l/r and t/b → no offset; size is the full vertical extent at the near plane.
+        // Symmetric l and r, and t and b, give no offset, and size is the full vertical extent at the
+        // near plane.
         let (size, offset) = frustum_size_offset(-0.5, 0.5, 0.4, -0.4, 0.05);
         assert!((size - 0.8 * 0.05).abs() < 1e-6, "size {size}");
         assert!(
@@ -583,7 +599,8 @@ mod tests {
 
     #[test]
     fn asymmetric_tangents_shift_the_frustum() {
-        // l=-0.6,r=0.4 → horizontal center at (r+l)/2=-0.1; t=0.5,b=-0.3 → vertical center at 0.1.
+        // l=-0.6 and r=0.4 put the horizontal center at (r+l)/2=-0.1; t=0.5 and b=-0.3 put the vertical
+        // center at 0.1.
         let (size, offset) = frustum_size_offset(-0.6, 0.4, 0.5, -0.3, 0.05);
         assert!((size - 0.8 * 0.05).abs() < 1e-6, "size {size}");
         assert!(

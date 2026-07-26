@@ -59,14 +59,14 @@ function Ok  ([string]$m) { Write-Host $m -ForegroundColor Green }
 function Die ([string]$m) { Write-Error $m }
 function Adbx { if ($Device) { & $Adb -s $Device @args } else { & $Adb @args } }
 
-# The XREAL runtime pieces the APK must bundle. They are NOT in this repo — vendor them from the
-# XREAL SDK for Unity (see README / the guide below):
+# The XREAL runtime pieces the APK must bundle. They are NOT in this repo, so vendor them from
+# the XREAL SDK for Unity; see the README or the guide below:
 #   - 3 core .so in jniLibs/arm64-v8a (packed via godot_xreal.gdextension [dependencies])
 #   - 5 .aar in addons/godot_xreal/android (shipped into the APK by the addon's export_plugin.gd:
 #     Java/JNI layer + manifest merge; the aars also carry the NR native libs, which Gradle
 #     merges into the APK)
-# The XrealBridge Java sources are compiled by the export's gradle build (export_plugin.gd
-# stages them into the build template) — nothing to vendor for those.
+# The export's gradle build compiles the XrealBridge Java sources, with export_plugin.gd
+# staging them into the build template, so there is nothing to vendor for those.
 # This checks both before an export and stops with instructions if anything is missing; it never
 # downloads anything.
 $RequiredLibs = @(
@@ -96,7 +96,7 @@ Vendor them once from a local copy of the package (nothing is downloaded):
        - 3 core .so -> jniLibs/arm64-v8a/      (dlopen'd by the GDExtension)
        - 5 .aar -> addons/godot_xreal/android/ (shipped by the addon's export plugin; they also
          carry the NR native libs, which Gradle merges into the APK)
-     (The XrealBridge Java sources are compiled by the export's gradle build — no JDK step here.)
+     (The XrealBridge Java sources are compiled by the export's gradle build, so no JDK step here.)
 See the README "Prerequisite: vendor the XREAL runtime libraries" and docs/guides/build-and-release.md.
 '@
     exit 1
@@ -154,7 +154,7 @@ if ($Export) {
     )
     if (-not $proc.WaitForExit(180000)) {
         Stop-Process -Id $proc.Id -Force
-        Die "APK export did not finish in 180s. A *console* Godot binary hangs here after a Gradle export (Gradle daemon stuck in its Job Object) — use the non-console binary."
+        Die "APK export did not finish in 180s. A *console* Godot binary hangs here after a Gradle export (Gradle daemon stuck in its Job Object); use the non-console binary."
     }
     if (-not (Test-Path $ApkOut) -or (Get-Item $ApkOut).Length -lt 1MB) {
         Die "APK export finished (exit $($proc.ExitCode)) but $ApkOut is missing or too small. Check the export preset / keystore."

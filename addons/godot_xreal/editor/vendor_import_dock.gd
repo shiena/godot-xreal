@@ -1,38 +1,42 @@
 @tool
 extends VBoxContainer
-## Editor dock: vendor the XREAL runtime libraries out of the Unity `com.xreal.xr` package — the
-## in-editor analog of scripts/vendor_xreal_libs.*. Pick `com.xreal.xr(.tgz|.tar.gz)` (or an already
-## extracted package root) and it extracts (via the system `tar`) and copies the .so / .aar / host
-## tool to the gitignored destinations the Android export needs:
+## Editor dock: vendor the XREAL runtime libraries out of the Unity `com.xreal.xr` package. It is
+## the in-editor analog of scripts/vendor_xreal_libs.*. Pick `com.xreal.xr(.tgz|.tar.gz)`, or an
+## already-extracted package root, and it extracts with the system `tar` and copies the .so, .aar
+## and host tool to the gitignored destinations the Android export needs:
 ##
-##   3 core .so + libmedia_codec.so -> jniLibs/arm64-v8a/        (dlopen'd; packed via .gdextension)
+##   3 core .so + libmedia_codec.so -> jniLibs/arm64-v8a/        (dlopen'd, packed via .gdextension)
 ##   7 .aar                         -> addons/godot_xreal/android/ (shipped by export_plugin.gd)
-##   nr_plugins.json                -> addons/godot_xreal/android/ (NR perception manifest → assets/)
+##   nr_plugins.json                -> addons/godot_xreal/android/ (NR perception manifest, to assets/)
 ##   trackableImageTools            -> addons/godot_xreal/tools/   (host image-DB build tool)
 ##
-## This only vendors XREAL's proprietary libs. The addon's own libgodot_xreal.so comes from the Rust
-## build (cargo-ndk) or a prebuilt release — see docs/guides/build-and-release.md. All destinations are
-## gitignored (SDK-derived; not redistributable). nractivitylife*.aar is deliberately skipped (its
-## launcher is Unity-only). Keep the package version pinned to the one the Rust internal-call offsets
-## were RE'd against (hand tracking / depth mesh / signal_guard) — a different version can crash.
+## This vendors XREAL's proprietary libs only. The addon's own libgodot_xreal.so comes from the
+## Rust build (cargo-ndk) or a prebuilt release; see docs/guides/build-and-release.md. Every
+## destination is gitignored, because the files are SDK-derived and not redistributable.
+## nractivitylife*.aar is deliberately skipped, since its launcher is Unity-only. Keep the package
+## version pinned to the one the Rust internal-call offsets were RE'd against, covering hand
+## tracking, depth mesh and signal_guard, because a different version can crash.
 
-# Minimum com.xreal.xr version accepted. The Rust internal-call offsets (hand tracking / depth mesh /
-# signal_guard patches) were RE'd against this package; an older one can crash, so vendoring is refused
-# below it. Read from the package's package.json (Unity UPM manifest).
+# Minimum com.xreal.xr version accepted. The Rust internal-call offsets, meaning the hand-tracking,
+# depth-mesh and signal_guard patches, were RE'd against this package, and an older one can crash,
+# so vendoring is refused below it. It is read from the package's package.json, the Unity UPM
+# manifest.
 const MIN_VERSION := "3.1.0"
 
-# arm64-v8a core .so in Runtime/Plugins/Android/arm64-v8a/ -> jniLibs/arm64-v8a/.
+# The arm64-v8a core .so in Runtime/Plugins/Android/arm64-v8a/, going to jniLibs/arm64-v8a/.
 const CORE_SO := ["libXREALNativeSessionManager.so", "libXREALXRPlugin.so", "libVulkanSupport.so"]
 # The FPV HW encoder lives under the Camera Features plugin path.
 const MEDIA_CODEC_REL := "Runtime/Scripts/Android/Camera Features/Plugins/Android/arm64/libmedia_codec.so"
-# .aar in Runtime/Plugins/Android/ -> addons/godot_xreal/android/ (names hardcoded in export_plugin.gd).
+# The .aar in Runtime/Plugins/Android/, going to addons/godot_xreal/android/. export_plugin.gd
+# hardcodes the names.
 const AARS := [
 	"nr_loader.aar", "nr_api.aar", "nr_common.aar", "nr_spatial_anchor.aar",
 	"nr_image_tracking.aar", "GlassesDisplayPlugEvent-2.4.2.aar", "Log-Control-1.2.aar",
 ]
-# NR perception manifest -> addons/godot_xreal/android/. Under Marker~/ in the package but it is the
-# image-tracking backend manifest (loads libnr_image_tracking.so); staged into the APK's assets/ by
-# export_plugin.gd. SDK-derived + may change across SDK versions, so it is vendored, not committed.
+# The NR perception manifest, going to addons/godot_xreal/android/. It sits under Marker~/ in the
+# package but is the image-tracking backend manifest, which loads libnr_image_tracking.so, and
+# export_plugin.gd stages it into the APK's assets/. It is SDK-derived and may change across SDK
+# versions, so it is vendored rather than committed.
 const NR_PLUGINS_REL := "Marker~/nr_plugins.json"
 
 var _status: RichTextLabel
@@ -52,13 +56,13 @@ func _build_ui() -> void:
 	var help := Label.new()
 	help.text = "Pick com.xreal.xr (.tgz / .tar.gz, or an extracted package folder) to stage the .so / .aar / tool."
 	help.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	# Cap the wrapped height. An autowrap Label reports its *wrapped* height as its minimum, and a dock
-	# tab that has never been the active one was never laid out (~17px wide), so it wraps to hundreds
-	# of lines and asks for thousands of px. The editor's dock slot sizes hidden tabs too
-	# (use_hidden_tabs_for_min_size), so that minimum pushes the dock below it (FileSystem) off-screen
+	# Cap the wrapped height. An autowrap Label reports its *wrapped* height as its minimum, and a
+	# dock tab that has never been the active one was never laid out, leaving it about 17 px wide, so
+	# it wraps to hundreds of lines and asks for thousands of px. The editor sizes hidden tabs too
+	# (use_hidden_tabs_for_min_size), so that minimum pushes the dock below it, FileSystem, off-screen
 	# until this tab is first opened.
 	help.max_lines_visible = 3
-	help.tooltip_text = "Extracts (via the system tar) and copies the required .so / .aar / host tool out of the Unity package — the in-editor analog of scripts/vendor_xreal_libs."
+	help.tooltip_text = "Extracts (via the system tar) and copies the required .so / .aar / host tool out of the Unity package. This is the in-editor analog of scripts/vendor_xreal_libs."
 	help.modulate = Color(1, 1, 1, 0.75)
 	add_child(help)
 
@@ -70,15 +74,15 @@ func _build_ui() -> void:
 	_status = RichTextLabel.new()
 	_status.bbcode_enabled = true
 	_status.selection_enabled = true
-	# Floor only, and deliberately no fit_content: fit_content makes the minimum height the *content*
-	# height measured at the current width, which in a never-shown dock tab is thousands of px — same
-	# trap as the help label above. The import log scrolls inside the label instead, and EXPAND_FILL
-	# still hands it every pixel the dock actually has.
+	# A floor only, and deliberately no fit_content: fit_content makes the minimum height the
+	# *content* height measured at the current width, which in a never-shown dock tab is thousands of
+	# px, the same trap as the help label above. The import log scrolls inside the label instead, and
+	# EXPAND_FILL still hands it every pixel the dock actually has.
 	_status.custom_minimum_size = Vector2(0, 48)
 	_status.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	add_child(_status)
 
-	# Browse the whole filesystem — the package usually lives outside the project.
+	# Browse the whole filesystem, since the package usually lives outside the project.
 	_file_dialog = EditorFileDialog.new()
 	_file_dialog.file_mode = EditorFileDialog.FILE_MODE_OPEN_ANY  # file (.tgz) or a package dir
 	_file_dialog.access = EditorFileDialog.ACCESS_FILESYSTEM
@@ -94,7 +98,7 @@ func _on_pick_pressed() -> void:
 
 func _on_selected(path: String) -> void:
 	_status.text = "Importing …"
-	# Defer so the "Importing …" paint lands before the (blocking) tar/copy work.
+	# Defer so the "Importing …" paint lands before the blocking tar and copy work.
 	call_deferred("_import", path)
 
 func _import(path: String) -> void:
@@ -103,7 +107,7 @@ func _import(path: String) -> void:
 	var pkg := ""
 
 	if DirAccess.dir_exists_absolute(path):
-		# An already-extracted package root (contains Runtime/Plugins/Android) or its parent.
+		# An already-extracted package root, which holds Runtime/Plugins/Android, or its parent.
 		pkg = _find_package_root(path)
 		if pkg.is_empty():
 			_fail("Runtime/Plugins/Android not found in the selected folder: %s" % path)
@@ -132,8 +136,8 @@ func _import(path: String) -> void:
 		_fail("Doesn't look like a com.xreal.xr package (%s missing)" % src_abi)
 		return
 
-	# Version gate: the native offsets were RE'd against MIN_VERSION+, so refuse older packages
-	# (crash risk) before copying anything.
+	# Version gate: the native offsets were RE'd against MIN_VERSION or newer, so refuse an older
+	# package, which risks a crash, before copying anything.
 	var verr := _version_error(pkg)
 	if not verr.is_empty():
 		if temp: _rmtree(temp)
@@ -149,18 +153,19 @@ func _import(path: String) -> void:
 
 	var missing := PackedStringArray()
 
-	# 1) core .so + libmedia_codec.so -> jniLibs/arm64-v8a
+	# 1) the core .so and libmedia_codec.so, going to jniLibs/arm64-v8a
 	for so in CORE_SO:
 		_copy(src_abi.path_join(so), jni.path_join(so), "so   " + so, log, missing)
 	_copy(pkg.path_join(MEDIA_CODEC_REL), jni.path_join("libmedia_codec.so"), "so   libmedia_codec.so", log, missing)
 
-	# 2) 7 .aar -> addons/godot_xreal/android
+	# 2) the 7 .aar, going to addons/godot_xreal/android
 	for aar in AARS:
 		_copy(src_android.path_join(aar), addon.path_join(aar), "aar  " + aar, log, missing)
-	# nr_plugins.json (NR perception manifest) -> addons/godot_xreal/android
+	# nr_plugins.json, the NR perception manifest, going to addons/godot_xreal/android
 	_copy(pkg.path_join(NR_PLUGINS_REL), addon.path_join("nr_plugins.json"), "json nr_plugins.json", log, missing)
 
-	# 3) host image-DB tool -> addons/godot_xreal/tools (OS-specific; Linux has no prebuilt tool)
+	# 3) the host image-DB tool, going to addons/godot_xreal/tools. It is OS-specific, and Linux has
+	# no prebuilt tool.
 	var tool_rel := ""
 	var tool_dst := ""
 	match OS.get_name():
@@ -182,24 +187,25 @@ func _import(path: String) -> void:
 	# Report.
 	var body := "\n".join(log)
 	if missing.is_empty():
-		_status.text = "[color=green]Done[/color] — everything staged.\n[code]%s[/code]\n[color=gray]note: the addon's own libgodot_xreal.so comes separately (Rust build or prebuilt release)[/color]" % body
+		_status.text = "[color=green]Done[/color]: everything staged.\n[code]%s[/code]\n[color=gray]note: the addon's own libgodot_xreal.so comes separately (Rust build or prebuilt release)[/color]" % body
 	else:
 		_status.text = "[color=orange]Partly missing[/color] (possible package-version mismatch):\n[code]%s[/code]\n[color=orange]missing:\n  - %s[/color]" % [body, "\n  - ".join(missing)]
 
 # --- helpers --------------------------------------------------------------------------------------
 
-## Validate the package version against MIN_VERSION. Returns "" when ok, or a user-facing error
-## message (unreadable manifest / too old) — kept as one function so `_import` stays under
-## gdlint's max-returns.
+## Validate the package version against MIN_VERSION. It returns "" when the version is fine, or a
+## user-facing error message when the manifest is unreadable or the package is too old. It is kept
+## as one function so `_import` stays under gdlint's max-returns.
 func _version_error(pkg: String) -> String:
 	var ver := _package_version(pkg)
 	if ver.is_empty():
-		return "Could not read \"version\" from package.json — is this a com.xreal.xr package?"
+		return "Could not read \"version\" from package.json. Is this a com.xreal.xr package?"
 	if _version_lt(ver, MIN_VERSION):
-		return "com.xreal.xr %s is too old — this addon needs %s or newer (the native hand-tracking / depth-mesh / signal_guard offsets were reverse-engineered against %s; an older package can crash). Nothing was imported." % [ver, MIN_VERSION, MIN_VERSION]
+		return "com.xreal.xr %s is too old: this addon needs %s or newer (the native hand-tracking / depth-mesh / signal_guard offsets were reverse-engineered against %s; an older package can crash). Nothing was imported." % [ver, MIN_VERSION, MIN_VERSION]
 	return ""
 
-## Read the package version from the Unity UPM manifest (`<pkg>/package.json`), or "" if unreadable.
+## Read the package version from the Unity UPM manifest, `<pkg>/package.json`, or return "" when it
+## is unreadable.
 func _package_version(pkg: String) -> String:
 	var pj := pkg.path_join("package.json")
 	if not FileAccess.file_exists(pj):
@@ -211,8 +217,8 @@ func _package_version(pkg: String) -> String:
 	f.close()
 	return str(data.get("version", "")) if typeof(data) == TYPE_DICTIONARY else ""
 
-## True if semver `a` is older than `b`, comparing the dot-separated numeric core (any -pre / +build
-## suffix is ignored). Missing components read as 0 (so "3.1" == "3.1.0").
+## True when semver `a` is older than `b`, comparing the dot-separated numeric core and ignoring
+## any -pre or +build suffix. A missing component reads as 0, so "3.1" equals "3.1.0".
 func _version_lt(a: String, b: String) -> bool:
 	var pa := a.split("-")[0].split("+")[0].split(".")
 	var pb := b.split("-")[0].split("+")[0].split(".")
@@ -223,11 +229,13 @@ func _version_lt(a: String, b: String) -> bool:
 			return na < nb
 	return false
 
-## Extract a .tar.gz into `dest` using the system tar (bsdtar on Win10+, native tar on macOS/Linux).
+## Extract a .tar.gz into `dest` with the system tar: bsdtar on Windows 10 and later, the native
+## tar on macOS and Linux.
 func _extract(archive: String, dest: String, log: PackedStringArray) -> int:
 	var tar := "tar"
 	if OS.get_name() == "Windows":
-		# Use System32\tar.exe explicitly: a GNU tar on PATH reads the `C:` in a Windows path as a host.
+		# Use System32\tar.exe explicitly, because a GNU tar on PATH reads the `C:` in a Windows path as a
+		# host.
 		var sysroot := OS.get_environment("SystemRoot")
 		if sysroot.is_empty():
 			sysroot = "C:/Windows"
@@ -240,8 +248,9 @@ func _extract(archive: String, dest: String, log: PackedStringArray) -> int:
 		log.append("tar exit %d: %s" % [code, "\n".join(out)])
 	return OK if code == 0 else FAILED
 
-## Return the package root under `base`: `base` itself if it holds Runtime/Plugins/Android, else a
-## `package/` child, else the first child dir that holds it. Empty string if none.
+## Return the package root under `base`: `base` itself when it holds Runtime/Plugins/Android,
+## otherwise a `package/` child, otherwise the first child dir that holds it. It returns an empty
+## string when none does.
 func _find_package_root(base: String) -> String:
 	if DirAccess.dir_exists_absolute(base.path_join("Runtime/Plugins/Android")):
 		return base
@@ -254,7 +263,8 @@ func _find_package_root(base: String) -> String:
 			return cand
 	return ""
 
-## Copy one file if present; append a log line, or record it as missing. Returns whether it copied.
+## Copy one file when it is present, appending a log line, or record it as missing. It returns
+## whether it copied.
 func _copy(src: String, dst: String, label: String, log: PackedStringArray, missing) -> bool:
 	if not FileAccess.file_exists(src):
 		log.append("MISS " + label.strip_edges())
@@ -270,7 +280,7 @@ func _copy(src: String, dst: String, label: String, log: PackedStringArray, miss
 	log.append(label)
 	return true
 
-## Recursively delete a directory (Godot has no built-in recursive remove).
+## Recursively delete a directory, which Godot has no built-in call for.
 func _rmtree(path: String) -> void:
 	var d := DirAccess.open(path)
 	if d == null:

@@ -7,28 +7,28 @@
 #                                                        packed via godot_xreal.gdextension)
 #   - 7 .aar           -> addons/godot_xreal/android/  (shipped into the APK by export_plugin.gd:
 #                                                        Java/JNI layer + manifest merge; Gradle
-#                                                        also merges each .aar's jni/arm64-v8a/*.so
-#                                                        — the NR libs — into the APK, so they are
+#                                                        also merges each .aar's jni/arm64-v8a/*.so,
+#                                                        the NR libs, into the APK, so they are
 #                                                        NOT extracted separately)
 #   - nr_plugins.json  -> addons/godot_xreal/android/  (NR perception manifest; makes the loader
-#                                                        load libnr_image_tracking.so — staged into
+#                                                        load libnr_image_tracking.so, staged into
 #                                                        the APK's assets/ by export_plugin.gd)
 #   - trackableImageTools -> addons/godot_xreal/tools/ (host build tool, NOT in the APK: generates
 #                                                        the image-tracking DB blob from PNGs)
 #
-# Extraction only — the XrealBridge Java sources are compiled by the export's gradle build
-# (export_plugin.gd stages them into the build template), not here.
+# Extraction only: the export's gradle build compiles the XrealBridge Java sources, with
+# export_plugin.gd staging them into the build template, so that does not happen here.
 #
-# Nothing is downloaded — you supply a local copy of the package. nractivitylife*.aar is
+# Nothing is downloaded: you supply a local copy of the package. nractivitylife*.aar is
 # DELIBERATELY EXCLUDED: its NRXRActivity/NRXRApp launcher is Unity-specific (instantiates
 # com.unity3d.player.UnityPlayer) and must not ship in a Godot app. See docs/guides/android-setup.md.
 #
 # Usage:
 #   ./scripts/vendor_xreal_libs.sh <package-root-or-com.xreal.xr.tar.gz>
 #
-#   <package>   either the Unity package root (the folder containing Runtime/Plugins/Android)
-#               or the com.xreal.xr.tar.gz archive itself — the archive is extracted to a temp
-#               dir (removed afterwards) and its `package/` root is used
+#   <package>   either the Unity package root, the folder containing Runtime/Plugins/Android,
+#               or the com.xreal.xr.tar.gz archive itself, which is extracted to a temp dir,
+#               removed afterwards, and whose `package/` root is used
 
 set -uo pipefail
 
@@ -63,7 +63,7 @@ if [ -f "$pkg" ]; then
     if [ -d "$temp_extract/package" ]; then
         pkg="$temp_extract/package"
     else
-        # No `package/` root — fall back to whichever top-level dir holds Runtime/Plugins/Android.
+        # No `package/` root, so fall back to whichever top-level dir holds Runtime/Plugins/Android.
         pkg=""
         for d in "$temp_extract"/*/; do
             if [ -d "${d}Runtime/Plugins/Android" ]; then pkg="${d%/}"; break; fi
@@ -88,9 +88,9 @@ pkg_ver="$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$p
 ver_core="${pkg_ver%%[-+]*}"
 if [ "$ver_core" != "$MIN_VERSION" ] && \
    [ "$(printf '%s\n%s\n' "$ver_core" "$MIN_VERSION" | sort -V | head -1)" = "$ver_core" ]; then
-    die "com.xreal.xr $pkg_ver is too old — this addon needs $MIN_VERSION or newer (the native offsets were RE'd against $MIN_VERSION; an older package can crash). Nothing was vendored."
+    die "com.xreal.xr $pkg_ver is too old: this addon needs $MIN_VERSION or newer (the native offsets were RE'd against $MIN_VERSION; an older package can crash). Nothing was vendored."
 fi
-echo "com.xreal.xr version $pkg_ver (>= $MIN_VERSION) — ok"
+echo "com.xreal.xr version $pkg_ver (>= $MIN_VERSION): ok"
 
 jni_dir="$repo_root/jniLibs/arm64-v8a"
 addon_dir="$repo_root/addons/godot_xreal/android"
@@ -104,8 +104,9 @@ for lib in "${core_libs[@]}"; do
     echo "so   $lib"
 done
 
-# libmedia_codec.so lives under the Camera Features plugin path (the FPV HW encoder — see
-# docs/plans/fpv-streaming-plan.md). Copy it into jniLibs too (listed in godot_xreal.gdextension).
+# libmedia_codec.so lives under the Camera Features plugin path; it is the FPV HW encoder, see
+# docs/plans/fpv-streaming-plan.md. Copy it into jniLibs too, where godot_xreal.gdextension
+# lists it.
 media_codec_src="$pkg/Runtime/Scripts/Android/Camera Features/Plugins/Android/arm64/libmedia_codec.so"
 if [ -f "$media_codec_src" ]; then
     cp -f "$media_codec_src" "$jni_dir/libmedia_codec.so"
@@ -118,8 +119,8 @@ fi
 #        the exact file names are hardcoded there). Besides the Java/JNI layer + manifest merge,
 #        the aars carry the NR native libs at jni/arm64-v8a/ (nr_api.aar: libnr_api.so /
 #        libnr_plugin_6dof.so / libnr_rgb_camera.so, nr_loader.aar: libnr_loader.so,
-#        nr_common.aar: libnr_libusb.so, nr_spatial_anchor.aar: libnr_spatial_anchor.so, nr_image_tracking.aar: libnr_image_tracking.so) — Gradle
-#        merges those into the APK.
+#        nr_common.aar: libnr_libusb.so, nr_spatial_anchor.aar: libnr_spatial_anchor.so,
+#        nr_image_tracking.aar: libnr_image_tracking.so), and Gradle merges those into the APK.
 #
 # Log-Control is REQUIRED whenever GlassesDisplayPlugEvent ships: its GlassesInitProvider
 # (a ContentProvider that auto-runs at app startup) references com.xreal.logcontrol.LogControl,
@@ -176,9 +177,9 @@ done
 
 echo ""
 if [ ${#missing[@]} -gt 0 ]; then
-    echo -e "\033[31mINCOMPLETE — still missing:\033[0m"
+    echo -e "\033[31mINCOMPLETE, still missing:\033[0m"
     printf '  - %s\n' "${missing[@]}"
     exit 1
 fi
 echo -e "\033[32mDone: 3 core .so -> jniLibs/arm64-v8a, 7 .aar + nr_plugins.json -> addons/godot_xreal/android, trackableImageTools -> addons/godot_xreal/tools.\033[0m"
-echo "(NR .so ship via the .aar; nractivitylife*.aar deliberately excluded — Unity-only launcher.)"
+echo "(NR .so ship via the .aar; nractivitylife*.aar deliberately excluded: Unity-only launcher.)"

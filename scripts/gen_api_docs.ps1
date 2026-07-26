@@ -1,5 +1,5 @@
 #!/usr/bin/env pwsh
-# Regenerate the Markdown class reference in docs/api/ — one page per class the addon exposes to
+# Regenerate the Markdown class reference in docs/api/, one page per class the addon exposes to
 # GDScript, from the doc comments as the single source of truth:
 #   src/*.rs                     `///` comments -> gdext `register-docs` XML (src/api_docs.rs reads it)
 #   addons/godot_xreal/**/*.gd   `##`  comments -> Godot's own doctool, run below
@@ -15,13 +15,13 @@
 #   pwsh scripts/gen_api_docs.ps1                      # (re)write docs/api/
 #   pwsh scripts/gen_api_docs.ps1 -Check               # verify the committed pages are in sync
 #
-# The Godot binary is a build variable, resolved in SCons order — an explicit command-line value wins
-# over the environment, which wins over the default:
+# The Godot binary is a build variable, resolved in SCons order: an explicit command-line value
+# wins over the environment, which wins over the default:
 #
 #   pwsh scripts/gen_api_docs.ps1 -Godot 'C:\path\Godot_v4.7-stable_win64.exe'
 #   pwsh scripts/gen_api_docs.ps1 godot='C:\path\Godot_v4.7-stable_win64.exe'   # SCons-style
 #   $env:GODOT = 'C:\path\Godot_v4.7-stable_win64.exe'; pwsh scripts/gen_api_docs.ps1
-#   (default: `godot`, i.e. on PATH — same variable name the build scripts use)
+#   (default: `godot`, i.e. on PATH, the same variable name the build scripts use)
 param(
 	[switch]$Check,
 	[string]$Godot,
@@ -53,11 +53,12 @@ try {
 		throw "Godot must be 4.7 ('$Godot --version' = '$ver'). Pass -Godot <path> / godot=<path>, or set `$env:GODOT."
 	}
 
-	# --gdscript-docs documents every script it finds; src/api_docs.rs drops the editor-only ones.
-	# Pipe the output through a cmdlet (Out-String), do not just assign it: the Windows Godot build is
-	# a GUI-subsystem binary, so a bare call — even `$out = & godot …` — hands control back before the
-	# process has written anything and the next step reads an empty directory. Only a real pipeline
-	# blocks on the child's stdout until it exits. Kept in a variable so a success stays quiet.
+	# --gdscript-docs documents every script it finds, and src/api_docs.rs drops the editor-only ones.
+	# Pipe the output through a cmdlet, Out-String, rather than simply assigning it: the Windows Godot
+	# build is a GUI-subsystem binary, so a bare call, even `$out = & godot …`, hands control back
+	# before the process has written anything and the next step reads an empty directory. Only a real
+	# pipeline blocks on the child's stdout until it exits. It is kept in a variable so a success
+	# stays quiet.
 	$out = & $Godot --headless --path $root --doctool $xmlDir --gdscript-docs res://addons/godot_xreal 2>&1 | Out-String
 	if ($LASTEXITCODE -ne 0) { Write-Host $out; throw "godot --doctool --gdscript-docs failed" }
 

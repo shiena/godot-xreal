@@ -2,9 +2,9 @@
 //! `libXREALXRPlugin.so`.
 //!
 //! `libXREALXRPlugin.so` is a **Unity native plugin**: Unity's engine calls
-//! `UnityPluginLoad(IUnityInterfaces*)` at startup, and `InitUserDefinedSettings` wires Unity
-//! XR display/input providers through that registry. Godot never does this, so the stored
-//! `IUnityInterfaces*` is null and `LoadDisplay` segfaults (device-confirmed).
+//! `UnityPluginLoad(IUnityInterfaces*)` at startup, and `InitUserDefinedSettings` wires the Unity
+//! XR display and input providers through that registry. Godot never does this, so the stored
+//! `IUnityInterfaces*` is null and `LoadDisplay` segfaults, as confirmed on device.
 //!
 //! We provide a tiny `IUnityInterfaces` whose `GetInterface` hands back:
 //! - `IUnityGraphics` reporting **OpenGL ES 3**.
@@ -12,13 +12,14 @@
 //!   structs into those registries; Godot later invokes only initialize/start to mirror the
 //!   Unity lifecycle enough for `NativeHMD` / `NativePerception` creation.
 //!
-//! Struct layouts and the graphics GUID/enum constants come from Unity's PUBLIC PluginAPI
-//! headers (`IUnityInterface.h`, `IUnityGraphics.h`). The XR GUIDs/provider layouts are
-//! **RE / unverified**, recovered from `libXREALXRPlugin.so` AArch64 disassembly and
+//! The struct layouts and the graphics GUID and enum constants come from Unity's PUBLIC PluginAPI
+//! headers, `IUnityInterface.h` and `IUnityGraphics.h`. The XR GUIDs and provider layouts are
+//! **RE'd and unverified**, recovered from `libXREALXRPlugin.so` AArch64 disassembly and its
 //! relocation tables; see `docs/reference/reverse-engineering.md`.
 
-// Retains RE'd Unity provider layouts + the shelved texture-provider experiment as reference (unused
-// on the active path), and desktop never drives this path. Allow dead code on both targets.
+// It retains the RE'd Unity provider layouts and the shelved texture-provider experiment for
+// reference, both unused on the active path, and desktop never drives this path at all. Allow
+// dead code on both targets.
 #![allow(dead_code)]
 
 use std::ffi::{c_char, c_void, CStr};
@@ -63,8 +64,8 @@ const IUNITY_XR_INPUT_GUID: UnityInterfaceGuid = UnityInterfaceGuid {
     low: 0x942B_CA0C_8EF1_3193,
 };
 
-/// `IUnityGraphics` (IUnityGraphics.h) — a struct of function pointers. The plugin calls
-/// the first member (`GetRenderer`) via `ldr x8,[iface]; blr x8`.
+/// `IUnityGraphics` from IUnityGraphics.h, a struct of function pointers. The plugin calls the
+/// first member, `GetRenderer`, through `ldr x8,[iface]; blr x8`.
 #[repr(C)]
 struct IUnityGraphics {
     get_renderer: extern "C" fn() -> i32,
@@ -126,10 +127,11 @@ struct RegisteredGfxThreadProvider {
     populate_next_frame_desc: Option<PopulateNextFrameDescCallback>,
 }
 
-/// `IUnityXRDisplayInterface` (Unity XR SDK `IUnityXRDisplay.h`). Slot order is confirmed by
-/// disassembly of the `DisplayManager` wrappers that call each slot (see
-/// `docs/plans/frame-submission-plan.md`). The SDK reaches through +0x18/+0x20/+0x28 to make the engine
-/// allocate/query/free its render textures; the earlier 3-member struct was truncated there.
+/// `IUnityXRDisplayInterface`, from the Unity XR SDK's `IUnityXRDisplay.h`. Disassembly of the
+/// `DisplayManager` wrappers that call each slot confirms the slot order; see
+/// `docs/plans/frame-submission-plan.md`. The SDK reaches through +0x18, +0x20 and +0x28 to make
+/// the engine allocate, query and free its render textures, and the earlier 3-member struct was
+/// truncated there.
 #[repr(C)]
 struct IUnityXrDisplay {
     register_lifecycle_provider:
@@ -152,11 +154,11 @@ struct IUnityXrDisplay {
 /// `UnityXRTextureData` union (8 bytes = `nativePtr` | `referenceTextureId`; verified via the reference
 /// app's IL2CPP managed mirror).
 ///
-/// Version caveat: Unity's newer XR SDK (Unity 6) inserts `shadingRateFormat` (int32) + `shadingRate`
-/// (`UnityXRTextureData`) between `depth` and `width`, making the struct 0x40 bytes with width→+0x30.
-/// The 3.1.0 plugin we vendor predates that, so this 0x30 layout is correct here — but if the vendored
-/// plugin is ever rebuilt against a newer SDK, add those two fields (else CreateTexture reads garbage
-/// width/height).
+/// Version caveat: Unity's newer XR SDK, in Unity 6, inserts `shadingRateFormat`, an int32, and
+/// `shadingRate`, a `UnityXRTextureData`, between `depth` and `width`, making the struct 0x40 bytes
+/// and moving width to +0x30. The 3.1.0 plugin we vendor predates that, so this 0x30 layout is
+/// correct here. Should the vendored plugin ever be rebuilt against a newer SDK, add those two
+/// fields, or CreateTexture reads garbage width and height.
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct UnityXrRenderTextureDesc {
@@ -180,29 +182,30 @@ struct XrTexture {
     gl_id: u32,
     width: i32,
     height: i32,
-    /// Number of array layers: 1 for a plain `GL_TEXTURE_2D` (multipass), 2 for a
-    /// `GL_TEXTURE_2D_ARRAY` (Multiview / Single-Pass-Instanced — both eyes in one texture).
+    /// Number of array layers: 1 for a plain `GL_TEXTURE_2D` in multipass, 2 for a
+    /// `GL_TEXTURE_2D_ARRAY` in Multiview, or Single-Pass-Instanced, which holds both eyes in one
+    /// texture.
     layers: i32,
-    /// The `color_format` and `flags` the SDK passed to `CreateTexture`. `QueryTextureDesc` must echo
-    /// them back (esp. for the Multiview 2-layer array — reporting a 1-layer/flags-0 descriptor for a
-    /// 2-layer object mis-registers the NR swapchain so layer 1 never gets our content; the right eye
-    /// then shows a fixed cleared gray. See docs/archive/codex-righteye-analysis.md.
+    /// The `color_format` and `flags` the SDK passed to `CreateTexture`. `QueryTextureDesc` has to echo
+    /// them back, especially for the Multiview 2-layer array: reporting a 1-layer, flags-0 descriptor
+    /// for a 2-layer object mis-registers the NR swapchain, so layer 1 never gets our content and the
+    /// right eye shows a fixed cleared gray. See docs/archive/codex-righteye-analysis.md.
     color_format: u32,
     flags: u32,
-    /// Whether WE allocated `gl_id` (the engine-allocated GLES path, `desc.color == 0`) and are
-    /// therefore responsible for `glDeleteTextures`. When the SDK handed us an existing native
-    /// texture (`desc.color != 0`, the adopted-swapchain path) the SDK owns it — we must NOT delete
-    /// it. See `xr_create_texture` / `xr_destroy_texture`.
+    /// Whether WE allocated `gl_id`, which is the engine-allocated GLES path with `desc.color == 0`,
+    /// and are therefore responsible for `glDeleteTextures`. When the SDK handed us an existing native
+    /// texture, meaning `desc.color != 0` on the adopted-swapchain path, the SDK owns it and we must
+    /// NOT delete it. See `xr_create_texture` and `xr_destroy_texture`.
     owned: bool,
 }
 
 static XR_TEXTURES: Mutex<Vec<XrTexture>> = Mutex::new(Vec::new());
 static XR_TEXTURE_NEXT_ID: AtomicU32 = AtomicU32::new(1);
 static XR_QUERY_LOG: AtomicU32 = AtomicU32::new(0);
-/// GL texture names queued for deletion by `xr_destroy_texture` (which may run off the render
-/// thread during teardown, where our EGL context is not current). Drained at the top of
+/// GL texture names queued for deletion by `xr_destroy_texture`, which may run off the render
+/// thread during teardown, where our EGL context is not current. They are drained at the top of
 /// `run_render_thread_tick`, which runs on the render thread with the context current. Only
-/// engine-allocated (owned) textures are queued; SDK-adopted textures are the SDK's to free.
+/// engine-allocated, owned textures are queued; SDK-adopted textures are the SDK's to free.
 static PENDING_TEX_DELETES: Mutex<Vec<u32>> = Mutex::new(Vec::new());
 
 /// Per-eye projection + eye pose, read from `UnityXRNextFrameDesc.renderPasses[k].renderParams[0]`
@@ -238,10 +241,10 @@ pub fn stereo_projection() -> [EyeProj; 2] {
     *STEREO_PROJ.lock().expect("stereo proj mutex")
 }
 
-/// Per-eye source GL textures + size, published each frame from `XrealHeadTracker::process`.
-/// When both are non-zero these are offscreen SubViewport textures (real stereo); when both are
-/// zero but the size is set, the frame tick blits Godot's default framebuffer into both eyes
-/// (mono fallback); when nothing is set it draws the test pattern.
+/// Per-eye source GL textures and size, published each frame from `XrealHeadTracker::process`.
+/// When both are non-zero they are offscreen SubViewport textures, giving real stereo. When both
+/// are zero but the size is set, the frame tick blits Godot's default framebuffer into both eyes,
+/// the mono fallback. When nothing is set it draws the test pattern.
 static GODOT_EYE_TEX_L: AtomicU32 = AtomicU32::new(0);
 static GODOT_EYE_TEX_R: AtomicU32 = AtomicU32::new(0);
 static GODOT_SRC_W: AtomicI32 = AtomicI32::new(0);
@@ -255,8 +258,8 @@ pub fn set_godot_eye_sources(left: u32, right: u32, width: i32, height: i32) {
     GODOT_SRC_H.store(height, Ordering::Relaxed);
 }
 
-/// Mono fallback: publish just the window size (no offscreen textures) so the frame tick blits
-/// the default framebuffer into both eyes.
+/// Mono fallback: publish the window size alone, with no offscreen textures, so the frame tick
+/// blits the default framebuffer into both eyes.
 pub fn set_godot_source_size(width: i32, height: i32) {
     GODOT_EYE_TEX_L.store(0, Ordering::Relaxed);
     GODOT_EYE_TEX_R.store(0, Ordering::Relaxed);
@@ -280,8 +283,8 @@ struct IUnityXrDisplayHelper {
     property_to_id: extern "C" fn(*mut c_void, *const c_char, i32) -> i32,
 }
 
-/// Vector aggregates the Unity input-state helpers receive BY VALUE (AArch64 HFAs → s0..s3).
-/// They must be real structs so the register convention matches the SDK's call sites.
+/// Vector aggregates the Unity input-state helpers receive BY VALUE, as AArch64 HFAs in s0..s3.
+/// They have to be real structs so the register convention matches the SDK's call sites.
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct UnityXrVector2 {
@@ -306,17 +309,18 @@ struct UnityXrVector4 {
 
 /// `IUnityXRInputInterface` (Unity XR SDK `IUnityXRInput.h`), full table through +0xd8.
 ///
-/// RE (docs/archive/codex-6dof-crash-analysis.md): `InputManager::UpdateHMDState` unconditionally
-/// calls `DeviceState_Set{Binary,DiscreteState,Axis3D,Rotation}Value` through slots
-/// +0x90/+0x98/+0xb0/+0xb8 on BOTH updateType paths, and `FillHMDDefinition` uses
-/// +0x40/+0x48/+0x50/+0x78. With the earlier 3-slot table those `ldr [table,#slot]` loads read
-/// unrelated static data and `blr`'d into the middle of arbitrary Rust code — the delayed GLThread
-/// SIGSEGV. XREAL discards every state-helper return value, so success no-ops are sufficient; only
-/// `DeviceDefinition_AddFeature*` (returned feature index is stored in `IM+0xc8..+0xec` and passed
-/// back to the state setters) and `GetPlatformData` (out-pointer) have meaningful outputs.
+/// The RE, in docs/archive/codex-6dof-crash-analysis.md: `InputManager::UpdateHMDState`
+/// unconditionally calls `DeviceState_Set{Binary,DiscreteState,Axis3D,Rotation}Value` through slots
+/// +0x90, +0x98, +0xb0 and +0xb8 on BOTH updateType paths, and `FillHMDDefinition` uses +0x40,
+/// +0x48, +0x50 and +0x78. With the earlier 3-slot table those `ldr [table,#slot]` loads read
+/// unrelated static data and `blr`'d into the middle of arbitrary Rust code, which is the delayed
+/// GLThread SIGSEGV. XREAL discards every state-helper return value, so success no-ops suffice.
+/// Only `DeviceDefinition_AddFeature*`, whose returned feature index is stored in `IM+0xc8..+0xec`
+/// and passed back to the state setters, and `GetPlatformData`, with its out-pointer, have
+/// meaningful outputs.
 ///
-/// `Bone`/`Hand`/`Eyes` are >16-byte aggregates, which AArch64 passes by hidden reference — an
-/// opaque pointer models that ABI exactly; the no-ops never read it.
+/// `Bone`, `Hand` and `Eyes` are aggregates larger than 16 bytes, which AArch64 passes by hidden
+/// reference, so an opaque pointer models that ABI exactly and the no-ops never read it.
 #[repr(C)]
 struct IUnityXrInput {
     register_lifecycle_provider:
@@ -362,7 +366,7 @@ struct IUnityXrMeshing {
         extern "C" fn(*const c_char, *const c_char, *const UnityXrLifecycleProvider) -> i32,
 }
 
-/// `IUnityInterfaces` (IUnityInterface.h) — the registry of interface getters.
+/// `IUnityInterfaces`, from IUnityInterface.h: the registry of interface getters.
 #[repr(C)]
 struct IUnityInterfaces {
     get_interface: extern "C" fn(*const UnityInterfaceGuid) -> *mut c_void,
@@ -410,11 +414,12 @@ static INPUT_LIFECYCLE: Mutex<Option<RegisteredLifecycle>> = Mutex::new(None);
 static MESH_LIFECYCLE: Mutex<Option<RegisteredLifecycle>> = Mutex::new(None);
 static GFX_THREAD_PROVIDER: Mutex<Option<RegisteredGfxThreadProvider>> = Mutex::new(None);
 static TEXTURE_PROVIDER: Mutex<Option<RegisteredTextureProvider>> = Mutex::new(None);
-/// The XREAL input provider callbacks (COPIED at registration — the struct the SDK hands
-/// `RegisterInputProvider` is transient and its memory is reused after the call, so we must copy the
-/// function addresses, which point into stable `libXREALXRPlugin.so` code). RE (SDK 3.1.0, device
-/// struct dump): `+0x20` = `$_9` → `InputManager::UpdateDeviceState` (the per-frame HMD update Unity
-/// normally drives), `+0x30` = `$_11` → `NativePerception::Recenter` (the real recenter that resets
+/// The XREAL input provider callbacks, COPIED at registration: the struct the SDK hands
+/// `RegisterInputProvider` is transient and its memory is reused after the call, so we copy the
+/// function addresses, which point into stable `libXREALXRPlugin.so` code. From the RE of SDK
+/// 3.1.0 and a device struct dump: `+0x20` is `$_9`, `InputManager::UpdateDeviceState`, the
+/// per-frame HMD update Unity normally drives, and `+0x30` is `$_11`,
+/// `NativePerception::Recenter`, the real recenter that resets
 /// the perception origin the compositor reprojects against).
 #[derive(Clone, Copy)]
 struct RegisteredInputProvider {
@@ -426,8 +431,8 @@ static LIFECYCLE_STARTED: AtomicBool = AtomicBool::new(false);
 static GFX_THREAD_STARTED: AtomicBool = AtomicBool::new(false);
 static FRAME_TICK_COUNT: AtomicU64 = AtomicU64::new(0);
 
-/// Current OS thread id — used to tell whether the SDK drives any callback from its own
-/// rendering thread vs. Godot's render thread. Returns 0 off-Android.
+/// Current OS thread id, used to tell whether the SDK drives a callback from its own rendering
+/// thread or from Godot's. It returns 0 off Android.
 fn current_tid() -> i64 {
     #[cfg(target_os = "android")]
     {
@@ -614,9 +619,9 @@ extern "C" fn xr_register_gfx_thread_provider(
 
 extern "C" fn xr_register_input_provider(context: *mut c_void, callbacks: *const c_void) -> i32 {
     if !callbacks.is_null() {
-        // Dump the provider struct's first 10 pointer words so we can find the per-frame tick
-        // callback (a function inside libXREALXRPlugin.so that wraps InputManager::UpdateHMDState /
-        // UpdateEyeData). We only READ + store here — no call — so this is crash-safe.
+        // Dump the provider struct's first 10 pointer words so we can find the per-frame tick callback,
+        // a function inside libXREALXRPlugin.so that wraps InputManager::UpdateHMDState and
+        // UpdateEyeData. We only READ and store here, and never call, so this is crash-safe.
         let words: [usize; 10] = unsafe { *(callbacks as *const [usize; 10]) };
         let dump: Vec<String> = words
             .iter()
@@ -627,8 +632,8 @@ extern "C" fn xr_register_input_provider(context: *mut c_void, callbacks: *const
             "[xreal] input provider @ {callbacks:?} ctx={context:?} struct: {}",
             dump.join(" ")
         );
-        // Copy the callback CODE addresses now (the struct itself is transient — words[6] = +0x30
-        // recenter, words[4] = +0x20 update-device-state).
+        // Copy the callback CODE addresses now, because the struct itself is transient: words[6] is the
+        // +0x30 recenter and words[4] the +0x20 update-device-state.
         *INPUT_PROVIDER.lock().expect("input provider mutex") = Some(RegisteredInputProvider {
             recenter: words[6],
             update_device_state: words[4],
@@ -639,9 +644,10 @@ extern "C" fn xr_register_input_provider(context: *mut c_void, callbacks: *const
     0
 }
 
-/// Invoke the XREAL input provider's **recenter** callback (`HandleRecenter`), which the SDK wires to
-/// `NativePerception::Recenter()` — the real recenter that resets the *perception tracking origin*
-/// the glasses compositor reprojects against (unlike `RecenterGlasses`, which is a no-op on our pose).
+/// Invoke the XREAL input provider's **recenter** callback, `HandleRecenter`, which the SDK wires
+/// to `NativePerception::Recenter()`, the real recenter that resets the *perception tracking
+/// origin* the glasses compositor reprojects against. `RecenterGlasses`, by contrast, is a no-op on
+/// our pose.
 ///
 /// RE (SDK 3.1.0, device-dumped struct): the provider callbacks live at
 /// `RegisterInputProvider(callbacks)`; the recenter lambda `$_11::__invoke(void*, void*)` sits at
@@ -685,14 +691,14 @@ pub fn call_input_update_hmd() -> i32 {
     // plain zeroed buffer is fine (it is NOT a reconstructed UnityXRInputDeviceState).
     let mut buf = [0u8; 1024];
     let state = buf.as_mut_ptr() as *mut c_void;
-    // deviceId 0 = HMD. Both update types are needed each frame — RE
-    // (docs/archive/codex-6dof-crash-analysis.md + codex-headlock-analysis.md), UpdateHMDState
+    // deviceId 0 is the HMD. Both update types are needed each frame. Per the RE in
+    // docs/archive/codex-6dof-crash-analysis.md and codex-headlock-analysis.md, UpdateHMDState
     // @0x7aa3c splits on `cmp w1,#1` @0x7aa68:
     //  - updateType 0 (Dynamic) uniquely stores the live 7-float head pose at InputManager+0x60
-    //    (`stp` sequence @0x7acec..0x7acf8) — the pose basis that keeps POSITION world-locked
+    //    (the `stp` sequence @0x7acec..0x7acf8), the pose basis that keeps POSITION world-locked
     //    (6DoF). Without it, translation is cancelled by the compositor.
     //  - updateType 1 (BeforeRender) uniquely runs DisplayManager::OnBeforeRender @0x66fa8,
-    //    refreshing DM+0x100 which SubmitFrame passes to NRFrameSetRenderingPose — the ROTATION
+    //    refreshing DM+0x100, which SubmitFrame passes to NRFrameSetRenderingPose: the ROTATION
     //    head-lock.
     // Calling this every frame is safe now that IUnityXrInput carries the full helper table:
     // both paths unconditionally call slots +0x90/+0x98/+0xb0/+0xb8, which previously ran off our
@@ -707,9 +713,9 @@ extern "C" fn xr_set_device_connected(_context: *mut c_void, device_id: i32) -> 
 }
 
 extern "C" fn xr_register_texture_provider(context: *mut c_void) -> i32 {
-    // XREAL calls this to pass its internal texture-provider object (context).
-    // `DisplayManager::QueryTextureDesc` references `DisplayManager+0x8` and `+0x38` which
-    // the SDK populates internally during NativeRendering::Start — we just log here.
+    // XREAL calls this to pass its internal texture-provider object, the context.
+    // `DisplayManager::QueryTextureDesc` references `DisplayManager+0x8` and `+0x38`, which the SDK
+    // populates internally during NativeRendering::Start, so we only log here.
     godot::global::godot_print!("[xreal] RegisterTextureProvider: context={context:?}");
     if !context.is_null() {
         // Try to read the first pointer from context to diagnose the vtable layout.
@@ -760,11 +766,11 @@ extern "C" fn xr_create_texture(
         1
     };
     // If the SDK passed an existing native texture (color != 0), CreateBuffer took the
-    // `[DM+0x10]==0x15` path (GetSwapChainBuffers → CreateTexture(color=that buffer)); the SDK
-    // owns/registers that swapchain texture and expects the engine to render INTO it. In that
-    // case SetSwapChainBuffers early-returns without QueryTextureDesc — so we must adopt the
-    // provided texture rather than allocate our own. color == 0 → the SDK expects the engine to
-    // allocate (the GLES path).
+    // the `[DM+0x10]==0x15` path, where GetSwapChainBuffers leads to CreateTexture(color=that
+    // buffer). The SDK owns and registers that swapchain texture and expects the engine to render
+    // INTO it. In that case SetSwapChainBuffers early-returns without QueryTextureDesc, so we have to
+    // adopt the provided texture rather than allocate our own. A `color == 0` means the SDK expects
+    // the engine to allocate, which is the GLES path.
     let gl_id = if desc.color != 0 {
         desc.color as u32
     } else if layers >= 2 {
@@ -876,9 +882,10 @@ extern "C" fn xr_query_texture_desc(
 
 /// `IUnityXRDisplay::DestroyTexture` (+0x28). Drop our record and queue the GL texture for deletion.
 /// Deletion is deferred (this can be called off the render thread during teardown, where our EGL
-/// context is not current): we push the GL name into `PENDING_TEX_DELETES`, which the render thread
-/// drains in `run_render_thread_tick` with the context current. Only textures we allocated (`owned`)
-/// are queued — an SDK-adopted swapchain texture (`color != 0` at creation) belongs to the SDK.
+/// context is not current: we push the GL name into `PENDING_TEX_DELETES`, which the render thread
+/// drains in `run_render_thread_tick` with the context current. Only textures we allocated, the
+/// owned ones, are queued, because an SDK-adopted swapchain texture, created with `color != 0`,
+/// belongs to the SDK.
 extern "C" fn xr_destroy_texture(_handle: *mut c_void, tex_id: u32) -> i32 {
     let mut textures = XR_TEXTURES.lock().expect("xr textures mutex");
     if let Some(pos) = textures.iter().position(|t| t.id == tex_id) {
@@ -976,8 +983,9 @@ extern "C" fn xr_def_set_bool(_def: *mut c_void, _v: bool) -> i32 {
 }
 
 /// Feature indices handed out by the `AddFeature*` builders. XREAL stores the returned index per
-/// feature (`IM+0xc8..+0xec` for the HMD) and passes it back to the state setters, so indices only
-/// need to be unique — a process-global counter is fine (Unity numbers per definition instead).
+/// feature, at `IM+0xc8..+0xec` for the HMD, and passes it back to the state setters, so the
+/// indices only need to be unique and a process-global counter suffices. Unity numbers them per
+/// definition instead.
 static XR_FEATURE_INDEX: AtomicU32 = AtomicU32::new(0);
 
 extern "C" fn xr_def_add_feature(
@@ -1038,7 +1046,7 @@ extern "C" fn xr_state_set_rotation(_state: *mut c_void, index: u32, value: Unit
     // One-shot proof the SDK now reaches the REAL +0xb8 slot (previously an out-of-bounds blr).
     if !XR_SET_ROTATION_LOGGED.swap(true, Ordering::Relaxed) {
         godot::global::godot_print!(
-            "[xreal] DeviceState_SetRotationValue(idx={index}, quat=({:.3},{:.3},{:.3},{:.3})) — \
+            "[xreal] DeviceState_SetRotationValue(idx={index}, quat=({:.3},{:.3},{:.3},{:.3})): \
              full input interface table active",
             value.x,
             value.y,
@@ -1370,10 +1378,11 @@ pub fn populate_registered_display_frame_desc_with_ptr(desc: *mut c_void) -> i32
 /// On subsequent calls: drives `PopulateNextFrameDesc` so the SDK's GLThread always has
 /// a fresh frame handle for `SubmitCurrentFrame`.
 pub fn run_render_thread_tick() {
-    // Drain textures queued by `xr_destroy_texture` (which may run off this thread during teardown,
-    // where our EGL context is not current). We are on the render thread with the context current,
-    // so `glDeleteTextures` is safe here — this is the deferred deletion the destroy path promises,
-    // and it frees the ~8 MB eye texture (or 2-layer array) each display re-init would otherwise leak.
+    // Drain textures queued by `xr_destroy_texture`, which may run off this thread during teardown,
+    // where our EGL context is not current. We are on the render thread with the context current, so
+    // `glDeleteTextures` is safe here. This is the deferred deletion the destroy path promises, and it
+    // frees the roughly 8 MB eye texture, or 2-layer array, that each display re-init would otherwise
+    // leak.
     let pending: Vec<u32> = std::mem::take(
         &mut *PENDING_TEX_DELETES
             .lock()
@@ -1425,9 +1434,9 @@ pub fn run_render_thread_tick() {
 /// 2. On subsequent calls: re-acquires the next swapchain buffer so the XREAL GLThread's
 ///    `SubmitCurrentFrame` always has a fresh frame handle to submit.
 ///
-/// We deliberately use a temporary `desc` buffer (not `lib_base+0xdb400`) so that
-/// `0xdb410` is never modified — that gate byte must stay 0 to keep `SubmitCurrentFrame`
-/// on the safe `SetBufferViewport + NativeRendering::SubmitFrame` path.
+/// We deliberately use a temporary `desc` buffer rather than `lib_base+0xdb400`, so that `0xdb410`
+/// is never modified: that gate byte has to stay 0 to keep `SubmitCurrentFrame` on the safe
+/// `SetBufferViewport` plus `NativeRendering::SubmitFrame` path.
 pub fn run_frame_tick() {
     let n = FRAME_TICK_COUNT.fetch_add(1, Ordering::Relaxed);
 
@@ -1438,9 +1447,9 @@ pub fn run_frame_tick() {
 
     // Drive the per-frame HMD input update (→ DisplayManager::OnBeforeRender) BEFORE populating the
     // frame, so the render pose the compositor reprojects against is refreshed to the live head pose
-    // instead of freezing at session start (which world-anchors our render). Runs on the render
-    // thread — a different thread from XrealHeadTracker::process's session-manager pose read, so the
-    // two pose pipelines are not touched on the same thread in the same frame.
+    // instead of freezing at session start, which would world-anchor our render. It runs on the render
+    // thread, a different thread from XrealHeadTracker::process's session-manager pose read, so the
+    // two pose pipelines are never touched on the same thread in the same frame.
     let hmd_update = call_input_update_hmd();
     if n < 5 || n.is_multiple_of(300) {
         godot::global::godot_print!(
@@ -1455,10 +1464,10 @@ pub fn run_frame_tick() {
         return;
     };
 
-    // `desc` is a real `UnityXRNextFrameDesc`. The first call runs `OverlayBase::SetSwapChainBuffers`
-    // (registering our textures) then `AcquireFrame`; every call writes `renderPasses[k].textureId`
-    // (+0x00 / +0xfc) and `renderPassesCount` (+0x580). It MUST be a plain engine buffer — never
-    // `lib_base+0xdb400` — so the unrelated `0xdb410` CreateFrame gate stays untouched.
+    // `desc` is a real `UnityXRNextFrameDesc`. The first call runs `OverlayBase::SetSwapChainBuffers`,
+    // registering our textures, then `AcquireFrame`, and every call writes `renderPasses[k].textureId`
+    // at +0x00 and +0xfc, plus `renderPassesCount` at +0x580. It MUST be a plain engine buffer, never
+    // `lib_base+0xdb400`, so the unrelated `0xdb410` CreateFrame gate stays untouched.
     let hints = [0_u8; 0x80];
     let mut desc = [0_u8; 0x600];
     let pop_status = unsafe {

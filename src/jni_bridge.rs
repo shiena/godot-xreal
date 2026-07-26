@@ -1,27 +1,27 @@
 //! Android Activity acquisition for the XREAL session bootstrap.
 //!
-//! `InitUserDefinedSettings` needs the host `Activity` as a JNI `jobject` (the Unity SDK
-//! calls it `unityActivity`). On Android we read it from the process-wide
-//! [`ndk_context`]. If nothing has published a context yet, [`activity_ptr`] returns
-//! `None` and the session bootstrap reports "no Android Activity" (see `docs/plans/port-plan.md`).
+//! `InitUserDefinedSettings` needs the host `Activity` as a JNI `jobject`, which the Unity SDK
+//! calls `unityActivity`. On Android we read it from the process-wide [`ndk_context`]. When
+//! nothing has published a context yet, [`activity_ptr`] returns `None` and the session bootstrap
+//! reports "no Android Activity" (see `docs/plans/port-plan.md`).
 //!
-//! **Device-confirmed:** Godot does NOT populate `ndk_context` (it uses its own
-//! Java↔native bridge, not the `ndk-context`/`android-activity` crates). So
+//! **Device-confirmed:** Godot does NOT populate `ndk_context`, because it uses its own Java and
+//! native bridge rather than the `ndk-context` or `android-activity` crates, so
 //! `ndk_context::android_context()` panics with *"android context was not initialized"*.
-//! We catch that here — letting it unwind into the session `OnceLock` would leave it
-//! uninitialized and re-panic every frame ("Invalid call error code 1337" spam).
+//! We catch that here: letting it unwind into the session `OnceLock` would leave it
+//! uninitialized and re-panic every frame, spamming "Invalid call error code 1337".
 
 use std::ffi::c_void;
 
 /// The Android `Activity` `jobject` pointer to hand to `InitUserDefinedSettings`.
 ///
-/// Returns `None` on non-Android targets and whenever no Android context has been
-/// published to the process (the current case under Godot — see module docs).
+/// Returns `None` on non-Android targets, and whenever no Android context has been published to
+/// the process, which is the current case under Godot; see the module docs.
 #[cfg(target_os = "android")]
 pub fn activity_ptr() -> Option<*mut c_void> {
-    // `android_context()` panics when the process-global context is unset, which is the
-    // normal case under Godot. Catch it rather than letting it unwind (panic=unwind is
-    // active — gdext relies on it) into the session bootstrap.
+    // `android_context()` panics when the process-global context is unset, which is the normal case
+    // under Godot. Catch it rather than letting it unwind into the session bootstrap; panic=unwind is
+    // active, because gdext relies on it.
     let ctx = std::panic::catch_unwind(ndk_context::android_context).ok()?;
     let activity = ctx.context();
     (!activity.is_null()).then_some(activity)
@@ -35,10 +35,10 @@ pub fn activity_ptr() -> Option<*mut c_void> {
 /// JNI entry point called from `XrealBridge.register(Activity)` (see
 /// `android/build/src/main/java/com/godot/game/XrealBridge.java`).
 ///
-/// Godot does not populate `ndk_context`, so we do it ourselves: take the host `Activity`
-/// from the Java side and publish it (plus the `JavaVM`) into the process-global context
-/// that [`activity_ptr`] reads. A global ref is created and intentionally leaked so the
-/// `jobject` stays valid for the process lifetime. Guarded so it only initializes once.
+/// Godot does not populate `ndk_context`, so we do it ourselves: take the host `Activity` from the
+/// Java side and publish it, along with the `JavaVM`, into the process-global context that
+/// [`activity_ptr`] reads. A global ref is created and intentionally leaked so the `jobject` stays
+/// valid for the process lifetime. It is guarded so it initializes only once.
 #[cfg(target_os = "android")]
 #[no_mangle]
 pub extern "system" fn Java_com_godot_game_XrealBridge_nativeRegisterActivity<'local>(
@@ -49,8 +49,8 @@ pub extern "system" fn Java_com_godot_game_XrealBridge_nativeRegisterActivity<'l
     use std::sync::atomic::{AtomicBool, Ordering};
 
     static REGISTERED: AtomicBool = AtomicBool::new(false);
-    // Fast path: already registered. The real claim is the CAS below, AFTER both JNI handles
-    // succeed — so a transient failure here never permanently blocks a later registration attempt.
+    // Fast path: already registered. The real claim is the CAS below, AFTER both JNI handles succeed,
+    // so a transient failure here never permanently blocks a later registration attempt.
     if REGISTERED.load(Ordering::SeqCst) {
         return;
     }
@@ -60,8 +60,8 @@ pub extern "system" fn Java_com_godot_game_XrealBridge_nativeRegisterActivity<'l
         return;
     };
 
-    // Both handles are in hand; claim registration now. The CAS makes this the sole winner even if
-    // two threads passed the load above; the loser drops its global ref and returns.
+    // Both handles are in hand, so claim registration now. The CAS makes this the sole winner even
+    // when two threads passed the load above, and the loser drops its global ref and returns.
     if REGISTERED
         .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
         .is_err()
@@ -81,30 +81,31 @@ pub extern "system" fn Java_com_godot_game_XrealBridge_nativeRegisterActivity<'l
 
 /// The `MediaProjection` the user consented to, as a raw `jobject`, or null when there is none.
 ///
-/// `HWEncoderSetMediaProjection` wants exactly this: the SDK's C# passes
-/// `AndroidJavaObject.GetRawObject()`. A null projection is not a neutral value — reverse
-/// engineering showed `addInternalAudio:true` builds an `AudioPlaybackCaptureConfiguration` from it
-/// (see `docs/archive/codex-audio-mix-analysis.md`), so a null one leaves app-audio capture unstarted
-/// and the encoder's mixer with nothing to add to the microphone.
+/// `HWEncoderSetMediaProjection` wants exactly this, and the SDK's C# passes
+/// `AndroidJavaObject.GetRawObject()`. A null projection is not a neutral value: reverse
+/// engineering showed `addInternalAudio:true` builds an `AudioPlaybackCaptureConfiguration` from
+/// it (see `docs/archive/codex-audio-mix-analysis.md`), so a null one leaves app-audio capture
+/// unstarted and the encoder's mixer with nothing to add to the microphone.
 ///
-/// Backed by a global ref we own (see [`MEDIA_PROJECTION_OWNER`]), because Java-side ownership ends
-/// the moment `onProjectionReady` returns and the encoder needs the object for the whole capture.
+/// It is backed by a global ref we own (see [`MEDIA_PROJECTION_OWNER`]), because Java-side
+/// ownership ends the moment `onProjectionReady` returns while the encoder needs the object for
+/// the whole capture.
 static MEDIA_PROJECTION: std::sync::atomic::AtomicPtr<c_void> =
     std::sync::atomic::AtomicPtr::new(std::ptr::null_mut());
 
 /// Owns the global ref behind [`MEDIA_PROJECTION`] so it can be released instead of leaked.
 ///
 /// The release rule is deliberate and narrow: **the ref is dropped only when a new projection
-/// replaces it, and only after the new ref has been created** — never on a revoke. Two facts from
+/// replaces it, and only after the new ref has been created**, never on a revoke. Two facts from
 /// disassembling `libmedia_codec.so` force that shape:
 ///
-/// * `HWEncoderSetMediaProjection` takes its **own** `NewGlobalRef` on the object (the holder it
-///   builds stores `JNIEnv*`, that new ref, and our raw `jobject`). So releasing our ref cannot
-///   dangle the encoder's copy — the leak this replaces was never protecting it.
+/// * `HWEncoderSetMediaProjection` takes its **own** `NewGlobalRef` on the object, and the holder
+///   it builds stores `JNIEnv*`, that new ref, and our raw `jobject`. Releasing our ref therefore
+///   cannot dangle the encoder's copy, and the leak this replaces was never protecting it.
 /// * That holder keeps **our raw `jobject` value** and compares it against the next projection it
-///   is handed, skipping the call when they are equal. If we released our ref first, JNI could hand
-///   the same handle value back for the next grant and the encoder would silently keep using the
-///   revoked projection. Creating the new ref while the old one is still alive makes that
+///   is handed, skipping the call when they are equal. Had we released our ref first, JNI could
+///   hand the same handle value back for the next grant and the encoder would silently keep using
+///   the revoked projection. Creating the new ref while the old one is still alive makes that
 ///   impossible: JNI cannot reuse a live handle.
 ///
 /// Holding the ref past a revoke costs one live global ref until the next grant, which is bounded,
@@ -118,7 +119,7 @@ pub fn media_projection_ptr() -> *mut c_void {
     MEDIA_PROJECTION.load(std::sync::atomic::Ordering::Acquire)
 }
 
-/// JNI: called from `XrealProjection.onProjectionReady` (and with null when it is revoked).
+/// JNI: called from `XrealProjection.onProjectionReady`, and with null when it is revoked.
 #[cfg(target_os = "android")]
 #[no_mangle]
 pub extern "system" fn Java_com_godot_game_XrealProjection_nativeSetMediaProjection<'local>(
@@ -129,8 +130,8 @@ pub extern "system" fn Java_com_godot_game_XrealProjection_nativeSetMediaProject
     use std::sync::atomic::Ordering;
 
     if projection.is_null() {
-        // Revoked: readers must stop handing this to the encoder immediately, but the ref itself
-        // stays alive until a new projection replaces it — see MEDIA_PROJECTION_OWNER.
+        // Revoked: readers must stop handing this to the encoder immediately, but the ref itself stays
+        // alive until a new projection replaces it. See MEDIA_PROJECTION_OWNER.
         MEDIA_PROJECTION.store(std::ptr::null_mut(), Ordering::Release);
         return;
     }
@@ -148,11 +149,12 @@ pub extern "system" fn Java_com_godot_game_XrealProjection_nativeSetMediaProject
     drop(previous);
 }
 
-/// Glasses hot-plug event counters. The JNI callbacks below run on the Android UI thread
-/// (DisplayManager listener), so they only bump these counters; `XrealHeadTracker::process`
-/// (Godot main thread) polls them and re-emits as `glasses_connected` / `glasses_disconnected`
-/// signals. Counters — not flags — so a fast disconnect→reconnect is never coalesced away.
-/// Defined for every target so the node can poll unconditionally (they stay 0 on desktop).
+/// Glasses hot-plug event counters. The JNI callbacks below run on the Android UI thread, as a
+/// DisplayManager listener, so they only bump these counters, and `XrealHeadTracker::process` polls
+/// them on the Godot main thread and re-emits them as `glasses_connected` and
+/// `glasses_disconnected` signals. They are counters rather than flags, so a fast disconnect
+/// followed by a reconnect is never coalesced away. They are defined for every target so the node
+/// can poll unconditionally, and they stay 0 on desktop.
 static GLASSES_CONNECT_COUNT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 static GLASSES_DISCONNECT_COUNT: std::sync::atomic::AtomicU32 =
     std::sync::atomic::AtomicU32::new(0);

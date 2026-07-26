@@ -1,13 +1,13 @@
 extends CanvasLayer
-## Root script of the phone-screen scene (demo/phone_screen.tscn): hosts the on-screen touch
-## controller (touch_controller.gd) and re-emits its signals, so consumers connect to this
-## scene's root and never reach into its internals. The layer renders only on the phone's root
-## viewport — the glasses eye SubViewports never render CanvasLayers — so the glasses show the
-## 3D world while the phone shows the controller. layer 0 keeps it below the $UI debug layer.
+## Root script of the phone-screen scene (demo/phone_screen.tscn). It hosts the on-screen touch
+## controller (touch_controller.gd) and re-emits its signals, so consumers connect to this scene's
+## root and never reach into its internals. The layer renders only on the phone's root viewport,
+## because the glasses eye SubViewports never render CanvasLayers, so the glasses show the 3D
+## world while the phone shows the controller. layer 0 keeps it below the $UI debug layer.
 
-## Emitted when the trigger button goes down (true) / up (false).
+## Emitted when the trigger button goes down (true) or up (false).
 signal trigger_changed(pressed: bool)
-## Emitted when the grip button goes down (true) / up (false).
+## Emitted when the grip button goes down (true) or up (false).
 signal grip_changed(pressed: bool)
 ## Emitted once when the (momentary) menu button is pressed.
 signal menu_pressed()
@@ -31,15 +31,15 @@ signal mesh_toggled(on: bool)
 signal record_toggled(on: bool)
 ## First-person-view streaming toggle flipped (true = on).
 signal stream_toggled(on: bool)
-## Momentary "配置" button — place a spatial anchor at the hand fingertip.
+## Momentary "Place" button: place a spatial anchor at the hand fingertip.
 signal place_pressed()
-## Momentary "画像切替" button — cycle the active image-tracking set.
+## Momentary "Cycle Image" button: cycle the active image-tracking set.
 signal image_cycle_pressed()
-## Momentary "撮影" button — capture a photo from the RGB camera.
+## Momentary "Photo" button: capture a photo from the RGB camera.
 signal capture_pressed()
-## Momentary "合成撮影" button — capture a blended camera+AR (mixed-reality) photo.
+## Momentary "Blend Photo" button: capture a blended camera+AR (mixed-reality) photo.
 signal blend_pressed()
-## The user confirmed "Yes" on the phone-menu Exit dialog — quit the app.
+## The user confirmed "Yes" on the phone-menu Exit dialog, so quit the app.
 signal exit_confirmed()
 
 func _ready() -> void:

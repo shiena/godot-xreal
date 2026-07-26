@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
-"""Minimal FIND-SERVER responder — the pairing half of an OSS receiver.
+"""Minimal FIND-SERVER responder, the pairing half of an OSS receiver.
 
 The app does not stream to an address you type in: it discovers its peer, the way XREAL's own
 StreamingReceiver expects. So a receiver built from ffmpeg alone never sees a packet. This answers
-that handshake and then gets out of the way — ffplay/ffmpeg does the actual receiving, driven by
+that handshake and then gets out of the way, and ffplay/ffmpeg does the actual receiving, driven by
 stream.sdp.
 
 Protocol (mirrors addons/godot_xreal/features/xreal_stream_pairing.gd, which was validated against
 the real StreamingReceiver.exe):
 
   1. The app UDP-broadcasts the ASCII "FIND-SERVER" to 255.255.255.255:6001.
-     We reply "<our-ip>:<tcp-port>" to the sender. Note the discovered port is the *control* port —
+     We reply "<our-ip>:<tcp-port>" to the sender. Note the discovered port is the *control* port:
      RTP is hard-coded to 5555 (video) / 5557 (audio) regardless.
   2. The app opens TCP to that port and sends EnterRoom(4). We echo EnterRoom(4) as the ack.
   3. The app sends MsgSync(7) carrying [u64 msgid le]{"useAudio":bool}. We reply MsgSync(7) with the
@@ -20,7 +20,7 @@ the real StreamingReceiver.exe):
 
 Ordering matters: with an SDP input ffmpeg starts probing immediately and gives up long before a
 hand-driven app gets around to sending, so the receiver must not start until the app is streaming.
-`--then` automates exactly that — it runs the rest of the command line once pairing succeeds.
+`--then` automates exactly that: it runs the rest of the command line once pairing succeeds.
 
   Framing is little-endian [u16 length][u16 type][payload], length including the 4-byte header.
 
@@ -29,7 +29,7 @@ Usage:
     python scripts/stream_server/pair_server.py --ip 192.168.0.2   # force the advertised address
     python scripts/stream_server/pair_server.py --then ffplay -i stream.sdp   # launch on pairing
 
-Standard library only — no pip install.
+Standard library only, with no pip install.
 """
 
 from __future__ import annotations
@@ -156,7 +156,7 @@ def frame(msg_type: int, payload: bytes = b"") -> bytes:
 
 
 def local_ip_towards(peer: str) -> str:
-    """The address this host would use to reach `peer` — picks the right NIC on multi-homed hosts."""
+    """The address this host would use to reach `peer`, picking the right NIC on multi-homed hosts."""
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
         s.connect((peer, 9))
@@ -166,7 +166,7 @@ def local_ip_towards(peer: str) -> str:
 
 
 def serve_control(sock: socket.socket) -> None:
-    """Accept control connections forever — one per Stream toggle, so repeated runs keep working."""
+    """Accept control connections forever, one per Stream toggle, so repeated runs keep working."""
     while True:
         conn, addr = sock.accept()
         print(f"[pair] control TCP from {addr[0]}:{addr[1]}", flush=True)

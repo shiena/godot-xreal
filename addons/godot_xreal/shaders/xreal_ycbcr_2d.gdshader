@@ -1,7 +1,8 @@
-// Canvas (2D) twin of xreal_ycbcr.gdshader — used by features/xreal_photo_capture.gd to render the XREAL RGB
-// camera YCbCr feed into an offscreen SubViewport for a JPG photo readback (the Godot analog of the
-// SDK's XREALPhotoCapture EncodeToJPG). Same full-range BT.601 conversion + B/G/R output order as the
-// spatial shader, but writes COLOR directly (canvas is already sRGB, so no srgb_to_linear).
+// Canvas (2D) twin of xreal_ycbcr.gdshader, used by features/xreal_photo_capture.gd to render the
+// XREAL RGB camera YCbCr feed into an offscreen SubViewport for a JPG photo readback, the Godot
+// analog of the SDK's XREALPhotoCapture EncodeToJPG. It uses the same full-range BT.601
+// conversion and B/G/R output order as the spatial shader, but writes COLOR directly, since the
+// canvas is already sRGB and needs no srgb_to_linear.
 shader_type canvas_item;
 
 uniform sampler2D y_texture : filter_linear;

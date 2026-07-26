@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regenerate the Markdown class reference in docs/api/ — one page per class the addon exposes to
+# Regenerate the Markdown class reference in docs/api/, one page per class the addon exposes to
 # GDScript, from the doc comments as the single source of truth:
 #   src/*.rs                     `///` comments -> gdext `register-docs` XML (src/api_docs.rs reads it)
 #   addons/godot_xreal/**/*.gd   `##`  comments -> Godot's own doctool, run below
@@ -15,13 +15,13 @@
 #   ./scripts/gen_api_docs.sh            # (re)write docs/api/
 #   ./scripts/gen_api_docs.sh --check    # verify the committed pages are in sync
 #
-# The Godot binary is a build variable, resolved in SCons order — an explicit command-line value wins
-# over the environment, which wins over the default:
+# The Godot binary is a build variable, resolved in SCons order: an explicit command-line value
+# wins over the environment, which wins over the default:
 #
 #   ./scripts/gen_api_docs.sh godot=/path/to/godot     # SCons-style
 #   ./scripts/gen_api_docs.sh --godot /path/to/godot
 #   GODOT=/path/to/godot ./scripts/gen_api_docs.sh
-#   (default: `godot`, i.e. on PATH — same variable name the build scripts use)
+#   (default: `godot`, i.e. on PATH, the same variable name the build scripts use)
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"

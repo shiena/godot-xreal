@@ -1,25 +1,29 @@
-//! XREAL hand tracking → Godot `XRHandTracker`.
+//! XREAL hand tracking, published as a Godot `XRHandTracker`.
 //!
-//! **Hardware-gated to the XREAL Air 2 Ultra** (outward SLAM cameras + perception feature). The One Pro
-//! returns `IsHandTrackingSupported() == false` and produces no data. See
-//! `docs/plans/hand-tracking-plan.md`.
+//! **Hardware-gated to the XREAL Air 2 Ultra**, which has the outward SLAM cameras and the
+//! perception feature. The One Pro returns `IsHandTrackingSupported() == false` and produces no
+//! data. See `docs/plans/hand-tracking-plan.md`.
 //!
-//! ## Data path (Approach 2 — the SDK's own exported wrappers)
+//! ## Data path: approach 2, the SDK's own exported wrappers
 //!
-//! We call the plugin's exported hand wrappers, which use the SDK's internal `InputManager` singleton
-//! (so **no NR session handle is needed** — unlike the raw `NRHand*` flat API which takes a session we
-//! don't hold). This mirrors how `EnableTearedFrameCount` etc. are called, and is exactly what the Unity
-//! SDK's `XREALHandSubSystem` does per frame:
+//! We call the plugin's exported hand wrappers, which use the SDK's internal `InputManager`
+//! singleton, so **no NR session handle is needed**, unlike the raw `NRHand*` flat API, which takes
+//! a session we do not hold. This mirrors how `EnableTearedFrameCount` and friends are called, and
+//! it is exactly what the Unity SDK's `XREALHandSubSystem` does per frame:
 //!
-//! - `bool IsHandTrackingSupported()`  (libXREALXRPlugin.so `0x47c08` → `InputManager::IsHandTrackingSupported`)
-//! - `bool UpdateHandPose()`           (`0x47fe4` → `InputManager::UpdateHandPose`) — refresh both hands once/frame
-//! - `bool GetHandJointsPose(int handType, HandJointsPose* out)` (`0x47ff4` → `InputManager::GetHandJointsPose`)
+//! - `bool IsHandTrackingSupported()` (libXREALXRPlugin.so `0x47c08`, calling
+//!   `InputManager::IsHandTrackingSupported`)
+//! - `bool UpdateHandPose()` (`0x47fe4`, calling `InputManager::UpdateHandPose`), which refreshes
+//!   both hands once per frame
+//! - `bool GetHandJointsPose(int handType, HandJointsPose* out)` (`0x47ff4`, calling
+//!   `InputManager::GetHandJointsPose`)
 //!
-//! `HandJointsPose` = `int32 isTracked` + `Pose[26]` (each `Pose` = position xyz + rotation xyzw, 7
-//! floats). Poses are already converted to **Unity** space by the SDK; we convert Unity→Godot here
-//! (position `(x, y, -z)`, quaternion `(-x, -y, z, w)`). The array is in **Unity `XRHandJointID` order**
-//! (`[0]=Wrist, [1]=Palm, [2..25]=fingers`); Godot's `XRHandTracker` is `PALM=0, WRIST=1, [2..25]=fingers`
-//! (same finger order), so we only swap the first two.
+//! `HandJointsPose` is an `int32 isTracked` followed by a `Pose[26]`, where each `Pose` is a
+//! position xyz plus a rotation xyzw, 7 floats. The SDK has already converted the poses to **Unity**
+//! space, and we convert Unity to Godot here: position `(x, y, -z)`, quaternion `(-x, -y, z, w)`.
+//! The array arrives in **Unity `XRHandJointID` order**, `[0]=Wrist, [1]=Palm, [2..25]=fingers`,
+//! while Godot's `XRHandTracker` uses `PALM=0, WRIST=1, [2..25]=fingers` with the same finger order,
+//! so we swap the first two and leave the rest.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
@@ -31,7 +35,8 @@ use godot::prelude::*;
 
 use libloading::Library;
 
-/// One Unity-space joint pose as written by `GetHandJointsPose` (Unity `Pose`: position then rotation).
+/// One Unity-space joint pose as written by `GetHandJointsPose`, a Unity `Pose` of position then
+/// rotation.
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
 struct UnityPose {
@@ -41,8 +46,9 @@ struct UnityPose {
 
 /// The out-struct filled by `GetHandJointsPose(handType, &mut HandJointsPose)`.
 ///
-/// Matches the SDK's C# `HandJointsPose` under default P/Invoke marshalling: `bool` → 4-byte `BOOL`,
-/// then a by-value `Pose[26]` (`SizeConst = XRHandJointID.EndMarker - 1 = 26`).
+/// This matches the SDK's C# `HandJointsPose` under default P/Invoke marshalling: a `bool` becomes
+/// a 4-byte `BOOL`, then a by-value `Pose[26]`, since `SizeConst = XRHandJointID.EndMarker - 1 =
+/// 26`.
 #[repr(C)]
 #[derive(Default)]
 struct HandJointsPose {
@@ -60,15 +66,16 @@ struct HandApi {
     get_joints: FnGetHandJointsPose,
 }
 
-// SAFETY: the fn-pointers resolve into libXREALXRPlugin.so (kept mapped by `_lib`); the wrappers use the
-// SDK's `InputManager` singleton and take no external state. Only touched under the Mutex.
+// SAFETY: the fn-pointers resolve into libXREALXRPlugin.so, which `_lib` keeps mapped, and the
+// wrappers use the SDK's `InputManager` singleton and take no external state. They are touched
+// only under the Mutex.
 unsafe impl Send for HandApi {}
 
 static HAND_API: Mutex<Option<HandApi>> = Mutex::new(None);
 
-/// `dlopen` libXREALXRPlugin.so and resolve the three exported hand wrappers. Idempotent; returns a
-/// one-line diagnostic. Safe to call before the SDK is up (the wrappers no-op via the InputManager
-/// singleton).
+/// `dlopen` libXREALXRPlugin.so and resolve the three exported hand wrappers. It is idempotent and
+/// returns a one-line diagnostic. Calling it before the SDK is up is safe, because the wrappers
+/// no-op through the InputManager singleton.
 fn ensure_api_locked(slot: &mut Option<HandApi>) -> &'static str {
     if slot.is_some() {
         return "already loaded";
@@ -100,8 +107,8 @@ fn ensure_api_locked(slot: &mut Option<HandApi>) -> &'static str {
     }
 }
 
-/// `true` if the connected glasses support hand tracking (Air 2 Ultra). `false` on the One Pro or before
-/// the SDK is up.
+/// `true` when the connected glasses support hand tracking, meaning an Air 2 Ultra. It is `false` on
+/// the One Pro and before the SDK is up.
 pub fn is_supported() -> bool {
     let mut slot = HAND_API.lock().unwrap_or_else(|e| e.into_inner());
     ensure_api_locked(&mut slot);
@@ -110,17 +117,21 @@ pub fn is_supported() -> bool {
         .unwrap_or(false)
 }
 
-/// One converted hand: `tracked` plus 26 Godot-space joint transforms indexed by Godot `HandJoint` ord.
+/// One converted hand: `tracked`, plus 26 Godot-space joint transforms indexed by the Godot
+/// `HandJoint` ordinal.
 pub struct HandSnapshot {
     pub tracked: bool,
-    /// `[godot_joint_ord] -> Transform3D` (Godot space). Index 0 = Palm, 1 = Wrist, 2..25 = fingers.
+    /// `[godot_joint_ord] -> Transform3D` in Godot space. Index 0 is Palm, 1 is Wrist, 2..25 the
+    /// fingers.
     pub joints: [Transform3D; 26],
 }
 
-/// Refresh both hands (once per frame) then read a hand. `hand_type` is 0 = left, 1 = right (matches the
-/// SDK `HandType`). Returns `None` when the API is unavailable or `GetHandJointsPose` fails.
+/// Refresh both hands, once per frame, then read one hand. `hand_type` is 0 for left and 1 for
+/// right, matching the SDK `HandType`. It returns `None` when the API is unavailable or
+/// `GetHandJointsPose` fails.
 ///
-/// Call `update_frame()` once before polling both hands so `UpdateHandPose` runs a single time per frame.
+/// Call `update_frame()` once before polling both hands, so `UpdateHandPose` runs a single time per
+/// frame.
 pub fn poll(hand_type: i32) -> Option<HandSnapshot> {
     let slot = HAND_API.lock().unwrap_or_else(|e| e.into_inner());
     let api = slot.as_ref()?;
@@ -130,7 +141,8 @@ pub fn poll(hand_type: i32) -> Option<HandSnapshot> {
     }
     let mut joints = [Transform3D::IDENTITY; 26];
     for (i, p) in raw.joints.iter().enumerate() {
-        // Unity `XRHandJointID` order -> Godot `HandJoint` order: swap Wrist(0)/Palm(1); fingers match.
+        // Unity `XRHandJointID` order to Godot `HandJoint` order: swap Wrist(0) and Palm(1), and the
+        // fingers already match.
         let godot_ord = match i {
             0 => 1, // Unity Wrist -> Godot WRIST
             1 => 0, // Unity Palm  -> Godot PALM
@@ -144,8 +156,8 @@ pub fn poll(hand_type: i32) -> Option<HandSnapshot> {
     })
 }
 
-/// Refresh both hands for this frame. Returns `false` when unavailable or hand tracking is not enabled
-/// yet (the enable is attempted lazily via [`ensure_enabled`]).
+/// Refresh both hands for this frame. It returns `false` when the API is unavailable, or while hand
+/// tracking is not enabled yet; [`ensure_enabled`] attempts the enable lazily.
 pub fn update_frame() -> bool {
     ensure_enabled();
     let mut slot = HAND_API.lock().unwrap_or_else(|e| e.into_inner());
@@ -155,14 +167,15 @@ pub fn update_frame() -> bool {
         .unwrap_or(false)
 }
 
-// --- Enable path (RE, internal plugin functions by `LIB_BASE + offset`) --------------------------------
+// --- Enable path: RE'd internal plugin functions reached by `LIB_BASE + offset` ------------------------
 //
-// `UpdateHandPose` no-ops until hand tracking is enabled. The minimal enable is a single internal call:
-// `NativePerception::SetHandTrackingEnabled(perception, true)` (`libXREALXRPlugin.so 0x97174`). The
-// perception instance is `*(InputManager + 0x48)`, InputManager from `TSingleton::GetInstance` (0x47a10).
-// We must NOT poke `+0x290`/`+0x204`/`+0x24c` — those are the STOP path, and `+0x290` is a one-shot latch
-// that makes UpdateHandPose return false if set. See docs/plans/hand-tracking-plan.md
-// ("Enable path RE 2026-07-16"). Guard on perception/session/config readiness and retry until they're up.
+// `UpdateHandPose` no-ops until hand tracking is enabled. The minimal enable is a single internal
+// call, `NativePerception::SetHandTrackingEnabled(perception, true)` (`libXREALXRPlugin.so
+// 0x97174`). The perception instance is `*(InputManager + 0x48)`, and InputManager comes from
+// `TSingleton::GetInstance` (0x47a10). We must NOT poke `+0x290`, `+0x204` or `+0x24c`: those are
+// the STOP path, and `+0x290` is a one-shot latch that makes UpdateHandPose return false once set.
+// See docs/plans/hand-tracking-plan.md, "Enable path RE 2026-07-16". Guard on perception, session
+// and config readiness, and retry until they are up.
 
 const OFF_GET_INPUT_MANAGER: usize = 0x47a10; // TSingleton<InputManager>::GetInstance()
 const OFF_SET_HAND_TRACKING_ENABLED: usize = 0x97174; // NativePerception::SetHandTrackingEnabled(bool)
@@ -176,8 +189,9 @@ static HAND_ENABLED: AtomicBool = AtomicBool::new(false);
 type FnGetInputManager = unsafe extern "C" fn() -> *mut u8;
 type FnSetHandTrackingEnabled = unsafe extern "C" fn(*mut u8, bool);
 
-/// Attempt the one-shot enable once the SDK's perception is up. Idempotent: does nothing after the first
-/// success. Safe to call every frame — it early-returns once enabled and guards every pointer.
+/// Attempt the one-shot enable once the SDK's perception is up. It is idempotent and does nothing
+/// after the first success. Calling it every frame is safe: it early-returns once enabled and
+/// guards every pointer.
 pub fn ensure_enabled() {
     if HAND_ENABLED.load(Ordering::Relaxed) {
         return;
@@ -200,7 +214,7 @@ pub fn ensure_enabled() {
         let session = (perception.add(NP_SESSION) as *const u64).read();
         let config = (perception.add(NP_CONFIG) as *const u64).read();
         if started == 0 || session == 0 || config == 0 {
-            return; // perception not fully brought up yet — retry next frame
+            return; // perception not fully brought up yet, so retry next frame
         }
         let set_enabled: FnSetHandTrackingEnabled =
             std::mem::transmute(lib_base + OFF_SET_HAND_TRACKING_ENABLED);
@@ -214,10 +228,12 @@ pub fn ensure_enabled() {
 
 /// Convert a Unity-space `Pose` to a Godot `Transform3D` for this port's display space.
 ///
-/// Two steps: (1) Unity (LH, +Z forward) → Godot (RH, -Z forward) negates Z; (2) this port's eye cameras
-/// render with an inverted Y (pose handedness `(x,-y,z,w)` — the head rig and phone pointer compensate the
-/// same way), so we additionally negate Y. Net: position `(x, -y, -z)`, quaternion `(x, -y, -z, w)`.
-/// Device-confirmed on the Air 2 Ultra: without the Y negation the hand rendered upside-down.
+/// It takes two steps. First, Unity is left-handed with +Z forward and Godot is right-handed with
+/// -Z forward, so Z is negated. Second, this port's eye cameras render with an inverted Y, a pose
+/// handedness of `(x,-y,z,w)` that the head rig and phone pointer compensate for the same way, so Y
+/// is negated as well. The net result is a position of `(x, -y, -z)` and a quaternion of
+/// `(x, -y, -z, w)`. Device-confirmed on the Air 2 Ultra: without the Y negation the hand rendered
+/// upside-down.
 fn unity_pose_to_godot(p: &UnityPose) -> Transform3D {
     let pos = Vector3::new(p.position[0], -p.position[1], -p.position[2]);
     let rot = Quaternion::new(p.rotation[0], -p.rotation[1], -p.rotation[2], p.rotation[3]);
@@ -254,12 +270,12 @@ const GODOT_JOINTS: [HandJoint; 26] = [
     HandJoint::PINKY_FINGER_TIP,
 ];
 
-/// Node that publishes XREAL hand tracking to Godot's `XRServer` as two `XRHandTracker`s
-/// (`/user/hand_tracker/left` and `/user/hand_tracker/right`). Add it to the scene; then an
-/// `XRHandModifier3D` (with the matching tracker name) animates a hand skeleton, or GDScript reads the
-/// trackers via `XRServer.get_tracker(...)`.
+/// Node that publishes XREAL hand tracking to Godot's `XRServer` as two `XRHandTracker`s,
+/// `/user/hand_tracker/left` and `/user/hand_tracker/right`. Add it to the scene, and then an
+/// `XRHandModifier3D` carrying the matching tracker name animates a hand skeleton, or GDScript
+/// reads the trackers through `XRServer.get_tracker(...)`.
 ///
-/// Hardware-gated to the Air 2 Ultra (no-op elsewhere).
+/// Hardware-gated to the Air 2 Ultra, and a no-op elsewhere.
 #[derive(GodotClass)]
 #[class(base = Node)]
 pub struct XrealHandTracker {
@@ -283,7 +299,7 @@ impl INode for XrealHandTracker {
     }
 
     fn ready(&mut self) {
-        // Register the two hand trackers once. They are updated every frame in `process`; a hand simply
+        // Register the two hand trackers once. `process` updates them every frame, and a hand simply
         // reports `has_tracking_data = false` until the device sees it.
         let left = make_tracker("/user/hand_tracker/left", TrackerHand::LEFT);
         let right = make_tracker("/user/hand_tracker/right", TrackerHand::RIGHT);
@@ -312,7 +328,7 @@ impl INode for XrealHandTracker {
                 || right.as_ref().is_some_and(|s| s.tracked))
         {
             self.logged_first_tracked = true;
-            godot_print!("[xreal] XrealHandTracker: first tracked hand — feeding XRHandTracker(s)");
+            godot_print!("[xreal] XrealHandTracker: first tracked hand, feeding XRHandTracker(s)");
         }
         if let Some(t) = self.left.as_mut() {
             feed_tracker(t, left);
@@ -341,7 +357,8 @@ fn make_tracker(name: &str, hand: TrackerHand) -> Gd<XrHandTracker> {
     tracker
 }
 
-/// Push one hand's snapshot into its `XrHandTracker` (or clear tracking when absent/untracked).
+/// Push one hand's snapshot into its `XrHandTracker`, or clear tracking when the hand is absent or
+/// untracked.
 fn feed_tracker(tracker: &mut Gd<XrHandTracker>, snapshot: Option<HandSnapshot>) {
     let flags = hand_joint_flags_all();
     match snapshot {
@@ -356,7 +373,7 @@ fn feed_tracker(tracker: &mut Gd<XrHandTracker>, snapshot: Option<HandSnapshot>)
     }
 }
 
-/// Position + orientation valid & tracked (we don't get velocities from the SDK).
+/// Position and orientation are valid and tracked; the SDK gives us no velocities.
 fn hand_joint_flags_all() -> godot::classes::xr_hand_tracker::HandJointFlags {
     use godot::classes::xr_hand_tracker::HandJointFlags;
     HandJointFlags::ORIENTATION_VALID

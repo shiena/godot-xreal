@@ -1,4 +1,4 @@
-//! [`XrealSystem`] — the SDK façade onto the XREAL plugin for GDScript.
+//! [`XrealSystem`], the SDK facade onto the XREAL plugin for GDScript.
 //!
 //! Instantiate it (`XrealSystem.new()`) to query device/session info, switch the tracking
 //! mode, and drive the AR subsystems (plane detection, spatial anchors, image tracking, depth
@@ -14,11 +14,11 @@ use crate::session::{self, XrealSession};
 
 /// SDK information and control surface for the XREAL glasses.
 ///
-/// A `RefCounted` façade over the native XREAL plugin: query availability / version / tracking
+/// A `RefCounted` facade over the native XREAL plugin: query availability, version and tracking
 /// state, switch the tracking mode, drive the AR subsystems (plane detection, spatial anchors,
-/// image tracking, depth meshing), read compositor render metrics, and run FPV streaming.
-/// Instantiate it once (e.g. from an autoload) and keep it. Its methods are safe to call before a
-/// native session exists — they return defaults / error sentinels until the session is live, so
+/// image tracking, depth meshing), read the compositor render metrics, and run FPV streaming.
+/// Instantiate it once, say from an autoload, and keep it. Its methods are safe to call before a
+/// native session exists: they return defaults or error sentinels until the session is live, so
 /// they no-op on desktop and while the glasses are still connecting.
 #[derive(GodotClass)]
 #[class(base = RefCounted)]
@@ -35,14 +35,14 @@ impl IRefCounted for XrealSystem {
 
 #[godot_api]
 impl XrealSystem {
-    /// `TrackingType` for `switch_tracking_type` / `get_tracking_type` (from the Unity
-    /// `XREALPlugin.cs` enum): 6DoF — SLAM position + orientation (the recommended mode).
+    /// `TrackingType` for `switch_tracking_type` and `get_tracking_type`, from the Unity
+    /// `XREALPlugin.cs` enum: 6DoF, meaning SLAM position and orientation, the recommended mode.
     #[constant]
     const TRACKING_6DOF: i64 = 0;
-    /// `TrackingType`: 3DoF — IMU orientation only, no position.
+    /// `TrackingType`: 3DoF, IMU orientation only, with no position.
     #[constant]
     const TRACKING_3DOF: i64 = 1;
-    /// `TrackingType`: 0DoF — no head tracking.
+    /// `TrackingType`: 0DoF, with no head tracking.
     #[constant]
     const TRACKING_0DOF: i64 = 2;
     /// `TrackingType`: 0DoF with stabilization.
@@ -135,8 +135,8 @@ impl XrealSystem {
             .unwrap_or(-1) as i64
     }
 
-    /// Current `TrackingType` enum value — see the `TRACKING_*` constants (`-1` when
-    /// unavailable).
+    /// Current `TrackingType` enum value; see the `TRACKING_*` constants. It is `-1` when
+    /// unavailable.
     #[func]
     fn get_tracking_type(&self) -> i64 {
         session::shared()
@@ -144,20 +144,20 @@ impl XrealSystem {
             .unwrap_or(-1) as i64
     }
 
-    /// Latest glasses temperature level from the hardware event funnel: `0` NORMAL /
-    /// `1` WARM / `2` HOT (mirrors the SDK's `XREALTemperatureLevel`), or `-1` until the
-    /// glasses first report one. A cached poll — no signal. This is the data source behind
-    /// the SDK's over-temperature notification. (The SDK's low-battery notification reads
-    /// the Android *host* battery, not a glasses API — poll it from the platform; SLAM-state
-    /// is `get_tracking_state` / `get_tracking_reason`.)
+    /// Latest glasses temperature level from the hardware event funnel: `0` NORMAL, `1` WARM or
+    /// `2` HOT, mirroring the SDK's `XREALTemperatureLevel`, or `-1` until the glasses first report
+    /// one. It is a cached poll, with no signal, and it is the data source behind the SDK's
+    /// over-temperature notification. The SDK's low-battery notification reads the Android *host*
+    /// battery rather than a glasses API, so poll that from the platform, and the SLAM state lives in
+    /// `get_tracking_state` and `get_tracking_reason`.
     #[func]
     fn get_glasses_temperature_level(&self) -> i64 {
         crate::glasses_events::temperature_level() as i64
     }
 
-    /// Latest asynchronous native error reported by the plugin, as the `XREALErrorCode`
-    /// enum value (`0` Success / `1` Failure / … `-1` until one arrives). A cached poll —
-    /// no signal — mirroring the SDK's native-error notification. Pair with
+    /// Latest asynchronous native error reported by the plugin, as the `XREALErrorCode` enum value:
+    /// `0` Success, `1` Failure and so on, or `-1` until one arrives. It is a cached poll with no
+    /// signal, mirroring the SDK's native-error notification. Pair it with
     /// `get_last_native_error_message()` for the accompanying text.
     #[func]
     fn get_last_native_error_code(&self) -> i64 {
@@ -224,10 +224,11 @@ impl XrealSystem {
             .unwrap_or(-1) as i64
     }
 
-    /// Set the glasses spatial display mode (`SetGlassesSpaceMode`, One Pro X1 chip).
-    /// `mode` is the `NRGlassesSpaceMode` enum (RE / unverified — probe 0/1/2/… on device to
-    /// find follow vs world-anchor). Returns the SDK status, or `-1` when unavailable. Call
-    /// after `is_session_started()` is true (the SDK no-ops until NativeGlasses is ready).
+    /// Set the glasses spatial display mode through `SetGlassesSpaceMode`, on the One Pro X1 chip.
+    /// `mode` is the `NRGlassesSpaceMode` enum, which is RE'd and unverified, so probe 0, 1, 2 and so
+    /// on on device to find follow against world-anchor. It returns the SDK status, or `-1` when
+    /// unavailable. Call it once `is_session_started()` is true, since the SDK no-ops until
+    /// NativeGlasses is ready.
     #[func]
     fn set_glasses_space_mode(&self, mode: i64) -> i64 {
         session::shared()
@@ -264,8 +265,9 @@ impl XrealSystem {
             .unwrap_or(false)
     }
 
-    /// Whether the connected glasses have an RGB camera (`IsHMDFeatureSupported(FEATURE_RGB_CAMERA)`).
-    /// The Air 2 Ultra reports `false` — gate the camera on this so it is never opened there.
+    /// Whether the connected glasses have an RGB camera, through
+    /// `IsHMDFeatureSupported(FEATURE_RGB_CAMERA)`. The Air 2 Ultra reports `false`, so gate the camera
+    /// on this and it is never opened there.
     #[func]
     fn is_camera_supported(&self) -> bool {
         session::shared()
@@ -273,24 +275,24 @@ impl XrealSystem {
             .unwrap_or(false)
     }
 
-    /// AR-perception (plane / anchor / image) availability, following the XREAL SDK for Unity's own
-    /// rule. That SDK has NO per-feature device gate for those subsystems — it registers them
-    /// unconditionally and assumes perception is present whenever 6DoF (`HEAD_TRACKING_POSITION`) is,
-    /// and its C# never calls `GetSupportedFeatures` (which returns a device-INDEPENDENT `0x1f` mask,
-    /// so it cannot gate by device). We use "6DoF present AND no RGB camera" to pick the perception
-    /// device (Air 2 Ultra: 6DoF, no RGB cam) apart from the One series (6DoF + RGB cam, no
-    /// trackables). **This heuristic matches com.xreal.xr 3.1.0** — a later SDK / device may change the
-    /// mapping, so revisit it on SDK bumps. (Hand tracking is already in beta for One + Eye, so a
-    /// One-class device could gain perception, at which point the "no RGB camera" test would wrongly
-    /// exclude it.)
+    /// AR-perception availability, covering planes, anchors and images, following the XREAL SDK for
+    /// Unity's own rule. That SDK has NO per-feature device gate for those subsystems: it registers
+    /// them unconditionally and assumes perception is present whenever 6DoF
+    /// (`HEAD_TRACKING_POSITION`) is, and its C# never calls `GetSupportedFeatures`, which returns a
+    /// device-INDEPENDENT `0x1f` mask and so cannot gate by device. We use "6DoF present AND no RGB
+    /// camera" to tell the perception device, an Air 2 Ultra with 6DoF and no RGB camera, apart from
+    /// the One series, which has 6DoF and an RGB camera but no trackables. **This heuristic matches
+    /// com.xreal.xr 3.1.0**, and a later SDK or device may change the mapping, so revisit it on SDK
+    /// bumps. Hand tracking is already in beta for One and Eye, so a One-class device could gain
+    /// perception, at which point the "no RGB camera" test would wrongly exclude it.
     fn is_ar_perception_available(&self) -> bool {
         self.is_hmd_feature_supported(Self::FEATURE_HEAD_TRACKING_POSITION)
             && !self.is_camera_supported()
     }
 
-    // --- Device / camera geometry (Unity space; docs/plans/coordinate-systems-notes.md). Poses are in
-    // Unity's left-handed system — convert on the Godot side. Useful for aligning the AR to the RGB
-    // camera view (FOV / offset) in the blend. ---
+    // --- Device and camera geometry in Unity space; see docs/plans/coordinate-systems-notes.md. The
+    // poses are in Unity's left-handed system, so convert on the Godot side. They are useful for
+    // aligning the AR to the RGB camera view, its FOV and offset, in the blend. ---
 
     /// `XREALComponent` id for the geometry getters: the RGB camera.
     #[constant]
@@ -326,9 +328,9 @@ impl XrealSystem {
             .unwrap_or_default()
     }
 
-    /// A `COMPONENT_*` device's extrinsic relative to Head as a raw Unity `Pose`:
-    /// `[pos x,y,z, quat x,y,z,w]` (Unity left-handed — convert to Godot; see coordinate-systems-notes).
-    /// Empty when unavailable.
+    /// A `COMPONENT_*` device's extrinsic relative to Head, as a raw Unity `Pose` of
+    /// `[pos x,y,z, quat x,y,z,w]`. It is Unity left-handed, so convert it to Godot; see
+    /// coordinate-systems-notes. It is empty when unavailable.
     #[func]
     fn get_device_pose_from_head(&self, component: i64) -> PackedFloat32Array {
         session::shared()
@@ -437,13 +439,13 @@ impl XrealSystem {
     // --- Spatial anchors (see docs/plans/ar-features-plan.md). Needs a live 6DoF session + the
     //     vendored nr_spatial_anchor.aar backend. ---
 
-    /// Anchor-quality level from [`Self::estimate_anchor_quality`]: insufficient — do not save here.
+    /// Anchor-quality level from [`Self::estimate_anchor_quality`]: insufficient, so do not save here.
     #[constant]
     const ANCHOR_QUALITY_INSUFFICIENT: i64 = crate::ffi::anchor_quality::INSUFFICIENT as i64;
-    /// Anchor-quality level: sufficient — the minimum recommended before saving.
+    /// Anchor-quality level: sufficient, the minimum recommended before saving.
     #[constant]
     const ANCHOR_QUALITY_SUFFICIENT: i64 = crate::ffi::anchor_quality::SUFFICIENT as i64;
-    /// Anchor-quality level: good — a strong spot to save an anchor.
+    /// Anchor-quality level: good, a strong spot to save an anchor.
     #[constant]
     const ANCHOR_QUALITY_GOOD: i64 = crate::ffi::anchor_quality::GOOD as i64;
 
@@ -672,9 +674,10 @@ impl XrealSystem {
     // --- First-person-view streaming (libmedia_codec HW encoder; see docs/plans/fpv-streaming-plan.md).
     //     Streams a rendered view (any device) as H.264 to a local mp4 / RTMP / RTP URL. ---
 
-    /// Start streaming the FPV to `output` — an `rtp://ip:port` / `rtmp://…` URL or a local file path
-    /// (the URL scheme picks local/RTMP/RTP). Returns whether the encoder started. Then feed the view's
-    /// GL texture each frame via [`Self::stream_push_frame`] from a `RenderingServer.call_on_render_thread`.
+    /// Start streaming the FPV to `output`, which is an `rtp://ip:port` or `rtmp://…` URL, or a local
+    /// file path; the URL scheme picks local, RTMP or RTP. It returns whether the encoder started.
+    /// Then feed the view's GL texture each frame through [`Self::stream_push_frame`], from a
+    /// `RenderingServer.call_on_render_thread`.
     #[func]
     #[allow(clippy::too_many_arguments)] // GDScript-facing signature (resolution + rate + audio flags)
     fn stream_start(
@@ -688,10 +691,10 @@ impl XrealSystem {
         with_internal_audio: bool,
         with_alpha: bool,
     ) -> bool {
-        // The encoder writes the track at the *config* rate and does not resample what we push, so
-        // when we are the audio source the two must agree — see video_encoder::AUDIO_SAMPLE_RATE for
-        // the measurement. Godot's mixer is 44100 by default; the SDK's 48000 constant only works for
-        // Unity because Android runs its mixer at 48000 as well.
+        // The encoder writes the track at the *config* rate and does not resample what we push, so when
+        // we are the audio source the two have to agree; see video_encoder::AUDIO_SAMPLE_RATE for the
+        // measurement. Godot's mixer runs at 44100 by default, and the SDK's 48000 constant only works
+        // for Unity because Android runs its mixer at 48000 as well.
         let app_audio_rate = with_internal_audio
             .then(|| godot::classes::AudioServer::singleton().get_mix_rate() as i32);
         crate::video_encoder::start(
@@ -728,42 +731,45 @@ impl XrealSystem {
         crate::video_encoder::is_active()
     }
 
-    /// Select the stereo rendering mode applied when the native session **bootstraps** (a startup
-    /// selector): `0` = Multipass (both eyes — the default shipping path), `2` = Multiview
-    /// (single-pass-instanced). **Call before the session starts** (e.g. an autoload `_ready`, before
-    /// the XR rig enters the tree) — it is read once at `InitUserDefinedSettings`. Equivalent to the
-    /// ProjectSetting `xreal/stereo_mode` or `adb shell setprop debug.xreal.stereo_mode <n>`. Multiview
-    /// buys nothing on this two-SubViewport rig (see docs/archive/multiview-investigation.md), so
-    /// Multipass stays the recommended default.
+    /// Select the stereo rendering mode applied when the native session **bootstraps**, a startup
+    /// selector: `0` is Multipass, both eyes, the default shipping path, and `2` is Multiview,
+    /// single-pass-instanced. **Call it before the session starts**, for instance in an autoload
+    /// `_ready`, before the XR rig enters the tree, because it is read once at
+    /// `InitUserDefinedSettings`. It is equivalent to the ProjectSetting `xreal/stereo_mode` or to
+    /// `adb shell setprop debug.xreal.stereo_mode <n>`. Multiview buys nothing on this
+    /// two-SubViewport rig (see docs/archive/multiview-investigation.md), so Multipass stays the
+    /// recommended default.
     #[func]
     fn set_stereo_mode(&self, mode: i64) {
         session::set_stereo_mode_override(mode as i32);
     }
 
-    /// Select the head-tracking mode applied when the native session **bootstraps** (a startup
-    /// selector): `0` = 6DoF (SLAM position + orientation, no drift — the recommended mode),
-    /// `1` = 3DoF (IMU orientation only, no position), `2` = 0DoF.
-    /// **Call before the session starts** (e.g. an autoload `_ready`, before the XR rig enters the
-    /// tree) — it is read once at `InitUserDefinedSettings`. Equivalent to the ProjectSetting
-    /// `xreal/tracking_type` or `adb shell setprop debug.xreal.tracking_type <n>`. Use
-    /// `get_tracking_type()` for the mode actually active on the running session, and
-    /// `switch_tracking_type()` to change it at runtime (SDK call; may be unavailable mid-session).
+    /// Select the head-tracking mode applied when the native session **bootstraps**, a startup
+    /// selector: `0` is 6DoF, SLAM position and orientation with no drift, the recommended mode; `1`
+    /// is 3DoF, IMU orientation only with no position; and `2` is 0DoF.
+    /// **Call it before the session starts**, for instance in an autoload `_ready`, before the XR rig
+    /// enters the tree, because it is read once at `InitUserDefinedSettings`. It is equivalent to the
+    /// ProjectSetting `xreal/tracking_type` or to `adb shell setprop debug.xreal.tracking_type <n>`.
+    /// Use `get_tracking_type()` for the mode actually active on the running session, and
+    /// `switch_tracking_type()` to change it at runtime, an SDK call that may be unavailable
+    /// mid-session.
     #[func]
     fn set_tracking_type(&self, mode: i64) {
         session::set_tracking_mode_override(mode as i32);
     }
 
-    /// Which input sources `InitUserDefinedSettings` asks the SDK for: `1` = Controller (default),
-    /// `2` = Hands, `3` = ControllerAndHands. Must be called **before** the XR rig starts the session
-    /// — it is read once at bootstrap. Also settable with
+    /// Which input sources `InitUserDefinedSettings` asks the SDK for: `1` is Controller, the default,
+    /// `2` is Hands and `3` is ControllerAndHands. It must be called **before** the XR rig starts the
+    /// session, because it is read once at bootstrap. It is also settable with
     /// `adb shell setprop debug.xreal.input_source <n>`.
     ///
-    /// **Only ask for Hands if you actually use hand tracking.** The Hands bit makes the SDK call
+    /// **Ask for Hands only if you actually use hand tracking.** The Hands bit makes the SDK call
     /// `NativePerception::SetHandTrackingEnabled(true)` synchronously during input start, measured at
-    /// **~878 ms of cold start** on an X4000 + One Pro — and hand tracking is Air 2 Ultra only, so on
-    /// any other headset that is pure latency. `addons/godot_xreal/features/xreal_hands.tscn` sets
-    /// this to `3` from its `_ready()`, so scenes that include the hands feature get it automatically
-    /// and everyone else starts faster. See `docs/archive/codex-input-start-analysis.md`.
+    /// **about 878 ms of cold start** on an X4000 with a One Pro, and hand tracking is Air 2 Ultra
+    /// only, so on any other headset that is pure latency.
+    /// `addons/godot_xreal/features/xreal_hands.tscn` sets this to `3` from its `_ready()`, so scenes
+    /// that include the hands feature get it automatically and everyone else starts faster. See
+    /// `docs/archive/codex-input-start-analysis.md`.
     #[func]
     fn set_input_source(&self, source: i64) {
         session::set_input_source_override(source as i32);
@@ -777,15 +783,17 @@ impl XrealSystem {
             .unwrap_or(0) as i64
     }
 
-    // REMOVED (2026-07-12): `get_head_rotation(&self) -> Quaternion` calling `head_pose()`.
-    // Isolated by controlled on-device bisection as the *sole* trigger of a deterministic render
-    // -thread SIGSEGV (GLThread, addr 0x3f800000) at the first frame submit — present in the class
-    // = crash, absent = runs, independent of return type (Quaternion / PackedFloat32Array / i64 all
-    // crash) and method count. The trigger is this #[func] body referencing `XrealSession::head_pose`
-    // (a #[func] whose body constructs only a Quaternion, or calls hmd_time_nanos instead, is fine).
-    // Suspected rustc/gdext codegen interaction (the method is never actually called). Read head
-    // rotation from `XrealHeadTracker` instead; reintroduce here only via a path that does not pull
-    // `head_pose` into an `XrealSystem` #[func] thunk. See docs / memory input-feature-glthread-crash.
+    // REMOVED on 2026-07-12: `get_head_rotation(&self) -> Quaternion`, which called `head_pose()`.
+    // Controlled on-device bisection isolated it as the *sole* trigger of a deterministic
+    // render-thread SIGSEGV, on the GLThread at address 0x3f800000, at the first frame submit.
+    // Present in the class it crashed, absent it ran, whatever the return type, since Quaternion,
+    // PackedFloat32Array and i64 all crashed, and whatever the method count. The trigger is this
+    // #[func] body referencing `XrealSession::head_pose`; a #[func] whose body only constructs a
+    // Quaternion, or calls hmd_time_nanos instead, is fine. A rustc and gdext codegen interaction is
+    // the suspect, since the method is never actually called. Read the head rotation from
+    // `XrealHeadTracker` instead, and reintroduce it here only through a path that does not pull
+    // `head_pose` into an `XrealSystem` #[func] thunk. See the docs and the memory note
+    // input-feature-glthread-crash.
 
     /// One-line diagnostic of the perception pipeline (session/clock/pose state).
     #[func]
@@ -795,7 +803,7 @@ impl XrealSystem {
             .unwrap_or_else(|| GString::from("session unavailable"))
     }
 
-    // --- Render metrics (XREAL SDK NRMetrics, queried directly — see src/metrics.rs) ---------------
+    // --- Render metrics, the XREAL SDK's NRMetrics, queried directly; see src/metrics.rs ----------
     //
     // These read the process-global NR compositor metrics service (the same numbers the SDK's own
     // `DisplayManager::UpdateMetrics` reports to Unity's stat sink; we neuter that sink and query NR
@@ -874,9 +882,9 @@ impl XrealSystem {
 
 // --- Plane-detection conversions (Unity → Godot) ---
 
-/// Convert a Unity-space plane pose to a Godot `Transform3D`: position `(x, -y, -z)`, quaternion
-/// `(-x, -y, z, w)` — the same convention as the head/hand poses (`src/hand_tracking.rs`). The exact
-/// axis signs are pending on-device verification with real planes.
+/// Convert a Unity-space plane pose to a Godot `Transform3D`: position `(x, -y, -z)` and quaternion
+/// `(-x, -y, z, w)`, the same convention as the head and hand poses (`src/hand_tracking.rs`). The
+/// exact axis signs are pending on-device verification with real planes.
 fn unity_pose_to_transform(pose: &crate::ffi::UnityPose) -> Transform3D {
     let p = pose.position;
     let r = pose.rotation;
@@ -887,7 +895,8 @@ fn unity_pose_to_transform(pose: &crate::ffi::UnityPose) -> Transform3D {
     )
 }
 
-/// Format two u64s as a stable 32-hex-char string — the wire form shared by `TrackableId` and `Guid`.
+/// Format two u64s as a stable 32-hex-char string, the wire form shared by `TrackableId` and
+/// `Guid`.
 fn hex_pair(a: u64, b: u64) -> String {
     format!("{a:016x}{b:016x}")
 }
@@ -1037,9 +1046,9 @@ fn image_to_dict(im: &crate::native::ImageSample) -> VarDictionary {
 /// path: raw → Unity is `(x, y, -z)` and Unity → this port's Godot is `(x, -y, -z)`, which composes to
 /// `(x, -y, z)`.
 ///
-/// That leaves our space a pure 180°-about-X *rotation* of Unity's, so triangles keep Unity's
-/// clockwise-front winding — the opposite of Godot's counter-clockwise-front rule. Emit each triangle
-/// reversed so front faces stay front.
+/// That leaves our space a pure 180-degree rotation about X of Unity's, so triangles keep Unity's
+/// clockwise-front winding, the opposite of Godot's counter-clockwise-front rule. Emit each
+/// triangle reversed so front faces stay front.
 fn mesh_block_to_dict(b: &crate::depth_mesh::MeshBlock) -> VarDictionary {
     let mut verts = PackedVector3Array::new();
     for v in &b.vertices {
@@ -1067,18 +1076,19 @@ fn mesh_block_to_dict(b: &crate::depth_mesh::MeshBlock) -> VarDictionary {
     d
 }
 
-// --- XrealAR: a scene-placeable Node that polls the AR change streams each frame and re-emits them as
-//     signals, so consumers connect in the editor instead of manually polling XrealSystem. Enable the
-//     features via XrealSystem (set_plane_detection_mode / set_anchor_enabled / init_image_database /
-//     set_meshing_enabled) — this node only surfaces the changes + the temperature / native-error events.
-//     Drop it in the scene (a unique name helps) and connect the signals below.
+// --- XrealAR: a scene-placeable Node that polls the AR change streams each frame and re-emits
+//     them as signals, so consumers connect in the editor instead of polling XrealSystem by hand.
+//     Enable the features through XrealSystem, with set_plane_detection_mode, set_anchor_enabled,
+//     init_image_database and set_meshing_enabled; this node only surfaces the changes plus the
+//     temperature and native-error events. Drop it in the scene, where a unique name helps, and
+//     connect the signals below.
 
 /// Scene node that turns the AR change polls + glasses events into signals. See the module docs.
 #[derive(GodotClass)]
 #[class(base = Node)]
 pub struct XrealAR {
     base: Base<Node>,
-    /// Master switch — poll each frame while `true`.
+    /// Master switch: poll each frame while it is `true`.
     #[export]
     active: bool,
     /// Poll plane-detection changes each frame and emit the `plane_*` signals (turn off the streams
@@ -1141,7 +1151,7 @@ impl INode for XrealAR {
 
 #[godot_api]
 impl XrealAR {
-    /// A detected plane was added — `Dictionary { id, transform, center, size, alignment }`.
+    /// A detected plane was added, as `Dictionary { id, transform, center, size, alignment }`.
     #[signal]
     fn plane_added(plane: VarDictionary);
     /// A detected plane was updated (same `Dictionary` shape as `plane_added`).
@@ -1151,7 +1161,7 @@ impl XrealAR {
     #[signal]
     fn plane_removed(id: GString);
 
-    /// A tracked anchor was added — `Dictionary { id, transform, tracking_state, session_id }`.
+    /// A tracked anchor was added, as `Dictionary { id, transform, tracking_state, session_id }`.
     #[signal]
     fn anchor_added(anchor: VarDictionary);
     /// A tracked anchor was updated (same `Dictionary` shape as `anchor_added`).
@@ -1161,7 +1171,8 @@ impl XrealAR {
     #[signal]
     fn anchor_removed(id: GString);
 
-    /// A tracked image was added — `Dictionary { id, source_image, transform, size, tracking_state }`.
+    /// A tracked image was added, as
+    /// `Dictionary { id, source_image, transform, size, tracking_state }`.
     #[signal]
     fn image_added(image: VarDictionary);
     /// A tracked image was updated (same `Dictionary` shape as `image_added`).
@@ -1171,7 +1182,8 @@ impl XrealAR {
     #[signal]
     fn image_removed(id: GString);
 
-    /// A mesh block was added / updated — `Dictionary { id, state, vertices, normals, indices }`.
+    /// A mesh block was added or updated, as
+    /// `Dictionary { id, state, vertices, normals, indices }`.
     #[signal]
     fn mesh_block_changed(block: VarDictionary);
     /// A mesh block was removed (its id string).

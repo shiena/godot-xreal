@@ -15,8 +15,8 @@ import android.util.Log;
  * Foreground service that owns the media projection while app audio is being captured.
  *
  * Android 14 refuses {@code getMediaProjection()} unless a foreground service of type
- * {@code mediaProjection} is already running, so the projection is created here — after
- * startForeground — rather than in the Activity that collected consent. The service then does
+ * {@code mediaProjection} is already running, so the projection is created here, after
+ * startForeground, rather than in the Activity that collected consent. The service then does
  * nothing but stay alive: the capture itself happens inside libmedia_codec, which builds its own
  * AudioRecord from the projection.
  */

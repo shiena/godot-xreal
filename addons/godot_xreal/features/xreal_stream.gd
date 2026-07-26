@@ -1,44 +1,48 @@
 extends Node
-## First-person-view streaming as a drop-in feature component. Renders the head-POV AR into a
-## SubViewport and streams its GL texture with the libmedia_codec HW encoder (XrealSystem.stream_*).
-## When the RGB camera is ON (xreal_camera feature enabled) it instead streams the camera+AR blend
-## (what a bystander sees, via xreal_blend_2d.gdshader); with the camera OFF it streams the AR view
-## alone. The encoder feeds on our own SubViewport texture, not the camera, so streaming needs no
-## RGB camera and works on the camera-less Air 2 Ultra too.
+## First-person-view streaming as a drop-in feature component. It renders the head-POV AR into a
+## SubViewport and streams that GL texture with the libmedia_codec HW encoder
+## (XrealSystem.stream_*). With the RGB camera ON, meaning the xreal_camera feature is enabled, it
+## streams the camera+AR blend instead, which is what a bystander sees, through
+## xreal_blend_2d.gdshader; with the camera OFF it streams the AR view alone. The encoder feeds on
+## our own SubViewport texture rather than the camera, so streaming needs no RGB camera and works
+## on the camera-less Air 2 Ultra too.
 ##
 ## The destination is XREAL's "StreamingReceiver" PC app, found by LAN discovery
-## (xreal_stream_pairing.gd): FIND-SERVER broadcast, TCP EnterRoom/useAudio handshake, then RTP to
-## rtp://<ip>:5555 (video 5555 / audio 5557). The receiver drops back to its idle screen if RTP
-## doesn't arrive right after the handshake, so we stream_start immediately on `paired`.
+## (xreal_stream_pairing.gd): a FIND-SERVER broadcast, the TCP EnterRoom and useAudio handshake,
+## then RTP to rtp://<ip>:5555 (video 5555, audio 5557). The receiver drops back to its idle screen
+## if RTP does not arrive right after the handshake, so we stream_start immediately on `paired`.
 ##
 ## The encoder reads the GL texture on the render thread, so the per-frame push runs inside a
 ## RenderingServer.call_on_render_thread callback. See docs/plans/fpv-streaming-plan.md.
 ##
-## The head rig is discovered per frame (XrealShared.find_head_tracker); the live camera feed per
-## frame too (find_camera_feed), so camera on/off mid-stream just switches the streamed view.
+## Both the head rig and the live camera feed are discovered per frame, through
+## XrealShared.find_head_tracker() and find_camera_feed(), so toggling the camera mid-stream simply
+## switches the streamed view.
 
-## Emitted when an operation fails or the feature is unavailable, so the load site can react
-## (show UI, log, flip a toggle). Carries the same human-readable text also pushed as a warning.
+## Emitted when an operation fails or the feature is unavailable, so the load site can react by
+## showing UI, logging, or flipping a toggle. It carries the same human-readable text that is also
+## pushed as a warning.
 signal error(message: String)
 
-## Emitted whenever streaming actually starts/stops (incl. async pairing success/failure), so a UI
-## toggle can reflect the real state.
+## Emitted whenever streaming actually starts or stops, including async pairing success and
+## failure, so a UI toggle can reflect the real state.
 signal active_changed(active: bool)
 
-## Which audio goes out with the stream (SDK VideoCapture's Audio State). MIC is captured natively by
-## the encoder and needs RECORD_AUDIO; APP is captured natively too, via a MediaProjection. Replaces the
-## old `with_mic` bool — MIC is the same behaviour as `with_mic = true`.
+## Which audio goes out with the stream (SDK VideoCapture's Audio State). The encoder captures MIC
+## natively and needs RECORD_AUDIO; it captures APP natively too, through a MediaProjection. This
+## replaces the old `with_mic` bool, where MIC behaves exactly like `with_mic = true`.
 @export var audio_state: XrealShared.AudioState = XrealShared.AudioState.MIC
-## Target the receiver's ObserverView page (MRC composite) instead of FirstPersonView. Default OFF —
-## FirstPersonView is the useful mode on XREAL One (its RGB camera does an aligned on-device blend).
-## ObserverView is a niche/incomplete path (mainly for camera-less glasses): when true the stream
-## pairs without the useAudio handshake, streams the virtual-only AR with alpha (useAlpha=true) so
-## the PC composites it over its webcam, and applies the observer FOV the receiver pushes. It runs
-## end to end, but the composite is NOT spatially aligned — the protocol carries no observer-camera
-## pose. See docs/plans/observer-view-notes.md.
+## Target the receiver's ObserverView page (MRC composite) instead of FirstPersonView. It defaults
+## to OFF, because FirstPersonView is the useful mode on the XREAL One, whose RGB camera does an
+## aligned on-device blend. ObserverView is a niche and incomplete path, mainly for camera-less
+## glasses: when true the stream pairs without the useAudio handshake, streams the virtual-only AR
+## with alpha (useAlpha=true) so the PC composites it over its webcam, and applies the observer FOV
+## the receiver pushes. It runs end to end, but the composite is NOT spatially aligned, because the
+## protocol carries no observer-camera pose. See docs/plans/observer-view-notes.md.
 @export var observer_mode := false
-## Capture size/bitrate preset (SDK VideoCapture's Resolution Level). `CUSTOM` uses the explicit
-## stream_width/stream_height/stream_bitrate below; every other value overrides them at start.
+## Capture size and bitrate preset (SDK VideoCapture's Resolution Level). `CUSTOM` uses the
+## explicit stream_width, stream_height and stream_bitrate below; every other value overrides them
+## at start.
 @export var resolution_level: XrealShared.ResolutionLevel = XrealShared.ResolutionLevel.HIGH
 @export var stream_width := 1280
 @export var stream_height := 720
@@ -67,7 +71,7 @@ var _active := false
 var _mic_now := false               # mic state chosen at toggle time, used once paired
 var _pending_fov := {}              # ObserverView: latest observer-camera FOV pushed by the receiver
 var _rgb_offset := Vector3.ZERO     # RGB camera offset from the head (Godot space), for blend parallax
-var _rgb_geom_done := false         # RGB blend geometry (FOV + offset) applied once — static per device
+var _rgb_geom_done := false         # RGB blend geometry (FOV + offset) applied once, static per device
 var _epoch := 0                     # bumped on every start/stop; a frame captured for a prior session is dropped
 
 func _ready() -> void:
@@ -75,8 +79,8 @@ func _ready() -> void:
 	if _system == null:
 		return  # off-device -> inert (set_enabled just reports false)
 	# Mic permission (RECORD_AUDIO) is requested lazily on the Stream toggle (see set_enabled),
-	# matching the camera: no startup dialog, so the app only asks when you actually start streaming.
-	# LAN-discovery pairing with the StreamingReceiver PC app.
+	# matching the camera: there is no startup dialog, so the app asks only when you actually start
+	# streaming. Below, LAN-discovery pairing with the StreamingReceiver PC app.
 	_pairing = Node.new()
 	_pairing.name = "StreamPairing"
 	_pairing.set_script(preload("res://addons/godot_xreal/features/xreal_stream_pairing.gd"))
@@ -86,12 +90,13 @@ func _ready() -> void:
 	_pairing.lost.connect(_on_pair_lost)
 	_pairing.camera_param.connect(_on_camera_param)
 
-## True once RECORD_AUDIO is granted (always true off Android, where the encoder mic isn't used).
+## True once RECORD_AUDIO is granted. It is always true off Android, where the encoder mic goes
+## unused.
 func _mic_granted() -> bool:
 	return XrealShared.is_mic_granted()
 
-## Toggle streaming. Pairing is async, so turning on only *starts* discovery; the actual stream
-## starts on the `paired` signal (or active_changed(false) reports the failure).
+## Toggle streaming. Pairing is async, so turning it on only *starts* discovery; the actual stream
+## starts on the `paired` signal, and active_changed(false) reports a failure.
 func set_enabled(on: bool) -> void:
 	if not on:
 		_stop()
@@ -104,35 +109,35 @@ func set_enabled(on: bool) -> void:
 	# One process-global HW encoder, shared with xreal_video_recorder: stream_start while it runs
 	# would not open a second encoder but feed our frames into the running recording.
 	if _system.has_method(&"is_stream_active") and _system.is_stream_active():
-		_fail("[xreal-stream] HW encoder busy (recording?) — stop it first")
+		_fail("[xreal-stream] HW encoder busy (recording?), so stop it first")
 		active_changed.emit(false)
 		return
 	# NB: no RGB-camera gate here. We render our own head-POV AR into a SubViewport and hand that GL
-	# texture to the (device-agnostic) libmedia_codec encoder — the camera is never touched unless
-	# it happens to be on, in which case we opportunistically stream the camera+AR blend (_use_blend).
+	# texture to the device-agnostic libmedia_codec encoder, so the camera is never touched unless it
+	# happens to be on, in which case we opportunistically stream the camera+AR blend (_use_blend).
 	if observer_mode:
-		# ObserverView (MRC): no mic/useAudio; the PC composites our virtual-only+alpha render over
-		# its webcam.
+		# ObserverView (MRC): no mic and no useAudio, since the PC composites our virtual-only render,
+		# alpha included, over its webcam.
 		_mic_now = false
 		print("[xreal-stream] Observer stream: pairing with StreamingReceiver (ObserverView) ...")
 		_pairing.start(false, true)
 		return
-	# Only announce/capture the mic if RECORD_AUDIO is granted — otherwise the encoder's AudioRecord
-	# stays silent. If wanted but not granted, (re)request it and stream video-only this time.
+	# Announce and capture the mic only once RECORD_AUDIO is granted, or the encoder's AudioRecord
+	# stays silent. When it is wanted but not granted, re-request it and stream video-only this time.
 	_mic_now = XrealShared.audio_wants_mic(audio_state)
 	if _mic_now and OS.has_feature("android") and not _mic_granted():
 		OS.request_permission("android.permission.RECORD_AUDIO")
 		_mic_now = false
-		_fail("[xreal-stream] mic not granted yet — streaming video-only; grant RECORD_AUDIO, then toggle streaming again for audio")
+		_fail("[xreal-stream] mic not granted yet, so streaming video-only; grant RECORD_AUDIO, then toggle streaming again for audio")
 	print("[xreal-stream] FPV stream: pairing with StreamingReceiver (mic=%s) ..." % _mic_now)
 	_pairing.start(_mic_now)
 
-## Pairing succeeded — stream to the receiver right away (it idles out if RTP doesn't follow the
-## handshake).
+## Pairing succeeded, so stream to the receiver right away; it idles out if RTP does not follow the
+## handshake.
 func _on_paired(server_ip: String) -> void:
-	# Pairing is async — a recording may have grabbed the process-global encoder meanwhile.
+	# Pairing is async, so a recording may have grabbed the process-global encoder meanwhile.
 	if _system.has_method(&"is_stream_active") and _system.is_stream_active():
-		_fail("[xreal-stream] HW encoder became busy during pairing (recording?) — not streaming")
+		_fail("[xreal-stream] HW encoder became busy during pairing (recording?), so not streaming")
 		_pairing.stop()
 		active_changed.emit(false)
 		return
@@ -159,8 +164,9 @@ func _on_paired(server_ip: String) -> void:
 	print("[xreal-stream] stream -> %s (mode=%s, mic=%s)" % [url, "observer" if observer_mode else "fpv", _mic_now])
 	active_changed.emit(true)
 
-## ObserverView: apply the receiver's observer-camera FOV (tangent extents) to the AR camera. First
-## bring-up uses a symmetric perspective (vertical FOV from top+bottom).
+## ObserverView: apply the receiver's observer-camera FOV, given as tangent extents, to the AR
+## camera. First bring-up uses a symmetric perspective, taking the vertical FOV from top and
+## bottom.
 func _on_camera_param(fov: Dictionary) -> void:
 	_pending_fov = fov
 	_apply_fov()
@@ -185,7 +191,7 @@ func _on_pair_lost() -> void:
 	_active = false
 	active_changed.emit(false)
 
-## Stop streaming + tear down the control link.
+## Stop streaming and tear down the control link.
 func _stop() -> void:
 	var was := _active
 	_active = false
@@ -197,10 +203,10 @@ func _stop() -> void:
 	if was:
 		active_changed.emit(false)
 
-## Head-POV AR viewport (transparent bg): holograms only, so it composites over the camera for the
-## blend and, with no camera, reads back as holograms on black.
-## Fold the Resolution Level preset into stream_width/height/bitrate so everything downstream reads
-## one set of values. CUSTOM leaves the exported values alone.
+## Head-POV AR viewport on a transparent background: holograms only, so it composites over the
+## camera for the blend and, with no camera, reads back as holograms on black.
+## Fold the Resolution Level preset into stream_width, stream_height and stream_bitrate, so
+## everything downstream reads one set of values. CUSTOM leaves the exported values alone.
 func _apply_resolution_level() -> void:
 	if resolution_level == XrealShared.ResolutionLevel.CUSTOM:
 		return
@@ -223,9 +229,9 @@ func _ensure_viewport() -> void:
 	_ar_cam.cull_mask = stream_cull_mask
 	_ar_vp.add_child(_ar_cam)
 
-## Composite viewport blending the AR viewport over the RGB camera (xreal_blend_2d.gdshader, same
-## as blend capture), built lazily the first time the camera is on. Streaming it casts what a
-## bystander sees.
+## Composite viewport blending the AR viewport over the RGB camera, using xreal_blend_2d.gdshader
+## just as blend capture does, built lazily the first time the camera is on. Streaming it casts
+## what a bystander sees.
 func _ensure_comp() -> void:
 	if _comp_vp != null:
 		return
@@ -240,17 +246,18 @@ func _ensure_comp() -> void:
 	rect.material = _comp_mat
 	_comp_vp.add_child(rect)
 
-## Drive the AR camera from the RGB camera's real geometry (intrinsics -> vertical FOV,
-## pose-from-head -> a small forward offset) so the blended holograms match the camera image.
-## Static per device, applied once.
+## Drive the AR camera from the RGB camera's real geometry: the intrinsics give the vertical FOV
+## and the pose relative to the head gives a small forward offset, so the blended holograms match
+## the camera image. It is static per device, so it is applied once.
 func _apply_rgb_geometry() -> void:
 	if _rgb_geom_done or _ar_cam == null:
 		return
 	_rgb_offset = XrealShared.apply_rgb_camera_geometry(_system, _ar_cam)
 	_rgb_geom_done = true
 
-## True when the RGB camera feed is live (camera on + a frame arrived) → stream the camera+AR blend.
-## Never in ObserverView: the composite happens on the PC (over its webcam).
+## True when the RGB camera feed is live, meaning the camera is on and a frame arrived, in which
+## case we stream the camera+AR blend. Never in ObserverView, where the PC does the composite over
+## its webcam.
 func _use_blend(feed: Object) -> bool:
 	if observer_mode:
 		return false
@@ -266,18 +273,18 @@ func _process(_delta: float) -> void:
 	var tracker := XrealShared.find_head_tracker(get_tree())
 	if tracker and _ar_cam:
 		if blending:
-			# Blend (camera ON): drive the AR camera from the RGB camera's real geometry (FOV +
-			# forward offset) so the holograms line up with the camera image instead of a default guess.
+			# Blend, with the camera ON: drive the AR camera from the RGB camera's real geometry, its FOV
+			# and forward offset, so the holograms line up with the camera image instead of a default guess.
 			_apply_rgb_geometry()
 			_ar_cam.global_transform = tracker.global_transform.translated_local(_rgb_offset)
 		else:
-			# Plain AR (no camera): head-locked with the default FOV. ObserverView sets its own FOV
-			# (from the receiver) in _apply_fov, so leave it alone there.
+			# Plain AR with no camera: head-locked at the default FOV. ObserverView sets its own FOV, pushed
+			# by the receiver, in _apply_fov, so leave it alone there.
 			if not observer_mode:
 				_ar_cam.fov = 75.0
 			_ar_cam.global_transform = tracker.global_transform
-	# Camera ON -> stream the camera+AR blend (what a bystander sees); camera OFF -> the AR view alone.
-	# See the recorder for why the blend viewport is only needed for some mode/key combinations.
+	# Camera ON streams the camera+AR blend, what a bystander sees; camera OFF streams the AR view
+	# alone. See the recorder for why only some mode and key combinations need the blend viewport.
 	var needs_comp := (
 		(blending and blend_mode == BlendMode.BLEND)
 		or blend_mode == BlendMode.RGB_ONLY
@@ -300,8 +307,8 @@ func _process(_delta: float) -> void:
 	var viewport_rid := src_vp.get_viewport_rid()
 	var ts := Time.get_ticks_usec() * 1000  # nanoseconds
 	var gen := _epoch  # a stop->restart bumps _epoch, so a frame captured for the old session is dropped
-	# ViewportTexture.get_rid() is a proxy RID. In the Compatibility renderer its copied tex_id can
-	# remain 0, so resolve the viewport's real render-target color texture instead. Resolve the GL
+	# ViewportTexture.get_rid() is a proxy RID, and in the Compatibility renderer its copied tex_id
+	# can stay 0, so resolve the viewport's real render-target color texture instead. Resolve the GL
 	# name every frame to follow render-target reallocations, and push while the render EGL context
 	# is current.
 	RenderingServer.call_on_render_thread(func() -> void:
@@ -317,7 +324,8 @@ func _exit_tree() -> void:
 	if _pairing:
 		_pairing.stop()
 
-## Push a warning AND emit `error` so the load site can detect the failure (not just see the log).
+## Push a warning AND emit `error`, so the load site can detect the failure instead of only seeing
+## it in the log.
 func _fail(msg: String) -> void:
 	push_warning(msg)
 	error.emit(msg)

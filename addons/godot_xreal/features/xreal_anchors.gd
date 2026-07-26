@@ -1,24 +1,26 @@
 extends Node3D
-## Spatial anchors as a drop-in feature component (Air 2 Ultra). place_at_fingertip() — or a pinch
-## gesture — places an anchor at the index fingertip via XrealSystem.acquire_anchor(). Each tracked
-## anchor gets a world-locked marker; save_anchor is retried until the SLAM map is good enough
-## (INSUFFICIENT → no Guid), then the Guid is persisted to `save_file` and reloaded (load_anchor)
-## next launch.
+## Spatial anchors as a drop-in feature component (Air 2 Ultra). place_at_fingertip(), or a pinch
+## gesture, places an anchor at the index fingertip through XrealSystem.acquire_anchor(). Each
+## tracked anchor gets a world-locked marker. save_anchor is retried until the SLAM map is good
+## enough, since an INSUFFICIENT map returns no Guid; the Guid is then persisted to `save_file` and
+## reloaded with load_anchor next launch.
 ##
-## World-locked: add this component under a world-fixed node (e.g. the scene root, NOT the head
-## rig) so a marker stays pinned to the same real-world spot as the head moves. Anchor changes
-## stream in through the shared XrealAR poller; the shared XrealHandTracker is ensured on first
-## enable so the fingertip/pinch placement works with just this scene dropped in.
+## World-locked: add this component under a world-fixed node, such as the scene root and NOT the
+## head rig, so a marker stays pinned to the same real-world spot as the head moves. Anchor changes
+## stream in through the shared XrealAR poller, and the shared XrealHandTracker is ensured on first
+## enable, so fingertip and pinch placement work with just this scene dropped in.
 
-# XRHandTracker joint ordinals (OpenXR): thumb tip / index tip.
-## Emitted when an operation fails or the feature is unavailable, so the load site can react
-## (show UI, log, flip a toggle). Carries the same human-readable text also pushed as a warning.
+# XRHandTracker joint ordinals (OpenXR): thumb tip and index tip.
+## Emitted when an operation fails or the feature is unavailable, so the load site can react by
+## showing UI, logging, or flipping a toggle. It carries the same human-readable text that is also
+## pushed as a warning.
 signal error(message: String)
 
 
 const TIP_THUMB := 5
 const TIP_INDEX := 10
-# Pinch trigger with hysteresis so one pinch = one anchor (thumb–index tip distance, metres).
+# Pinch trigger with hysteresis, so one pinch places exactly one anchor. The threshold is the
+# thumb-to-index tip distance in metres.
 const PINCH_ON := 0.025
 const PINCH_OFF := 0.045
 const HANDS := ["/user/hand_tracker/right", "/user/hand_tracker/left"]
@@ -45,9 +47,10 @@ func _ready() -> void:
 	if enabled:
 		enabled = set_enabled(true)
 
-## Toggle anchor mode. Returns the resulting state (false if the anchor ABI is unavailable, so a
-## UI toggle can flip itself back off). OFF keeps the SDK subsystem enabled (so anchors stay
-## tracked) and just hides the markers — turning it back ON restores them without re-placing.
+## Toggle anchor mode and return the resulting state, which is false when the anchor ABI is
+## unavailable, so a UI toggle can flip itself back off. Switching OFF keeps the SDK subsystem
+## enabled, so anchors stay tracked, and only hides the markers; switching back ON restores them
+## without re-placing.
 func set_enabled(on: bool) -> bool:
 	if not _system or not _system.has_method(&"is_anchor_available") or not _system.is_anchor_available():
 		enabled = false
@@ -72,7 +75,7 @@ func set_enabled(on: bool) -> bool:
 	enabled = _enabled
 	return _enabled
 
-## Resolve the shared XrealAR and connect its anchor signals once — BEFORE the stream switch goes
+## Resolve the shared XrealAR and connect its anchor signals once, BEFORE the stream switch goes
 ## on, so no change event is ever polled without a listener.
 func _ensure_ar() -> void:
 	if _connected:
@@ -85,7 +88,7 @@ func _ensure_ar() -> void:
 	_ar.connect(&"anchor_removed", _on_anchor_removed)
 	_connected = true
 
-## Place at whichever hand is currently tracked (index fingertip).
+## Place at the index fingertip of whichever hand is currently tracked.
 func place_at_fingertip() -> void:
 	if not _enabled:
 		return
@@ -94,7 +97,7 @@ func place_at_fingertip() -> void:
 		if tracker and tracker.get_has_tracking_data():
 			_place_anchor(tracker.get_hand_joint_transform(TIP_INDEX))
 			return
-	_fail("[xreal-anchors] no hand tracked — hold a hand up to place")
+	_fail("[xreal-anchors] no hand tracked, so hold a hand up to place")
 
 func _process(_delta: float) -> void:
 	if not _enabled or not _system:
@@ -107,8 +110,8 @@ func _process(_delta: float) -> void:
 		_retry_frames = 0
 		_retry_saves()
 
-## Pinch detection: on each hand, a thumb-tip↔index-tip close-then-open drops one anchor at the
-## index fingertip.
+## Pinch detection: on each hand, a thumb tip and index tip closing then opening drops one anchor
+## at the index fingertip.
 func _check_pinch() -> void:
 	for tname in HANDS:
 		var tracker := XRServer.get_tracker(tname) as XRHandTracker
@@ -131,8 +134,9 @@ func _vibrate(ms: int) -> void:
 	if OS.has_feature("android"):
 		Input.vibrate_handheld(ms)
 
-## Create an anchor at a world `Transform3D` and show it. Persistence (save_anchor) is retried later
-## from _retry_saves once the map quality is good enough — saving right away usually fails INSUFFICIENT.
+## Create an anchor at a world `Transform3D` and show it. Persistence through save_anchor is
+## retried later from _retry_saves, once the map quality is good enough, because saving right away
+## usually fails with INSUFFICIENT.
 func _place_anchor(pose: Transform3D) -> void:
 	var a: Dictionary = _system.acquire_anchor(pose)
 	if a.is_empty():
@@ -164,7 +168,8 @@ func _try_save(id: String) -> void:
 		_update_marker_tint(id)  # flip to "saved" green
 		print("[xreal-anchors] saved %s -> %s" % [id, guid])
 
-## XrealAR signal: an anchor was added / its tracked pose updated (the source of truth for pose).
+## XrealAR signal: an anchor was added, or its tracked pose updated. This is the source of truth
+## for the pose.
 func _on_anchor_changed(a: Dictionary) -> void:
 	if _enabled:
 		_update_marker(a)
@@ -188,7 +193,8 @@ func _update_marker(a: Dictionary) -> void:
 	_anchor_pose[id] = t
 	_tint(mi, id, a.get("tracking_state", 0))
 
-## Tint: green = saved/persisted, cyan = live tracking, gray = limited/not tracking.
+## Tint: green means saved and persisted, cyan means live tracking, gray means limited or not
+## tracking.
 func _tint(mi: MeshInstance3D, id: String, state: int) -> void:
 	var mat := mi.material_override as StandardMaterial3D
 	if _saved_guids.has(id):
@@ -211,8 +217,8 @@ func _remove_marker(id: String) -> void:
 	_anchor_pose.erase(id)
 	_pending.erase(id)
 
-## A small unshaded box, elongated in Z so the anchor's facing is visible (proves it holds
-## orientation as well as position).
+## A small unshaded box, elongated in Z so the anchor's facing is visible, which proves it holds
+## orientation as well as position.
 func _make_marker() -> MeshInstance3D:
 	var mi := MeshInstance3D.new()
 	var box := BoxMesh.new()
@@ -224,8 +230,8 @@ func _make_marker() -> MeshInstance3D:
 	mi.material_override = mat
 	return mi
 
-## Reload previously-saved anchors: load_anchor restores each into the tracking set (so the anchor
-## stream then reports it) and returns its current pose for an immediate marker.
+## Reload previously-saved anchors: load_anchor restores each into the tracking set, so the anchor
+## stream then reports it, and returns its current pose for an immediate marker.
 func _load_saved() -> void:
 	if not FileAccess.file_exists(save_file):
 		return
@@ -262,11 +268,12 @@ func _persist_guids() -> void:
 		f.close()
 
 func _exit_tree() -> void:
-	# Release the shared stream switch (the shared XrealAR outlives us).
+	# Release the shared stream switch; the shared XrealAR outlives us.
 	if _enabled and _ar and is_instance_valid(_ar):
 		_ar.set(&"anchors", false)
 
-## Push a warning AND emit `error` so the load site can detect the failure (not just see the log).
+## Push a warning AND emit `error`, so the load site can detect the failure instead of only seeing
+## it in the log.
 func _fail(msg: String) -> void:
 	push_warning(msg)
 	error.emit(msg)

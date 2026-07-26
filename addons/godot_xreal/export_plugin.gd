@@ -3,29 +3,31 @@ extends EditorExportPlugin
 
 ## Android export plugin for the Godot XREAL addon.
 ##
-## Contributes everything the XREAL glasses need into the exported APK WITHOUT hand-editing the
-## Gradle Android build template (which Godot wipes on regeneration):
-##   - manifest permissions (INTERNET etc.) and <application> markers (nreal_sdk, supportDevices…)
-##   - the XREAL companion / NRFakeActivity declarations
-##   - the XREAL/NR runtime .aar libraries
-##   - the XrealBridge/XrealCompanionActivity Java sources, copied into the gradle build
-##     template's src/ for the export's Gradle run to compile (and removed again afterwards,
-##     so the template stays pristine) — no pre-built .jar, no local javac needed
+## It contributes everything the XREAL glasses need into the exported APK WITHOUT hand-editing the
+## Gradle Android build template, which Godot wipes on regeneration:
+##   - manifest permissions such as INTERNET, and <application> markers such as nreal_sdk and
+##     supportDevices
+##   - the XREAL companion and NRFakeActivity declarations
+##   - the XREAL and NR runtime .aar libraries
+##   - the XrealBridge and XrealCompanionActivity Java sources, copied into the gradle build
+##     template's src/ for the export's Gradle run to compile, then removed again so the template
+##     stays pristine. No pre-built .jar and no local javac are needed.
 ##
-## The XREAL/NR native .so are still packaged via godot_xreal.gdextension's [dependencies].
-## Activity registration + System.loadLibrary happen at runtime from GDScript (see demo/main.gd's
-## JavaClassWrapper path), so the launcher Activity (GodotApp) needs no patching.
+## godot_xreal.gdextension's [dependencies] still packages the XREAL and NR native .so. Activity
+## registration and System.loadLibrary happen at runtime from GDScript, through demo/main.gd's
+## JavaClassWrapper path, so the launcher Activity (GodotApp) needs no patching.
 
 const ANDROID_DIR := "res://addons/godot_xreal/android/"
-## Java sources staged as a whole tree — package dirs (com/godot/game, ai/nreal/activitylife)
-## are preserved relative to this root.
+## Java sources staged as a whole tree, with the package dirs (com/godot/game and
+## ai/nreal/activitylife) preserved relative to this root.
 const JAVA_SRC_ROOT := ANDROID_DIR + "src/"
-## The template's main source set root (its own GodotApp.java lives under it, standard AGP
-## layout). Matches the default gradle_build/gradle_build_directory ("").
+## The template's main source set root, where its own GodotApp.java lives, in the standard AGP
+## layout. It matches the default gradle_build/gradle_build_directory ("").
 const GRADLE_JAVA_ROOT := "res://android/build/src/main/java/"
-## nr_plugins.json must land in the APK's `assets/` (Android StreamingAssets) for the NR perception
-## loader to find + load the image-tracking backend .so. Staged into the gradle template's assets
-## source set for the export's Gradle run (and removed again in _export_end), like the Java sources.
+## nr_plugins.json must land in the APK's `assets/`, Android's StreamingAssets, for the NR
+## perception loader to find and load the image-tracking backend .so. It is staged into the gradle
+## template's assets source set for the export's Gradle run, then removed again in _export_end,
+## like the Java sources.
 const NR_PLUGINS_JSON := ANDROID_DIR + "nr_plugins.json"
 const GRADLE_ASSETS_ROOT := "res://android/build/src/main/assets/"
 
@@ -35,7 +37,8 @@ func _get_name() -> String:
 func _supports_platform(platform: EditorExportPlatform) -> bool:
 	return platform is EditorExportPlatformAndroid
 
-## <manifest>-level: XREAL permissions (glEsVersion / supports-screens are already in the template).
+## <manifest>-level: the XREAL permissions. glEsVersion and supports-screens are already in the
+## template.
 func _get_android_manifest_element_contents(_platform: EditorExportPlatform, _debug: bool) -> String:
 	return """<uses-permission android:name="android.permission.INTERNET" />
 <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
@@ -47,13 +50,13 @@ func _get_android_manifest_element_contents(_platform: EditorExportPlatform, _de
 <uses-permission android:name="android.permission.RECORD_AUDIO" />
 <uses-permission android:name="android.permission.VIBRATE" />"""
 
-## <application>-level: XREAL markers + the companion / NRFakeActivity declarations. Uses the
-## fully-qualified com.godot.game.XrealCompanionActivity (matches the .jar class).
+## <application>-level: the XREAL markers plus the companion and NRFakeActivity declarations. It
+## uses the fully-qualified com.godot.game.XrealCompanionActivity, matching the .jar class.
 func _get_android_manifest_application_element_contents(_platform: EditorExportPlatform, _debug: bool) -> String:
-	# multiResume / autoLog are toggleable from Project Settings (registered in plugin.gd's
-	# PROJECT_SETTINGS); the SDK markers, activities and service below are fixed. multiResume keeps the
-	# glasses app live across phone app-switches — when off the nr_features marker is omitted entirely.
-	# autoLog is the NRSDK's verbose native logging, emitted as 0/1.
+	# multiResume and autoLog are toggleable from Project Settings, registered in plugin.gd's
+	# PROJECT_SETTINGS, while the SDK markers, activities and service below are fixed. multiResume
+	# keeps the glasses app live across phone app-switches, and when it is off the nr_features marker
+	# is omitted entirely. autoLog is the NRSDK's verbose native logging, emitted as 0 or 1.
 	var multi_resume := bool(ProjectSettings.get_setting("xreal/multi_resume", true))
 	var auto_log := bool(ProjectSettings.get_setting("xreal/auto_log", false))
 	var markers := '<meta-data android:name="nreal_sdk" android:value="true" />\n'
@@ -66,9 +69,9 @@ func _get_android_manifest_application_element_contents(_platform: EditorExportP
 <activity android:name="com.godot.game.XrealProjectionActivity" android:excludeFromRecents="true" android:exported="false" android:noHistory="true" android:theme="@android:style/Theme.Translucent.NoTitleBar" />
 <service android:name="com.godot.game.XrealProjectionService" android:exported="false" android:foregroundServiceType="mediaProjection" />"""
 
-## Local .aar the plugin ships (XREAL/NR runtime archives). nr_spatial_anchor / nr_image_tracking
-## carry the libnr_spatial_anchor.so / libnr_image_tracking.so backends for the anchor / image-tracking
-## C ABIs (see docs/plans/ar-features-plan.md).
+## The local .aar the plugin ships, the XREAL and NR runtime archives. nr_spatial_anchor and
+## nr_image_tracking carry the libnr_spatial_anchor.so and libnr_image_tracking.so backends for the
+## anchor and image-tracking C ABIs; see docs/plans/ar-features-plan.md.
 func _get_android_libraries(_platform: EditorExportPlatform, _debug: bool) -> PackedStringArray:
 	return PackedStringArray([
 		ANDROID_DIR + "nr_loader.aar",
@@ -83,7 +86,8 @@ func _get_android_libraries(_platform: EditorExportPlatform, _debug: bool) -> Pa
 var _copied_java := PackedStringArray()
 var _copied_assets := PackedStringArray()
 
-## .java files under root, as paths relative to root (recursive, package dirs preserved).
+## Every .java file under root, as a path relative to root. It recurses and preserves package
+## dirs.
 func _collect_java_sources(root: String, rel: String, out: PackedStringArray) -> void:
 	for f in DirAccess.get_files_at(root + rel):
 		if f.get_extension() == "java":
@@ -92,14 +96,14 @@ func _collect_java_sources(root: String, rel: String, out: PackedStringArray) ->
 		_collect_java_sources(root, rel + d + "/", out)
 
 ## Stage the bridge Java sources into the gradle build template so the export's Gradle run
-## compiles them (the gradle build is mandatory for this addon: _get_android_libraries and the
-## manifest hooks above only apply to gradle exports).
+## compiles them. The gradle build is mandatory for this addon, because _get_android_libraries and
+## the manifest hooks above apply to gradle exports alone.
 func _export_begin(features: PackedStringArray, _is_debug: bool, _path: String, _flags: int) -> void:
 	if not features.has("android"):
 		return
 	_copied_java.clear()
 	if not DirAccess.dir_exists_absolute("res://android/build"):
-		push_error("godot_xreal: gradle build template not found at res://android/build — " +
+		push_error("godot_xreal: gradle build template not found at res://android/build: " +
 			"install it via Project > Install Android Build Template (the XrealBridge Java " +
 			"sources are compiled by the export's gradle build).")
 		return
@@ -115,8 +119,9 @@ func _export_begin(features: PackedStringArray, _is_debug: bool, _path: String, 
 			continue
 		_copied_java.append(dst)
 
-	# Stage nr_plugins.json into the gradle assets so it ends up at the APK's assets/nr_plugins.json
-	# (the NR perception loader reads it to load the image-tracking backend). Optional: only if present.
+	# Stage nr_plugins.json into the gradle assets so it ends up at the APK's assets/nr_plugins.json,
+	# where the NR perception loader reads it to load the image-tracking backend. It is optional, so
+	# this runs only when the file is present.
 	if FileAccess.file_exists(NR_PLUGINS_JSON):
 		var asset_dst := GRADLE_ASSETS_ROOT + "nr_plugins.json"
 		var aerr := DirAccess.make_dir_recursive_absolute(asset_dst.get_base_dir())
@@ -127,9 +132,10 @@ func _export_begin(features: PackedStringArray, _is_debug: bool, _path: String, 
 		else:
 			push_error("godot_xreal: failed to stage nr_plugins.json into the gradle assets (error %d)" % aerr)
 
-## Remove the staged sources again — the build template must stay pristine (Godot wipes it on
-## regeneration, and stale copies would shadow renamed/deleted addon sources). Package dirs we
-## introduced are pruned too (remove fails harmlessly on non-empty dirs like com/godot/game).
+## Remove the staged sources again, because the build template must stay pristine: Godot wipes it
+## on regeneration, and stale copies would shadow renamed or deleted addon sources. The package
+## dirs we introduced are pruned too, and remove fails harmlessly on a non-empty dir such as
+## com/godot/game.
 func _export_end() -> void:
 	for f in _copied_java:
 		DirAccess.remove_absolute(f)

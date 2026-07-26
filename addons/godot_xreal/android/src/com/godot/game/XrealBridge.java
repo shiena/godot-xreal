@@ -21,13 +21,13 @@ import java.lang.ref.WeakReference;
  * Bridges the host {@link Activity} to the godot-xreal GDExtension's native code.
  *
  * Godot does not populate the Rust {@code ndk-context} crate's process-global context, so
- * the XREAL session bootstrap (which needs the Activity as the Unity SDK's
- * {@code unityActivity}) has no way to find it. This class hands the Activity to the
+ * the XREAL session bootstrap, which needs the Activity as the Unity SDK's
+ * {@code unityActivity}, has no way to find it. This class hands the Activity to the
  * native side, which publishes it into {@code ndk-context}.
  *
- * Call {@link #register(Activity)} once, early (from {@code GodotApp.onCreate}); the native
- * side is idempotent. This file is part of the custom Android build template — re-apply it
- * if the template is reinstalled.
+ * Call {@link #register(Activity)} once, early, from {@code GodotApp.onCreate}; the native
+ * side is idempotent. This file is part of the custom Android build template, so re-apply it
+ * when the template is reinstalled.
  */
 public final class XrealBridge {
 	private static final String TAG = "xreal";

@@ -1,27 +1,29 @@
 extends Node
-## Pairs the FPV stream with XREAL's "StreamingReceiver" PC app via its LAN-discovery protocol,
+## Pairs the FPV stream with XREAL's "StreamingReceiver" PC app through its LAN-discovery protocol,
 ## reverse-engineered from the SDK sample (Samples~/Camera Features/FirstPersonStreammingCast) and
 ## validated against the real receiver. See docs/plans/fpv-streaming-plan.md.
 ##
 ## Handshake (all little-endian):
-##   1. DISCOVERY : UDP-broadcast the ASCII "FIND-SERVER" to 255.255.255.255:6001; the receiver replies
-##                  with an ASCII "<ip>:<tcpPort>" string.
-##   2. CONTROL   : TCP-connect to <ip>:<tcpPort>. Frames are [u16 length][u16 type][payload] where
-##                  length includes the 4-byte header and `type` is a MsgType. Send EnterRoom (4) and
-##                  wait for its ack, then send MsgSync (7) carrying [u64 msgid][{"useAudio":bool}] and
-##                  wait for the matching [u64 msgid][{"success":true}]. A HeartBeat (3) every second
-##                  keeps the link alive (the receiver echoes it).
-##   3. The caller then streams to rtp://<ip>:5555 (video 5555 / audio 5557); the port is hard-coded in
-##      the SDK — the discovered port is only the TCP control port.
+##   1. DISCOVERY : UDP-broadcast the ASCII "FIND-SERVER" to 255.255.255.255:6001, and the receiver
+##                  replies with an ASCII "<ip>:<tcpPort>" string.
+##   2. CONTROL   : TCP-connect to <ip>:<tcpPort>. Frames are [u16 length][u16 type][payload], where
+##                  length includes the 4-byte header and `type` is a MsgType. Send EnterRoom (4)
+##                  and wait for its ack, then send MsgSync (7) carrying
+##                  [u64 msgid][{"useAudio":bool}] and wait for the matching
+##                  [u64 msgid][{"success":true}]. A HeartBeat (3) every second keeps the link
+##                  alive, and the receiver echoes it.
+##   3. The caller then streams to rtp://<ip>:5555 (video 5555, audio 5557). The SDK hard-codes
+##      that port; the discovered one is only the TCP control port.
 
 ## Pairing finished; caller should stream to rtp://<server_ip>:5555.
 signal paired(server_ip: String)
-## Pairing could not complete (discovery/connect/handshake failed or timed out).
+## Pairing could not complete: discovery, connect or the handshake failed or timed out.
 signal failed(reason: String)
-## The control link dropped after pairing (caller should stop streaming).
+## The control link dropped after pairing, so the caller should stop streaming.
 signal lost()
-## ObserverView: the receiver pushed an `UpdateCameraParam` — the observer camera FOV as
-## `{left,right,top,bottom}` tangents (webcam-derived off-centre frustum). See docs/plans/observer-view-notes.md.
+## ObserverView: the receiver pushed an `UpdateCameraParam`, the observer camera FOV as
+## `{left,right,top,bottom}` tangents, a webcam-derived off-centre frustum. See
+## docs/plans/observer-view-notes.md.
 signal camera_param(fov: Dictionary)
 
 const DISCOVERY_ADDR := "255.255.255.255"
@@ -50,9 +52,10 @@ var _msgid := 0
 func _ready() -> void:
 	set_process(false)
 
-## Begin pairing. `with_audio` is announced to the receiver as `useAudio` (FirstPersonView only). In
-## `observer` mode the receiver is on its ObserverView page: it never handles useAudio (sending it drops
-## the link), so we go active right after the EnterRoom ack and just consume its UpdateCameraParam pushes.
+## Begin pairing. `with_audio` is announced to the receiver as `useAudio`, on FirstPersonView only.
+## In `observer` mode the receiver sits on its ObserverView page, where it never handles useAudio
+## and sending it drops the link, so we go active right after the EnterRoom ack and simply consume
+## its UpdateCameraParam pushes.
 func start(with_audio: bool, observer := false) -> void:
 	stop()
 	_with_audio = with_audio
@@ -70,7 +73,8 @@ func start(with_audio: bool, observer := false) -> void:
 	set_process(true)
 	print("[pairing] discovering (broadcast FIND-SERVER -> %s:%d)" % [DISCOVERY_ADDR, DISCOVERY_PORT])
 
-## Stop pairing / tear down the control link (best-effort ExitRoom first). Safe to call any time.
+## Stop pairing and tear down the control link, sending a best-effort ExitRoom first. Safe to call
+## at any time.
 func stop() -> void:
 	if _tcp and _tcp.get_status() == StreamPeerTCP.STATUS_CONNECTED:
 		_send(MsgType.EXIT_ROOM)
@@ -93,7 +97,7 @@ func _process(delta: float) -> void:
 			if _udp.get_available_packet_count() > 0:
 				_on_discovery_reply(_udp.get_packet().get_string_from_ascii())
 			elif _timer > DISCOVERY_TIMEOUT_S:
-				_fail("discovery timeout — is StreamingReceiver.exe running on this LAN?")
+				_fail("discovery timeout: is StreamingReceiver.exe running on this LAN?")
 		State.CONNECTING:
 			_timer += delta
 			_tcp.poll()
@@ -150,13 +154,13 @@ func _pump_tcp(delta: float) -> void:
 		if _timer > HANDSHAKE_TIMEOUT_S:
 			_fail("handshake timeout in state %d" % _state)
 
-## Slice `_recv` into complete [u16 length][u16 type][payload] frames and dispatch each.
+## Slice `_recv` into complete [u16 length][u16 type][payload] frames and dispatch each one.
 func _process_frames() -> void:
 	while _recv.size() >= 4:
 		var length := _recv[0] | (_recv[1] << 8)
 		var mtype := _recv[2] | (_recv[3] << 8)
 		if length < 4:
-			# A frame length shorter than its own 4-byte header can never be consumed — the stream is
+			# A frame length shorter than its own 4-byte header can never be consumed, so the stream is
 			# desynced. Drop the link instead of wedging here and letting _recv grow unbounded.
 			if _state == State.ACTIVE:
 				_lost()
@@ -164,7 +168,7 @@ func _process_frames() -> void:
 				_fail("corrupt frame header (length=%d)" % length)
 			return
 		if _recv.size() < length:
-			break  # frame incomplete — await more bytes
+			break  # frame incomplete, so await more bytes
 		var payload := _recv.slice(4, length)
 		_recv = _recv.slice(length)
 		_on_frame(mtype, payload)
@@ -174,8 +178,8 @@ func _on_frame(mtype: int, payload: PackedByteArray) -> void:
 		MsgType.ENTER_ROOM:
 			if _state == State.ENTER_ROOM:
 				if _observer:
-					# ObserverView: no useAudio handshake — go active and start streaming immediately (the
-					# receiver pushes UpdateCameraParam next, and idles out if RTP doesn't follow).
+					# ObserverView: there is no useAudio handshake, so go active and start streaming immediately.
+					# The receiver pushes UpdateCameraParam next, and idles out if RTP does not follow.
 					print("[pairing] EnterRoom ack (observer) -> active")
 					_state = State.ACTIVE
 					_hb = 0.0
@@ -189,14 +193,14 @@ func _on_frame(mtype: int, payload: PackedByteArray) -> void:
 					_state = State.NEGOTIATE
 					_timer = 0.0
 		MsgType.UPDATE_CAMERA:
-			# ObserverView: receiver's observer-camera FOV ({left,right,top,bottom} tangents). No msgid.
+			# ObserverView: the receiver's observer-camera FOV as {left,right,top,bottom} tangents. No msgid.
 			var data: Variant = JSON.parse_string(payload.get_string_from_utf8())
 			if data is Dictionary and data.has("fov") and data["fov"] is Dictionary:
 				print("[pairing] UpdateCameraParam fov=%s" % [data["fov"]])
 				camera_param.emit(data["fov"])
 		MsgType.MSG_SYNC:
 			if _state == State.NEGOTIATE and payload.size() >= 8:
-				# The response echoes the request's leading 8-byte msgid — ignore a reply that isn't ours.
+				# The response echoes the request's leading 8-byte msgid, so ignore a reply that is not ours.
 				if payload.slice(0, 8).decode_u64(0) != _msgid:
 					return
 				var json_str := payload.slice(8).get_string_from_utf8()
@@ -210,9 +214,10 @@ func _on_frame(mtype: int, payload: PackedByteArray) -> void:
 				else:
 					_fail("server rejected useAudio")
 		_:
-			pass  # HeartBeat echo / others — ignore
+			pass  # HeartBeat echo and others: ignore
 
-## Send a framed message: [u16 length][u16 type][payload] (little-endian; length includes the header).
+## Send a framed message: [u16 length][u16 type][payload], little-endian, with length including
+## the header.
 func _send(mtype: int, payload := PackedByteArray()) -> void:
 	if not _tcp or _tcp.get_status() != StreamPeerTCP.STATUS_CONNECTED:
 		return

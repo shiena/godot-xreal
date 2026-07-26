@@ -1,23 +1,26 @@
 extends Node3D
-## Phone-as-3D-pointer for XREAL (Phase C, path B). The NRController fused pose isn't available on
-## this host, but its raw IMU is live, so we fuse orientation here from accelerometer (gravity →
-## pitch/roll, drift-free) + gyroscope (yaw/short-term, integrated). A complementary filter keeps
-## pitch/roll locked to gravity while the gyro carries yaw (recenter to re-align "forward").
+## Phone-as-3D-pointer for XREAL (Phase C, path B). The NRController fused pose is unavailable on
+## this host, but its raw IMU is live, so orientation is fused here from the accelerometer, which
+## gives drift-free pitch and roll from gravity, and the gyroscope, which gives short-term yaw by
+## integration. A complementary filter keeps pitch and roll locked to gravity while the gyro
+## carries yaw; recenter to re-align "forward".
 ##
-## Feed it each frame via `update_imu(accel, gyro, dt, head_transform)` with the NRController sensors.
-## Phone IMU frame: X=right, Y=top, Z=out of screen (verified on device). It raycasts along the beam,
-## highlights whatever it hits, and `select()` (from a trigger) clicks it. `recenter()` makes the
-## current aim forward. Gyro drift is suppressed by learning the resting bias + a small deadzone.
+## Feed it each frame through `update_imu(accel, gyro, dt, head_transform)` with the NRController
+## sensors. The phone IMU frame is X right, Y top, Z out of the screen, verified on device. It
+## raycasts along the beam, highlights whatever it hits, and `select()`, wired to a trigger,
+## clicks it. `recenter()` makes the current aim forward. Learning the resting bias and applying a
+## small deadzone suppress the gyro drift.
 
 ## Complementary-filter gain: how strongly gravity corrects pitch/roll each frame (0 = gyro only).
 @export var gravity_gain := 0.06
 ## Ray length (m).
 @export var ray_length := 6.0
 ## Where the beam originates relative to the head. On the glasses buffer +Y reads as down, so a
-## positive Y puts the origin at the bottom; the X sign picks the hand (negative = left, the
-## default), flipped by `set_hand`.
+## positive Y puts the origin at the bottom. The X sign picks the hand (negative = left, the
+## default), and `set_hand` flips it.
 @export var hand_offset := Vector3(-0.28, 0.32, -0.3)
-## Gyro drift suppression: rate (rad/s, after bias) below this counts as noise; bias learn rate.
+## Gyro drift suppression: a rate (rad/s, after bias) below this counts as noise. Then the bias
+## learn rate.
 @export var gyro_deadzone := 0.012
 @export var bias_learn := 0.02
 
@@ -65,7 +68,8 @@ func _ready() -> void:
 
 ## Fuse one IMU sample, place the beam at the hand offset, aim it, and raycast.
 func update_imu(accel: Vector3, gyro: Vector3, dt: float, head_transform: Transform3D) -> void:
-	# Gyro drift suppression: learn the resting bias while nearly still, then subtract + deadzone.
+	# Gyro drift suppression: learn the resting bias while nearly still, then subtract it and apply
+	# the deadzone.
 	if gyro.length() < 0.1:
 		_gyro_bias = _gyro_bias.lerp(gyro, bias_learn)
 	var g := gyro - _gyro_bias
@@ -76,7 +80,7 @@ func update_imu(accel: Vector3, gyro: Vector3, dt: float, head_transform: Transf
 	var wl := g.length()
 	if wl > 0.000001 and dt > 0.0:
 		_q = (_q * Quaternion(g / wl, wl * dt)).normalized()
-	# 2) correct pitch/roll toward gravity: nudge predicted world-up onto measured up (phone frame)
+	# 2) correct pitch and roll toward gravity: nudge predicted world-up onto measured up (phone frame)
 	if accel.length() > 1.0:
 		var up_meas := accel.normalized()
 		var up_pred := (_q.inverse() * Vector3.UP).normalized()
@@ -87,17 +91,18 @@ func update_imu(accel: Vector3, gyro: Vector3, dt: float, head_transform: Transf
 
 	if not _have_ref:
 		return
-	# Relative rotation from the recenter pose, re-expressed in Godot's frame; yaw was correct but
-	# pitch inverted, so flip the pitch (X euler) while keeping yaw/roll.
+	# Relative rotation from the recenter pose, re-expressed in Godot's frame. Yaw came out correct
+	# but pitch inverted, so flip the pitch (X euler) and keep yaw and roll.
 	var rel := _ref * _q
 	var remap := Basis(Vector3(1, 0, 0), Vector3(0, 0, -1), Vector3(0, 1, 0))
 	var e := (remap * Basis(rel) * remap.transposed()).get_euler()
 	var aim_basis := Basis.from_euler(Vector3(-e.x, e.y, e.z))
-	# Origin at a "hand" offset from the head (not the eye/camera).
+	# Origin at a "hand" offset from the head, not from the eye or the camera.
 	var origin := head_transform.origin + head_transform.basis * hand_offset
 	global_transform = Transform3D(aim_basis, origin)
-	# The origin now sits at the hand offset (not the default head position), so it's safe to show
-	# the beam. Kept hidden until here (main.gd doesn't reveal it) so it never blocks the view.
+	# The origin now sits at the hand offset rather than the default head position, so showing the
+	# beam is safe. It stays hidden until here, and main.gd never reveals it, so it cannot block the
+	# view.
 	visible = true
 
 	_raycast.force_raycast_update()
@@ -131,7 +136,7 @@ func _restore_hover() -> void:
 			m.emission_enabled = _hover_emission.r + _hover_emission.g + _hover_emission.b > 0.001
 	_hover = null
 
-## Click the hovered object (wire to a trigger). Recolors it as visible feedback.
+## Click the hovered object; wire this to a trigger. It recolors the object as visible feedback.
 func select() -> void:
 	if _hover:
 		var m := _hover.material_override as StandardMaterial3D

@@ -59,7 +59,7 @@ jobs:
           VERSION="${VERSION#v}"
           sed -i "s/^version=\".*\"/version=\"${VERSION}\"/" addons/godot_xreal/plugin.cfg
           sed -i "s/^version = \".*\"/version = \"${VERSION}\"/" Cargo.toml
-          # Sync the bumped crate version into Cargo.lock (workspace members only — no dependency
+          # Sync the bumped crate version into Cargo.lock (workspace members only, with no dependency
           # bumps), so the lockfile can't drift from Cargo.toml (it did at v1.0.0).
           cargo update --workspace
           echo "plugin.cfg:"; grep '^version' addons/godot_xreal/plugin.cfg
@@ -75,7 +75,7 @@ jobs:
             Cargo.toml
             Cargo.lock
 
-  # Real Android arm64 GDExtension. Needs no vendored XREAL libs — they are dlopen'd at runtime, so
+  # Real Android arm64 GDExtension. It needs no vendored XREAL libs, since they are dlopen'd at runtime, so
   # the release binary is self-contained (DT_NEEDED = libdl/libm/libc only).
   build-android:
     needs: [prepare]
@@ -102,7 +102,7 @@ jobs:
 
       - name: Build
         run: |
-          # Use the NDK preinstalled on the runner (any r27.x builds this fine — the RE offsets are
+          # Use the NDK preinstalled on the runner; any r27.x builds this fine, because the RE offsets are
           # runtime, vendored-lib dependent, not NDK-version dependent).
           export ANDROID_NDK_HOME="${ANDROID_NDK_LATEST_HOME:-$ANDROID_NDK_ROOT}"
           echo "Using preinstalled NDK: $ANDROID_NDK_HOME"
@@ -142,7 +142,7 @@ jobs:
       - name: Build dummy stubs
         run: |
           # build_dummy_libs.sh first regenerates dummy/stub_classes.inc from the Rust
-          # source (scripts/gen_stub_classes.sh), then builds — so the stubs always ship
+          # source (scripts/gen_stub_classes.sh), then builds, so the stubs always ship
           # the current Node-derived class list. The regenerated .inc files (class list +
           # the F1 doc artifacts above) ride along in the artifact so the release job
           # commits exactly what was built.
@@ -182,7 +182,7 @@ jobs:
           # Only reached when every build job succeeded. Commit the version bump together
           # with the regenerated auto-generated artifacts (the exact files the release was
           # built from): the dummy class list and the editor F1 doc artifacts. This is where
-          # doc/dummy generation lands in the repo — CI only regenerates them, it never commits.
+          # doc/dummy generation lands in the repo; CI only regenerates them and never commits.
           # Tag it, and push both with the branch.
           cp artifacts/version-commit/Cargo.toml Cargo.toml
           cp artifacts/version-commit/Cargo.lock Cargo.lock
@@ -221,7 +221,7 @@ jobs:
           cp artifacts/dummy-stubs/*.so  "$bin/linux/"
           cp artifacts/dummy-stubs/*.dylib "$bin/macos/"
           cat > "${NAME}/INSTALL.md" <<'EOF'
-          # Godot XREAL — prebuilt addon
+          # Godot XREAL: prebuilt addon
 
           These are the prebuilt binaries (Android arm64 GDExtension + 6 desktop editor stubs). You do
           NOT need Rust / cargo-ndk / clang to use them.

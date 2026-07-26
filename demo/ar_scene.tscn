@@ -146,7 +146,7 @@ mesh = SubResource("BoxMesh_unit")
 [node name="Col" type="CollisionShape3D" parent="Room/Box11/Body"]
 shape = SubResource("BoxShape3D_unit")
 
-; Head-locked cursor driven by the phone touch controller — reparented under the head tracker
+; Head-locked cursor driven by the phone touch controller, reparented under the head tracker
 ; at runtime (main.gd) so phone touches are visible in the glasses.
 [node name="Cursor" type="MeshInstance3D" parent="."]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -2)

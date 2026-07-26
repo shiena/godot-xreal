@@ -3,24 +3,25 @@
 //! Renders one Markdown page per public class into `docs/api/`, out of the *same* Godot
 //! class-reference XML on both sides of the addon:
 //!
-//!  - the native classes — gdext's `register-docs` XML built from the `///` comments, handed over by
-//!    [`crate::doc_gen::cleaned_classes`] (no live engine needed).
-//!  - the GDScript feature components — the editor's own doctool, which turns the `##` comments into
-//!    the very same schema: `godot --headless --doctool <dir> --gdscript-docs res://addons/godot_xreal`.
+//!  - the native classes come from gdext's `register-docs` XML, built from the `///` comments and
+//!    handed over by [`crate::doc_gen::cleaned_classes`], with no live engine needed.
+//!  - the GDScript feature components come from the editor's own doctool, which turns the `##`
+//!    comments into the very same schema:
+//!    `godot --headless --doctool <dir> --gdscript-docs res://addons/godot_xreal`.
 //!
-//! One schema means one renderer, so both halves come out identical in shape and cross-link into each
-//! other. The GDScript half needs the editor binary, which CI has not got, so the flow is: run Godot,
-//! then run this over its output, and commit the pages — the same policy as the editor F1 artifacts in
-//! [`crate::doc_gen`]. `scripts/gen_api_docs.{ps1,sh}` does both steps.
+//! One schema means one renderer, so both halves come out identical in shape and cross-link into
+//! each other. The GDScript half needs the editor binary, which CI has not got, so the flow is to
+//! run Godot, run this over its output, and commit the pages. That is the same policy as the editor
+//! F1 artifacts in [`crate::doc_gen`], and `scripts/gen_api_docs.{ps1,sh}` does both steps.
 //!
 //! ```text
 //! XREAL_API_DOCS=write XREAL_GDSCRIPT_XML=<dir> cargo test --lib api_docs -- --nocapture
 //! XREAL_API_DOCS=check XREAL_GDSCRIPT_XML=<dir> cargo test --lib api_docs -- --nocapture
 //! ```
 //!
-//! The output is plain CommonMark with explicit `<a id="…">` anchors — no static-site-generator
-//! syntax — so it renders on GitHub as-is and any generator (mdBook / MkDocs / VitePress) can consume
-//! it unchanged.
+//! The output is plain CommonMark with explicit `<a id="…">` anchors and no static-site-generator
+//! syntax, so it renders on GitHub as-is and any generator, be it mdBook, MkDocs or VitePress, can
+//! consume it unchanged.
 
 #![cfg(test)]
 
@@ -30,9 +31,9 @@ use std::path::{Path, PathBuf};
 
 use crate::doc_gen::{attr, blocks, cleaned_classes, manifest_dir};
 
-/// Scripts under `addons/godot_xreal/` that are not part of the runtime API and so get no page: the
-/// editor-side plugin and its docks (only ever loaded by the editor), and `xreal_gallery.gd` (an
-/// orphan superseded by `demo/gallery_helper.gd`). The doctool documents every script it is pointed
+/// Scripts under `addons/godot_xreal/` that are no part of the runtime API and so get no page: the
+/// editor-side plugin and its docks, which only the editor ever loads, and `xreal_gallery.gd`, an
+/// orphan superseded by `demo/gallery_helper.gd`. The doctool documents every script it is pointed
 /// at, so this is where that policy lives.
 const EXCLUDED_SCRIPTS: &[&str] = &[
     "addons/godot_xreal/plugin.gd",
@@ -52,8 +53,8 @@ fn godot_class_url(name: &str) -> String {
 
 // ---- Model ----------------------------------------------------------------------------------
 
-/// Which half of the addon a class comes from — decides its section in the index and how the page
-/// introduces it.
+/// Which half of the addon a class comes from. It decides the class's section in the index and how
+/// the page introduces it.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum Group {
     /// Registered by the GDExtension (Rust).
@@ -101,8 +102,8 @@ struct Constant {
 }
 
 struct ClassDoc {
-    /// Display name: the registered/global class name, or — for a feature script without a
-    /// `class_name` — the PascalCase of its file stem (see the note the page carries).
+    /// Display name: the registered global class name, or, for a feature script without a `class_name`,
+    /// the PascalCase of its file stem. The page carries a note saying so.
     name: String,
     /// Output file stem under `docs/api/`.
     slug: String,
@@ -124,8 +125,9 @@ struct ClassDoc {
     from_gdscript: bool,
 }
 
-/// Everything cross-linking needs: which classes exist (and their members), plus the engine class
-/// names actually used in this API — the only outside names a bare `[Name]` reference links out to.
+/// Everything cross-linking needs: which classes exist and what members they have, plus the engine
+/// class names this API actually uses, which are the only outside names a bare `[Name]` reference
+/// links out to.
 struct Index {
     classes: BTreeMap<String, Entry>,
     engine: BTreeSet<String>,
@@ -156,7 +158,8 @@ impl Index {
 
 // ---- XML plumbing ---------------------------------------------------------------------------
 
-/// Decode the XML entities Godot writes (`&amp;` `&lt;` `&#39;` …). Unknown entities are left alone.
+/// Decode the XML entities Godot writes, such as `&amp;`, `&lt;` and `&#39;`. An unknown entity is
+/// left alone.
 fn unescape(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut rest = s;
@@ -193,8 +196,8 @@ fn unescape(s: &str) -> String {
     out
 }
 
-/// Escape the two characters that would otherwise be read as markup in Markdown prose. Text inside
-/// code spans is exempt (backticks already make it literal) and goes through [`code_span`] instead.
+/// Escape the two characters that would otherwise read as markup in Markdown prose. Text inside a
+/// code span is exempt, since backticks already make it literal, and goes through [`code_span`].
 fn escape_md(s: &str) -> String {
     s.replace('&', "&amp;").replace('<', "&lt;")
 }
@@ -208,7 +211,7 @@ fn code_span(s: &str) -> String {
     }
 }
 
-/// Text content of the first `<tag>…</tag>` in `xml` (no attributes on the tag).
+/// Text content of the first `<tag>…</tag>` in `xml`, where the tag carries no attributes.
 fn inner(xml: &str, tag: &str) -> String {
     let open = format!("<{tag}>");
     let close = format!("</{tag}>");
@@ -232,7 +235,7 @@ fn block_text(block: &str) -> String {
     rest[..end].trim().to_string()
 }
 
-/// The `<param … />` entries of a method / signal block, in declaration order.
+/// The `<param … />` entries of a method or signal block, in declaration order.
 fn parse_params(block: &str) -> Vec<Param> {
     let mut out = Vec::new();
     let mut rest = block;
@@ -264,7 +267,8 @@ fn pascal(stem: &str) -> String {
         .collect()
 }
 
-/// `XrealCameraFeed` -> `xreal_camera_feed`, keeping acronym runs together (`XrealAR` -> `xreal_ar`).
+/// `XrealCameraFeed` becomes `xreal_camera_feed`, keeping acronym runs together, so `XrealAR`
+/// becomes `xreal_ar`.
 fn snake(name: &str) -> String {
     let chars: Vec<char> = name.chars().collect();
     let mut out = String::with_capacity(name.len() + 4);
@@ -281,8 +285,8 @@ fn snake(name: &str) -> String {
     out
 }
 
-/// The doctool names a script without a `class_name` by its quoted path (`"addons/…/x.gd"`), and uses
-/// the same quoted form to qualify that script's enums. Turn either into our display name.
+/// The doctool names a script without a `class_name` by its quoted path, `"addons/…/x.gd"`, and
+/// uses the same quoted form to qualify that script's enums. Turn either into our display name.
 fn name_from_quoted_path(raw: &str) -> Option<String> {
     let path = unescape(raw);
     let path = path.trim_matches('"');
@@ -297,7 +301,8 @@ fn name_from_quoted_path(raw: &str) -> Option<String> {
     })
 }
 
-/// Prettify an `enum="…"` qualifier: `"addons/…/xreal_stream.gd".BlendMode` -> `XrealStream.BlendMode`.
+/// Prettify an `enum="…"` qualifier, turning `"addons/…/xreal_stream.gd".BlendMode` into
+/// `XrealStream.BlendMode`.
 fn pretty_enum(raw: &str) -> String {
     let raw = unescape(raw);
     match raw.rsplit_once('.') {
@@ -313,11 +318,10 @@ fn pretty_enum(raw: &str) -> String {
 
 // ---- Godot's `##`-joining, undone -----------------------------------------------------------
 
-/// `--gdscript-docs` joins every `##` line with a single space, so a doc block's paragraphs and lists
-/// arrive as one run-on line: a blank `##` line shows up as a *double* space, and an indented `- ` /
-/// `1. ` item just runs into the previous sentence. Rebuild both. The list rule needs two or more
-/// markers in the same paragraph before it fires, which keeps ordinary prose (and this addon's em
-/// dashes, which are not ASCII ` - `) untouched.
+/// `--gdscript-docs` joins every `##` line with a single space, so a doc block's paragraphs and
+/// lists arrive as one run-on line: a blank `##` line shows up as a *double* space, and an indented
+/// ` - ` or ` 1. ` item runs straight into the previous sentence. Rebuild both. The list rule needs
+/// two or more markers in the same paragraph before it fires, which keeps ordinary prose untouched.
 fn unjoin(text: &str) -> String {
     let mut out = String::new();
     for (i, para) in split_paragraphs(text).iter().enumerate() {
@@ -329,9 +333,9 @@ fn unjoin(text: &str) -> String {
     out
 }
 
-/// Split on runs of *exactly* two spaces — the doctool's fingerprint for a blank `##` line (one space
-/// contributed by the join on either side). A longer run is source alignment that survived the join
-/// (`## 2. CONTROL   : TCP-connect …`) and collapses to a single space instead.
+/// Split on runs of *exactly* two spaces, the doctool's fingerprint for a blank `##` line, with one
+/// space contributed by the join on either side. A longer run is source alignment that survived the
+/// join, as in `## 2. CONTROL   : TCP-connect …`, and collapses to a single space instead.
 fn split_paragraphs(text: &str) -> Vec<String> {
     let mut paras = Vec::new();
     let mut cur = String::new();
@@ -361,7 +365,7 @@ fn split_paragraphs(text: &str) -> Vec<String> {
     paras
 }
 
-/// Turn ` - ` / ` 1. ` markers back into Markdown list items (see [`unjoin`] for when this fires).
+/// Turn ` - ` and ` 1. ` markers back into Markdown list items; see [`unjoin`] for when this fires.
 fn relist(para: &str) -> String {
     let marks = list_marks(para);
     if marks.len() < 2 {
@@ -382,7 +386,7 @@ fn relist(para: &str) -> String {
     out.trim_end().to_string()
 }
 
-/// Byte offsets + lengths of the ` - ` / ` <n>. ` list markers in one run-on paragraph.
+/// Byte offsets and lengths of the ` - ` and ` <n>. ` list markers in one run-on paragraph.
 fn list_marks(para: &str) -> Vec<(usize, usize)> {
     let b = para.as_bytes();
     let mut marks = Vec::new();
@@ -426,8 +430,8 @@ fn markdown(text: &str, ctx: &Ctx) -> String {
         out.push_str(&escape_md(&unescape(&rest[..pos])));
         rest = &rest[pos..];
 
-        // A rustdoc intra-doc link that gdext passed through: `[`Self::poll_frame`]` reaches the XML
-        // as `[[code]Self::poll_frame[/code]]`. Recover the member reference.
+        // A rustdoc intra-doc link that gdext passed through: `[`Self::poll_frame`]` reaches the XML as
+        // `[[code]Self::poll_frame[/code]]`. Recover the member reference.
         if let Some(after) = rest.strip_prefix("[[code]") {
             if let Some(end) = after.find("[/code]]") {
                 let item = &after[..end];
@@ -437,7 +441,7 @@ fn markdown(text: &str, ctx: &Ctx) -> String {
                 continue;
             }
         }
-        // `[code]…[/code]` / `[codeblock]…[/codeblock]` are taken whole so their content stays raw.
+        // `[code]…[/code]` and `[codeblock]…[/codeblock]` are taken whole so their content stays raw.
         if let Some(md) = take_code(&mut rest) {
             out.push_str(&md);
             continue;
@@ -456,7 +460,7 @@ fn markdown(text: &str, ctx: &Ctx) -> String {
     normalize_breaks(&out)
 }
 
-/// Consume a `[code]`/`[codeblock]` span at the front of `rest`, returning its Markdown.
+/// Consume a `[code]` or `[codeblock]` span at the front of `rest`, returning its Markdown.
 fn take_code(rest: &mut &str) -> Option<String> {
     for (open, close, block) in [
         ("[codeblock]", "[/codeblock]", true),
@@ -476,8 +480,8 @@ fn take_code(rest: &mut &str) -> Option<String> {
     None
 }
 
-/// One BBCode tag. Unknown tags are emitted verbatim — descriptions in this project use bracketed
-/// prose (`[u16 length][payload]`, `[yt, ct]`) that must survive untouched.
+/// One BBCode tag. An unknown tag is emitted verbatim, because descriptions in this project use
+/// bracketed prose such as `[u16 length][payload]` and `[yt, ct]` that has to survive untouched.
 fn render_tag(tag: &str, ctx: &Ctx) -> String {
     match tag {
         "b" | "/b" => return "**".into(),
@@ -488,7 +492,7 @@ fn render_tag(tag: &str, ctx: &Ctx) -> String {
         _ => {}
     }
     if let Some(url) = tag.strip_prefix("url=") {
-        // `[url=target]` opens; the label follows as prose and `[/url]` closes it.
+        // `[url=target]` opens, the label follows as prose, and `[/url]` closes it.
         return format!("[{url}](");
     }
     if tag == "/url" {
@@ -510,8 +514,8 @@ fn render_tag(tag: &str, ctx: &Ctx) -> String {
     format!("[{}]", escape_md(&unescape(tag)))
 }
 
-/// `[method foo]` / `[member Class.bar]` -> a link, or a code span when the target is not one of ours
-/// (a dead link is worse than plain text).
+/// `[method foo]` and `[member Class.bar]` become a link, or a code span when the target is not one
+/// of ours, because a dead link is worse than plain text.
 fn member_link(kind: &str, target: &str, labelled: Option<&str>, ctx: &Ctx) -> String {
     let (class, name) = match target.split_once('.') {
         Some((c, n)) => (c.to_string(), n.to_string()),
@@ -533,7 +537,7 @@ fn member_link(kind: &str, target: &str, labelled: Option<&str>, ctx: &Ctx) -> S
             };
             format!("[`{label}`]({file}#{anchor})")
         }
-        // Not ours: link the class page when we know it, else leave the reference as plain code.
+        // Not ours: link the class page when we know it, and otherwise leave the reference as plain code.
         None if qualified && !ctx.ix.classes.contains_key(&class) && is_class_name(&class) => {
             format!("[`{label}`]({})", godot_class_url(&class))
         }
@@ -544,8 +548,8 @@ fn member_link(kind: &str, target: &str, labelled: Option<&str>, ctx: &Ctx) -> S
     }
 }
 
-/// A bare `[Name]` reference is only treated as a class when it looks like one AND is a class this
-/// API actually mentions — otherwise bracketed prose would sprout links to pages that do not exist.
+/// A bare `[Name]` reference is treated as a class only when it looks like one AND is a class this
+/// API actually mentions, or bracketed prose would sprout links to pages that do not exist.
 fn is_class_name(tag: &str) -> bool {
     let mut chars = tag.chars();
     chars.next().is_some_and(char::is_uppercase) && tag.chars().all(char::is_alphanumeric)
@@ -559,10 +563,11 @@ fn class_link(name: &str, ix: &Index) -> String {
     }
 }
 
-/// A type as it appears in a table cell: our classes and the engine's link out, the rest is code.
+/// A type as it appears in a table cell: our classes and the engine's link out, and the rest is
+/// code.
 fn type_link(ty: &str, ix: &Index) -> String {
     match ty.split_once('.') {
-        // An enum type (`XrealShared.AudioState`) links to the class page; the enum anchor lives there.
+        // An enum type such as `XrealShared.AudioState` links to the class page, where its anchor lives.
         Some((class, member)) => match ix.classes.get(class) {
             Some(e) => format!("[`{class}.{member}`]({}.md#enum-{member})", e.slug),
             None => code_span(ty),
@@ -572,8 +577,9 @@ fn type_link(ty: &str, ix: &Index) -> String {
     }
 }
 
-/// `[br]` runs become paragraph breaks (two or more) or hard line breaks (one) — except before a list
-/// item, which is already its own block and would only collect trailing whitespace.
+/// Two or more `[br]` in a row become a paragraph break and a single one becomes a hard line break.
+/// The exception is a `[br]` before a list item, which is already its own block and would only
+/// collect trailing whitespace.
 fn normalize_breaks(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut rest = s;
@@ -605,8 +611,8 @@ fn one_line(s: &str) -> String {
         .replace('|', "\\|")
 }
 
-/// The lead sentence, for the index table — a class's brief description often runs several sentences
-/// and the full text is one click away on its own page.
+/// The lead sentence, for the index table. A class's brief description often runs several
+/// sentences, and the full text is one click away on its own page.
 fn first_sentence(s: &str) -> String {
     let mut out = String::new();
     for part in s.split_inclusive(". ") {
@@ -696,8 +702,8 @@ fn parse_class(xml: &str, name: String, origin: Origin) -> ClassDoc {
             Some(Property {
                 name,
                 ty,
-                // gdext emits `default=""` for a Rust `#[export]` (the value lives in the code, not
-                // the docs) — an empty default is "unknown", not "the empty string".
+                // gdext emits `default=""` for a Rust `#[export]`, since the value lives in the code rather than
+                // the docs, so an empty default means "unknown" and not "the empty string".
                 default: attr(tag, "default")
                     .as_deref()
                     .map(unescape)
@@ -751,7 +757,7 @@ fn parse_class(xml: &str, name: String, origin: Origin) -> ClassDoc {
 
 // ---- Rendering ------------------------------------------------------------------------------
 
-const HEADER: &str = "<!-- Generated by scripts/gen_api_docs.ps1 (Windows) / gen_api_docs.sh (mac/Linux) from the\n     `///` doc comments in src/ and the `##` doc comments in addons/godot_xreal/ — DO NOT EDIT. -->\n";
+const HEADER: &str = "<!-- Generated by scripts/gen_api_docs.ps1 (Windows) / gen_api_docs.sh (mac/Linux) from the\n     `///` doc comments in src/ and the `##` doc comments in addons/godot_xreal/. DO NOT EDIT. -->\n";
 
 fn signature(m: &Method) -> String {
     let params = params_text(&m.params);
@@ -774,8 +780,8 @@ fn params_text(params: &[Param]) -> String {
         .join(", ")
 }
 
-/// One class page. Members are anchored explicitly (`<a id="method-x">`) so cross-references stay
-/// stable no matter how a static-site generator slugifies the headings.
+/// One class page. Members are anchored explicitly, as `<a id="method-x">`, so cross-references
+/// stay stable however a static-site generator slugifies the headings.
 fn render_class(c: &ClassDoc, ix: &Index) -> String {
     let ctx = Ctx { class: &c.name, ix };
     let prose = |text: &str| {
@@ -867,7 +873,8 @@ fn render_class(c: &ClassDoc, ix: &Index) -> String {
     s
 }
 
-/// Enum members grouped under their enum (like the engine's own reference), then the loose constants.
+/// Enum members grouped under their enum, as the engine's own reference does, then the loose
+/// constants.
 fn render_constants(s: &mut String, c: &ClassDoc, prose: &dyn Fn(&str) -> String) {
     let mut enums: Vec<(&str, Vec<&Constant>)> = Vec::new();
     for k in &c.constants {
@@ -899,8 +906,8 @@ fn render_constants(s: &mut String, c: &ClassDoc, prose: &dyn Fn(&str) -> String
     }
 }
 
-/// A table when every description fits in a cell, else one anchored section each — a few constants
-/// carry paragraphs of rationale, which a table cell would run off the page.
+/// A table when every description fits in a cell, and otherwise one anchored section each: a few
+/// constants carry paragraphs of rationale that a table cell would run off the page.
 fn render_const_group(
     s: &mut String,
     items: &[&Constant],
@@ -952,7 +959,7 @@ fn render_index(classes: &[ClassDoc], ix: &Index) -> String {
         (
             Group::Native,
             "Native classes",
-            "Registered by the GDExtension — available as global types on device.",
+            "Registered by the GDExtension, and available as global types on device.",
         ),
         (
             Group::Feature,
@@ -997,7 +1004,7 @@ fn render_index(classes: &[ClassDoc], ix: &Index) -> String {
 
 // ---- Assembly -------------------------------------------------------------------------------
 
-/// Every `.gd` file under `addons/godot_xreal/`, repo-relative with forward slashes.
+/// Every `.gd` file under `addons/godot_xreal/`, repo-relative and with forward slashes.
 fn addon_scripts(root: &Path) -> Vec<String> {
     let mut out = Vec::new();
     let mut stack = vec![root.join("addons/godot_xreal")];
@@ -1020,8 +1027,8 @@ fn addon_scripts(root: &Path) -> Vec<String> {
     out
 }
 
-/// Which script declares `class_name X`, for the doctool's named-class XML (which records the name
-/// but not the path).
+/// Which script declares `class_name X`, for the doctool's named-class XML, which records the name
+/// but not the path.
 fn class_name_paths(root: &Path, scripts: &[String]) -> BTreeMap<String, String> {
     let mut map = BTreeMap::new();
     for rel in scripts {
@@ -1051,7 +1058,7 @@ fn parse_gdscript_classes(root: &Path, xml_dir: &Path) -> Vec<ClassDoc> {
     files.sort();
     assert!(
         !files.is_empty(),
-        "no GDScript doc XML in {} — run Godot's `--doctool <dir> --gdscript-docs res://addons/godot_xreal` first",
+        "no GDScript doc XML in {}: run Godot's `--doctool <dir> --gdscript-docs res://addons/godot_xreal` first",
         xml_dir.display()
     );
 
@@ -1114,7 +1121,7 @@ fn build_index(classes: &[ClassDoc]) -> Index {
             },
         );
     }
-    // Only the engine types this API actually names are link targets — see `is_class_name`.
+    // Only the engine types this API actually names are link targets; see `is_class_name`.
     let mut note = |ty: &str| {
         if is_class_name(ty) && !ix.classes.contains_key(ty) {
             ix.engine.insert(ty.to_string());
@@ -1223,7 +1230,7 @@ fn api_docs() {
             drift.extend(stale.iter().map(|n| format!("docs/api/{n} (stale)")));
             assert!(
                 drift.is_empty(),
-                "the class reference is out of sync with the doc comments — run \
+                "the class reference is out of sync with the doc comments: run \
                  scripts/gen_api_docs and commit:\n  {}",
                 drift.join("\n  ")
             );
