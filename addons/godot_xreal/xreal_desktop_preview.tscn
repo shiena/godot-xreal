@@ -1,0 +1,9 @@
+[gd_scene load_steps=2 format=3 uid="uid://xrdeskprevsc1"]
+
+[ext_resource type="Script" uid="uid://xrdeskprevgd1" path="res://addons/godot_xreal/xreal_desktop_preview.gd" id="1_script"]
+
+; Desktop-only: opens a second OS window drawing the same 3D world the glasses would show, so a PC
+; run is more than the phone UI. The window and its camera rig are built at runtime, which keeps
+; this scene a single node in the editor. It frees itself on device.
+[node name="XrealDesktopPreview" type="Node"]
+script = ExtResource("1_script")

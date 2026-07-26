@@ -96,7 +96,17 @@ func update_imu(accel: Vector3, gyro: Vector3, dt: float, head_transform: Transf
 	var rel := _ref * _q
 	var to_godot := Basis(Vector3(1, 0, 0), Vector3(0, 0, -1), Vector3(0, 1, 0))
 	var e := (to_godot * Basis(rel) * to_godot.transposed()).get_euler()
-	var aim_basis := Basis.from_euler(Vector3(-e.x, e.y, e.z))
+	_apply_aim(Basis.from_euler(Vector3(-e.x, e.y, e.z)), head_transform)
+
+## Aim the beam directly instead of from the IMU, for a host that has no phone sensors: the desktop
+## preview drives it from the mouse. [param aim_basis] is the beam's orientation in world space, so
+## "recenter" on that path is the caller zeroing its own angles rather than [method recenter].
+func aim_from(aim_basis: Basis, head_transform: Transform3D) -> void:
+	_apply_aim(aim_basis, head_transform)
+
+## Put the beam at the hand offset from the head, point it along [param aim_basis], then raycast
+## and highlight what it hits. Shared by the IMU path and the direct one.
+func _apply_aim(aim_basis: Basis, head_transform: Transform3D) -> void:
 	# Origin at a "hand" offset from the head, not from the eye or the camera.
 	var origin := head_transform.origin + head_transform.basis * hand_offset
 	global_transform = Transform3D(aim_basis, origin)

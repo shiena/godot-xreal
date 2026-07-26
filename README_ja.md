@@ -146,6 +146,7 @@ GDExtension 部分は素の godot-rust です。
 1. アドオンを導入し（[プリビルト](#インストールプリビルト) か [ソースからビルド](#ビルドソースから)）、ライブラリを vendoring します。
 2. シーンに `XrealHeadTracker` ノードを追加し、その子に `Camera3D` を置きます。
 3. 実機では、カメラが頭の動きに追従します（6DoF の回転と位置）。
+4. PC で確認するときは `addons/godot_xreal/xreal_desktop_preview.tscn` も追加します。デスクトップ実行にはグラス向けの描画先が無いため、このコンポーネントが 2 枚目のウィンドウを開いてそこに 3D を描きます。右ドラッグで見回し、WASD で移動できます。実機では自分を破棄するので、そのまま残せます。操作の一覧は [アドオンの README](addons/godot_xreal/README.md#previewing-the-glasses-view-on-desktop) にあります。
 
 同梱の `demo/main.tscn` が、ボックスのリングでこれを実演します。
 

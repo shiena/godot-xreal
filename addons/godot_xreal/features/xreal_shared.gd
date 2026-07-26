@@ -17,6 +17,8 @@ const GROUP_HAND_TRACKER := &"xreal_shared_hand_tracker"
 ## xreal_rig.tscn's root joins this group; add it to a custom rig's XrealHeadTracker too.
 const GROUP_HEAD_TRACKER := &"xreal_head_tracker"
 const GROUP_CAMERA := &"xreal_camera_feature"
+## The desktop preview window's head node (xreal_desktop_preview.tscn) joins this group.
+const GROUP_DESKTOP_PREVIEW := &"xreal_desktop_preview_head"
 
 # Same-frame duplicate-creation guard: the group lookup only sees nodes already INSIDE the tree,
 # and auto-created nodes enter it through call_deferred, so two features enabling in the same
@@ -139,6 +141,12 @@ static func get_hand_tracker(tree: SceneTree) -> Node:
 ## at each use.
 static func find_head_tracker(tree: SceneTree) -> Node3D:
 	return tree.get_first_node_in_group(GROUP_HEAD_TRACKER) as Node3D
+
+## The desktop preview window's head node, or null. It is the off-device stand-in for the head
+## tracker, so head-locked content parents to whichever of the two exists: the tracker on device,
+## this in the editor. Null on device, and in a scene with no xreal_desktop_preview.tscn.
+static func find_preview_head(tree: SceneTree) -> Node3D:
+	return tree.get_first_node_in_group(GROUP_DESKTOP_PREVIEW) as Node3D
 
 ## The XrealCamera feature component in the tree, or null. The group lookup is O(1), so calling it
 ## every frame is safe.

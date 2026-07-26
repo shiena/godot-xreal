@@ -51,6 +51,15 @@ var _controller_started := false
 var _imu_poll_count := 0
 var _phone_pointer: Node3D
 var _cursor_mat: StandardMaterial3D
+# Which way "up" is for the touchpad cursor; see _setup_touch_controller.
+var _cursor_y_sign := -1.0
+# Desktop only: the phone pointer has no IMU to follow off device, so the preview window's mouse
+# aims it instead, once Tab has handed the mouse over. Angles in degrees, zeroed by R.
+const PREVIEW_POINTER_SENSITIVITY := 0.15
+var _pointer_yaw := 0.0
+var _pointer_pitch := 0.0
+var _pointer_aimed := false
+var _preview: Node  # the desktop preview window component, null on device
 # No-glasses watchdog: the head-tracking session only comes up with the glasses connected, so if
 # tracking has not started within this window we take them to be absent, show a message and quit
 # instead of sitting forever in the session-bootstrap retry loop. Detection uses no heuristic: it
@@ -136,6 +145,7 @@ func _ready() -> void:
 	if _image_tracking and _image_tracking.has_signal(&"set_changed"):
 		_image_tracking.set_changed.connect(_on_image_set_changed)
 	_setup_touch_controller()
+	_setup_desktop_pointer()
 	# Reflect the boot camera state on the phone-menu toggle (on only when the XrealCamera
 	# instance was saved with `enabled` ticked; the other toggles start off).
 	_set_controller_toggle("camera", _camera.enabled)
@@ -152,11 +162,10 @@ func _spawn_rig() -> void:
 		if _tracker.has_signal(&"key_event"):
 			_tracker.key_event.connect(_on_key_event)
 			_tracker.wearing_changed.connect(_on_wearing_changed)
-	else:
-		# Fallback so the scene is still visible (and the panel explains why).
-		var camera := Camera3D.new()
-		camera.current = true
-		add_child(camera)
+	# No else branch: off device the glasses half of the split is drawn by $XrealDesktopPreview, in
+	# its own window, so the root viewport needs no camera of its own. Adding one here would only
+	# draw the scene a second time, under the touch controller's opaque backdrop where nobody can
+	# see it.
 
 ## Set up the runtime side of the phone touch controller, meaning the head-locked 3D cursor and
 ## the host-preview camera. $PhoneScreen keeps its layout and signal wiring static in
@@ -164,11 +173,15 @@ func _spawn_rig() -> void:
 ## glasses keep showing the 3D scene.
 func _setup_touch_controller() -> void:
 	# The head-locked cursor makes phone touches visible in the glasses, which proves the split, so
-	# reparent it under the tracker. Without a tracker (desktop fallback) nothing exists to lock it
-	# to, so drop it.
-	if _tracker:
-		_cursor.reparent(_tracker, false)
+	# reparent it under whatever is playing the head: the tracker on device, the preview window's
+	# head on desktop. With neither there is nothing to lock it to, so drop it.
+	var head: Node3D = _tracker if _tracker else XrealShared.find_preview_head(get_tree())
+	if head:
+		_cursor.reparent(head, false)
 		_cursor_mat = _cursor.material_override as StandardMaterial3D
+		# The eye cameras invert Y (pose handedness) but the plain preview camera does not, so the
+		# touchpad's "up" maps to -y in the glasses and to +y in the preview window.
+		_cursor_y_sign = -1.0 if _tracker else 1.0
 	else:
 		_cursor.queue_free()
 		_cursor = null
@@ -182,10 +195,45 @@ func _setup_touch_controller() -> void:
 		if host_cam:
 			host_cam.current = false
 
+## Desktop only: off device the phone pointer has no IMU to follow, so the preview window's mouse
+## aims it instead. Tab hands that mouse between flying the camera and aiming the pointer, and R
+## zeroes whichever of the two holds it.
+func _setup_desktop_pointer() -> void:
+	var preview := get_node_or_null(^"XrealDesktopPreview")
+	if _extension_loaded or preview == null or not preview.has_signal(&"app_input"):
+		return
+	_preview = preview
+	_preview.app_input.connect(_on_preview_app_input)
+	_preview.flycam_active_changed.connect(_on_preview_flycam_changed)
+	_setup_phone_pointer()
+	# The beam origin's +Y reads as DOWN through the eye cameras but as up in the preview window, so
+	# flip it to keep the beam starting below the view on both.
+	_phone_pointer.hand_offset.y = -absf(_phone_pointer.hand_offset.y)
+
+## Tab moved control of the preview window's mouse. Capture it while the app is aiming, so a long
+## sweep does not run out of desk, and give it back when the flycam takes over.
+func _on_preview_flycam_changed(active: bool) -> void:
+	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE if active else Input.MOUSE_MODE_CAPTURED
+
+## Aim the phone pointer with the preview window's mouse; R points it forward again. This stands in
+## for tilting the phone, which is what drives it on device.
+func _on_preview_app_input(event: InputEvent) -> void:
+	var motion := event as InputEventMouseMotion
+	if motion:
+		var s := PREVIEW_POINTER_SENSITIVITY
+		_pointer_yaw = wrapf(_pointer_yaw - motion.relative.x * s, -180.0, 180.0)
+		_pointer_pitch = clampf(_pointer_pitch - motion.relative.y * s, -89.0, 89.0)
+		_pointer_aimed = true
+		return
+	var key := event as InputEventKey
+	if key and key.pressed and not key.echo and key.physical_keycode == KEY_R:
+		_pointer_yaw = 0.0
+		_pointer_pitch = 0.0
+		_pointer_aimed = true
+
 func _on_tc_touchpad(value: Vector2) -> void:
-	# Eye cameras invert Y (pose handedness), so -y maps the pad's "up" to up in the glasses.
 	if _cursor:
-		_cursor.position = Vector3(value.x * 0.8, -value.y * 0.5, -2.0)
+		_cursor.position = Vector3(value.x * 0.8, value.y * 0.5 * _cursor_y_sign, -2.0)
 
 func _on_tc_touchpad_released() -> void:
 	if _cursor:
@@ -509,6 +557,12 @@ func _process(_delta: float) -> void:
 			var mesh: bool = _system.is_meshing_supported() if _system.has_method(&"is_meshing_supported") else false
 			print("[demo] AR features: camera=%s plane=%s anchor=%s image=%s mesh=%s" % [cam, plane, anchor, image, mesh])
 			_apply_capabilities(cam, plane, anchor, image, mesh)
+	# Desktop only: re-apply the mouse-aimed pointer every frame, so it keeps hanging off the preview
+	# head and follows the flycam even while the mouse is flying it rather than aiming.
+	if _pointer_aimed:
+		_phone_pointer.aim_from(
+			Basis.from_euler(Vector3(deg_to_rad(_pointer_pitch), deg_to_rad(_pointer_yaw), 0.0)),
+			(_preview.head as Node3D).global_transform)
 	# Phase C path B: the phone IMU, through NRController state, drives the 3D pointer. Godot's own
 	# IMU returns all-zero on this host, so we read accel (gravity for pitch and roll) and gyro (yaw)
 	# from the controller.
