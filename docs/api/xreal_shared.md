@@ -33,6 +33,14 @@ Drive a Camera3D from the glasses RGB camera's real geometry, so rendered hologr
 ### static audio_wants_mic(state: int) -> bool
 
 
+<a id="method-eye_offsets"></a>
+
+### static eye_offsets(system: Object) -> Array
+
+The two displays' offsets from the head as [left, right], in Godot space. This is the device's own eye separation, read from the same geometry API as the RGB camera's pose, rather than a guessed IPD. It is what a stereo capture needs to give each eye its parallax.
+
+Static per device, so callers cache it. Both entries come back Vector3.ZERO when the geometry is unavailable, which collapses a stereo capture into two identical views instead of failing it.
+
 <a id="method-find_camera_feature"></a>
 
 ### static find_camera_feature(tree: SceneTree) -> Node
