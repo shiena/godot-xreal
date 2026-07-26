@@ -160,6 +160,22 @@ static func find_camera_feed(tree: SceneTree) -> Object:
 	var cam := find_camera_feature(tree)
 	return cam.get_feed() if cam != null and cam.has_method(&"get_feed") else null
 
+## The two displays' offsets from the head as [left, right], in Godot space. This is the device's
+## own eye separation, read from the same geometry API as the RGB camera's pose, rather than a
+## guessed IPD. It is what a stereo capture needs to give each eye its parallax.
+##
+## Static per device, so callers cache it. Both entries come back Vector3.ZERO when the geometry is
+## unavailable, which collapses a stereo capture into two identical views instead of failing it.
+static func eye_offsets(system: Object) -> Array:
+	var out := [Vector3.ZERO, Vector3.ZERO]
+	if system == null or not system.has_method(&"get_device_pose_from_head"):
+		return out
+	for eye in 2:  # XREALComponent 0 = left display, 1 = right display
+		var pose: PackedFloat32Array = system.get_device_pose_from_head(eye)
+		if pose.size() == 7:
+			out[eye] = Vector3(pose[0], -pose[1], -pose[2])
+	return out
+
 ## Drive a Camera3D from the glasses RGB camera's real geometry, so rendered holograms line up with
 ## the camera image. The intrinsics give the vertical FOV (from fy, KEEP_HEIGHT) and the
 ## pose-from-head gives the small forward offset, returned in Godot space through this port's
