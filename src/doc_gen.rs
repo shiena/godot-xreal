@@ -130,6 +130,7 @@ fn clean_value_attr(tag: &str) -> String {
 /// from the `ffi` definitions so they cannot drift, and a new computed constant missing here simply
 /// falls back to the cleaned Rust path, which stays visible.
 fn constant_value_overrides() -> std::collections::HashMap<&'static str, i64> {
+    use crate::depth_mesh::semantic_label as msl;
     use crate::ffi::{anchor_quality as aq, hmd_feature as hf, plane_detection_mode as pdm};
     std::collections::HashMap::from([
         ("FEATURE_RGB_CAMERA", hf::RGB_CAMERA as i64),
@@ -150,6 +151,16 @@ fn constant_value_overrides() -> std::collections::HashMap<&'static str, i64> {
         ("ANCHOR_QUALITY_INSUFFICIENT", aq::INSUFFICIENT as i64),
         ("ANCHOR_QUALITY_SUFFICIENT", aq::SUFFICIENT as i64),
         ("ANCHOR_QUALITY_GOOD", aq::GOOD as i64),
+        ("MESH_LABEL_BACKGROUND", msl::BACKGROUND as i64),
+        ("MESH_LABEL_WALL", msl::WALL as i64),
+        ("MESH_LABEL_BUILDING", msl::BUILDING as i64),
+        ("MESH_LABEL_FLOOR", msl::FLOOR as i64),
+        ("MESH_LABEL_CEILING", msl::CEILING as i64),
+        ("MESH_LABEL_HIGHWAY", msl::HIGHWAY as i64),
+        ("MESH_LABEL_SIDEWALK", msl::SIDEWALK as i64),
+        ("MESH_LABEL_GRASS", msl::GRASS as i64),
+        ("MESH_LABEL_DOOR", msl::DOOR as i64),
+        ("MESH_LABEL_TABLE", msl::TABLE as i64),
     ])
 }
 
