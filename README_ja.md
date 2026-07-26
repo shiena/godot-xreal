@@ -51,6 +51,7 @@ XREAL SDK for Unity 3.1.0 のネイティブライブラリを用いて、XREAL 
 | **スマホ 3D ポインター**（ホスト IMU） | ✅（デモ） | スマホを傾けてグラス内に 3D レイを飛ばします（`demo/phone_pointer.gd`）。姿勢は `XrealSystem.poll_controller()` が露出する NRController の生 IMU（`accel` からピッチとロール、`gyro` からヨー）を GDScript で融合して作ります。本機では NRController の融合ポーズも Godot 内蔵の `Input.get_gyroscope()` も空だったためです。レイキャストで当たったオブジェクトをハイライトし、トリガーで選択します。オンスクリーンの左右手切替でレイの原点を切替え、gyro ドリフトはバイアス学習とデッドゾーンで抑えます。`recenter` で正面をリセットします。 |
 
 このほか画像トラッキング、マーカートラッキング、深度メッシュ、写真と合成のキャプチャ、FPV 配信も移植済みです。
+深度メッシュは SDK の頂点ごとの意味分類を保持し、グラスで保存したスキャンはエディタ dock で `ArrayMesh` や `.glb` に変換できます。
 一部は実機検証待ちで、状況は [`docs/plans/ar-features-plan.md`](docs/plans/ar-features-plan.md) にあります。
 
 ## インストール（プリビルト）
@@ -275,7 +276,8 @@ addons/godot_xreal/      インストール可能なアドオン
   plugin.cfg/.gd         EditorPlugin — エディタ dock も登録
   export_plugin.gd       Android エクスポート: manifest・権限・.aar/assets ステージング
   xreal_rig.tscn         XrealHeadTracker + Camera3D リグ
-  editor/                dock: vendor_import_dock.gd（SDK 取込）, image_db_dock.gd
+  editor/                dock: vendor_import_dock.gd（SDK 取込）, image_db_dock.gd,
+                         mesh_snapshot_dock.gd（深度メッシュのスキャン → ArrayMesh/.glb）
   android/               ブリッジ Java ソース（nr_plugins.json と .aar は vendoring・git 管理外）
   bin/                   ビルド済みライブラリ（git 管理外）: android/libgodot_xreal.so + デスクトップ dummy スタブ
 src/                     Rust GDExtension 本体

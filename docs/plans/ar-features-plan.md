@@ -244,6 +244,13 @@ Godot-side (see the layout note below — the flip is one step short of the pose
 `addons/godot_xreal/features/xreal_mesh.gd` (phone-menu "メッシュ" toggle, Air2U tab) builds a translucent
 `ArrayMesh` per block, tinted per vertex by its semantic class.
 
+**Editor round trip (2026-07-26).** `save_snapshot()` writes every block on screen to one JSON file
+(base64 float32/int32/u8 payloads, already in Godot space), on Android under
+`getExternalFilesDir(null)/MeshSave` so `adb pull` reaches it without root, since Godot maps `user://`
+to internal storage. The `XREAL Mesh Snapshot` editor dock turns a pulled file into an `ArrayMesh`
+(one surface per block, class ids in resource metadata) or a `.glb`. It replaces the SDK's "Use Meshes
+in the Editor", which writes `.obj` and therefore drops the classification entirely.
+
 **Semantic classification (2026-07-26).** `labels` is the `vector<u8>` at block `+0x68`, one
 `NRMeshingVertexSemanticLabel` per **vertex**, copied out alongside the geometry (it used to be freed
 unread). It stays index-aligned with `vertices`, since only the triangle winding is reversed, and the

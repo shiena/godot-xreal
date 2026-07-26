@@ -15,8 +15,17 @@ extends Node3D
 ## site can react by showing UI, logging, or flipping a toggle.
 signal error(message: String)
 
+## Emitted after save_snapshot() writes a file, with its path and the number of blocks in it.
+signal snapshot_saved(path: String, block_count: int)
+
 ## Enable at boot (applied in _ready). At runtime call set_enabled().
 @export var enabled := false
+
+## Where save_snapshot() writes. Empty picks the platform default: on Android the app's own folder
+## on external storage (`/sdcard/Android/data/<package>/files/MeshSave`), which `adb pull` reads
+## without root, and `user://mesh_snapshots` everywhere else. Godot maps `user://` to internal
+## storage on Android, and a scan nobody can copy off the device is of no use in the editor.
+@export var snapshot_dir := ""
 
 ## Tint each vertex by its semantic class (wall, floor, ceiling, door, table and so on) instead of
 ## painting the whole scan one colour. It falls back to the flat tint per block whenever the backend
@@ -49,12 +58,18 @@ const UNKNOWN_LABEL_COLOR := Color(1.0, 0.15, 0.15)
 ## Opacity of the whole overlay, low enough to read the real room through the scan.
 const OVERLAY_ALPHA := 0.22
 
+## Marker and schema revision written into every snapshot, checked by the editor converter before
+## it reads anything else. Bump the version whenever the block schema changes.
+const SNAPSHOT_FORMAT := "godot-xreal.mesh-snapshot"
+const SNAPSHOT_VERSION := 1
+
 var _system: Object                 # XrealSystem (this feature's own stateless instance)
 var _ar: Object                     # the shared XrealAR poller
 var _connected := false
 var _initialized := false           # meshing enabled once
 var _enabled := false
 var _meshes := {}                   # block id(String) -> MeshInstance3D
+var _labels := {}                   # block id(String) -> PackedByteArray, only while classified
 var _mat: StandardMaterial3D        # flat tint, for blocks with no classification
 var _mat_labeled: StandardMaterial3D  # per-vertex class colour
 var _palette: PackedColorArray      # LABEL_COLORS flattened to label value -> linear colour
@@ -91,6 +106,114 @@ func set_enabled(on: bool) -> bool:
 		_ar.set(&"mesh", true)
 	enabled = true
 	return true
+
+# ------------------------------------------------------------------- snapshots ---
+
+## Write every block currently in the scene to one JSON file and return its path, or "" on failure
+## (reported through `error`). Meant for the same job as the Unity SDK's "Save Mesh": capture a real
+## scan on the glasses, pull it to a PC, and iterate against it in the editor instead of rescanning
+## a room for every change. Unlike that one it keeps the semantic classification, which .obj cannot
+## carry, and one file holds the whole block set rather than a folder of meshes.
+##
+## Convert a saved file with the "XREAL Mesh Snapshot" editor dock, which turns it into an
+## `ArrayMesh` resource or a .glb. The schema, all little-endian:
+##
+##     { "format": "godot-xreal.mesh-snapshot", "version": 1, "space": "godot",
+##       "encoding": "base64", "saved_at": "<ISO 8601 UTC>",
+##       "blocks": [ { "id": "<16 hex digits>", "vertex_count": int, "index_count": int,
+##                     "vertices": "<base64 float32 xyz>", "normals": "<base64 float32 xyz>",
+##                     "indices": "<base64 int32>", "labels": "<base64 uint8, may be empty>" } ] }
+##
+## The arrays are base64 rather than JSON numbers on purpose: a room scan runs to hundreds of
+## thousands of floats, and writing those as text costs roughly ten times the bytes and long enough
+## on the phone to stall the frame. Everything is already in Godot space with Godot winding, so a
+## reader needs no conversion.
+func save_snapshot() -> String:
+	if _meshes.is_empty():
+		error.emit("[xreal-mesh] no mesh blocks yet, so nothing to save; scan the room first")
+		return ""
+	var dir := _snapshot_dir()
+	var mkdir := DirAccess.make_dir_recursive_absolute(dir)
+	if mkdir != OK and mkdir != ERR_ALREADY_EXISTS:
+		error.emit("[xreal-mesh] cannot create %s (error %d)" % [dir, mkdir])
+		return ""
+	var blocks := []
+	for id in _meshes:
+		var block := _block_to_dict(id)
+		if not block.is_empty():
+			blocks.append(block)
+	if blocks.is_empty():
+		error.emit("[xreal-mesh] every block was empty, so nothing was written")
+		return ""
+	var path := dir.path_join("mesh_%s.json" % _timestamp())
+	var f := FileAccess.open(path, FileAccess.WRITE)
+	if f == null:
+		error.emit("[xreal-mesh] cannot write %s (error %d)" % [path, FileAccess.get_open_error()])
+		return ""
+	f.store_string(JSON.stringify({
+		"format": SNAPSHOT_FORMAT,
+		"version": SNAPSHOT_VERSION,
+		"space": "godot",
+		"encoding": "base64",
+		"saved_at": Time.get_datetime_string_from_system(true),
+		"blocks": blocks,
+	}, "\t"))
+	f.close()
+	print("[xreal-mesh] snapshot -> %s (%d blocks)" % [path, blocks.size()])
+	snapshot_saved.emit(path, blocks.size())
+	return path
+
+## One block as its JSON object, or {} when it carries no surface. The geometry is read back off
+## the ArrayMesh, which holds exactly what was handed to it, so only the class ids need their own
+## copy.
+func _block_to_dict(id: String) -> Dictionary:
+	var mesh: ArrayMesh = (_meshes[id] as MeshInstance3D).mesh
+	if mesh == null or mesh.get_surface_count() == 0:
+		return {}
+	var arrays := mesh.surface_get_arrays(0)
+	var verts: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+	var indices: PackedInt32Array = arrays[Mesh.ARRAY_INDEX]
+	var normals := PackedVector3Array()
+	if arrays[Mesh.ARRAY_NORMAL] != null:
+		normals = arrays[Mesh.ARRAY_NORMAL]
+	var labels: PackedByteArray = _labels.get(id, PackedByteArray())
+	return {
+		"id": id,
+		"vertex_count": verts.size(),
+		"index_count": indices.size(),
+		"vertices": _to_base64(verts.to_byte_array()),
+		"normals": _to_base64(normals.to_byte_array()),
+		"indices": _to_base64(indices.to_byte_array()),
+		"labels": _to_base64(labels),
+	}
+
+## Base64 for a byte run, and "" for an empty one. Marshalls.raw_to_base64 treats empty input as an
+## error and logs it, which an unclassified block would otherwise trigger on every save.
+static func _to_base64(bytes: PackedByteArray) -> String:
+	return "" if bytes.is_empty() else Marshalls.raw_to_base64(bytes)
+
+## The configured snapshot directory, or the platform default described on `snapshot_dir`.
+func _snapshot_dir() -> String:
+	if not snapshot_dir.is_empty():
+		return snapshot_dir
+	var external := _android_external_files_dir()
+	return external.path_join("MeshSave") if not external.is_empty() else "user://mesh_snapshots"
+
+## `Context.getExternalFilesDir(null)`, the app's own directory on external storage, or "" when it
+## is unavailable. It needs no permission, is wiped with the app, and `adb pull` reads it on a
+## stock device, which is exactly what `user://` on Android is not.
+func _android_external_files_dir() -> String:
+	if OS.get_name() != "Android":
+		return ""
+	var activity := XrealAndroidBridge.get_activity()
+	if activity == null:
+		return ""
+	var dir = activity.getExternalFilesDir(null)
+	return "" if dir == null else str(dir.getAbsolutePath())
+
+## Local wall-clock stamp for the file name, "20260726_143012", which sorts chronologically.
+func _timestamp() -> String:
+	return Time.get_datetime_string_from_system().replace("-", "").replace(":", "").replace("T", "_")
 
 ## Resolve the shared XrealAR and connect its mesh signals once, BEFORE the stream switch goes on,
 ## so no change event is ever polled without a listener.
@@ -140,7 +263,15 @@ func _update_block(b: Dictionary) -> void:
 	# The labels parallel the vertices one-to-one when the backend classified this block, and are
 	# empty when it did not, so the size comparison is the only capability check needed.
 	var labels: PackedByteArray = b.get("labels", PackedByteArray())
-	var labelled := colorize_by_label and labels.size() == verts.size()
+	var classified := labels.size() == verts.size()
+	# Held per block for save_snapshot, which needs the class ids themselves: they do not survive
+	# the trip through ARRAY_COLOR. The geometry is read back off the ArrayMesh instead, so this is
+	# the only part of the block worth a second copy.
+	if classified:
+		_labels[id] = labels
+	else:
+		_labels.erase(id)
+	var labelled := colorize_by_label and classified
 	if labelled:
 		arrays[Mesh.ARRAY_COLOR] = _vertex_colors(labels)
 	_log_labels_once(labels.size(), verts.size())
@@ -156,11 +287,13 @@ func _remove_block(id: String) -> void:
 	if mi:
 		mi.queue_free()
 		_meshes.erase(id)
+	_labels.erase(id)
 
 func _clear_meshes() -> void:
 	for id in _meshes:
 		(_meshes[id] as MeshInstance3D).queue_free()
 	_meshes.clear()
+	_labels.clear()
 
 ## One colour per vertex, looked up from its semantic class.
 func _vertex_colors(labels: PackedByteArray) -> PackedColorArray:

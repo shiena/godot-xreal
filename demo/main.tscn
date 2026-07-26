@@ -111,6 +111,7 @@ text = "Recenter"
 [connection signal="stream_toggled" from="PhoneScreen" to="." method="_on_tc_stream"]
 [connection signal="place_pressed" from="PhoneScreen" to="." method="_on_tc_place"]
 [connection signal="image_cycle_pressed" from="PhoneScreen" to="." method="_on_tc_image_cycle"]
+[connection signal="mesh_save_pressed" from="PhoneScreen" to="." method="_on_tc_mesh_save"]
 [connection signal="capture_pressed" from="PhoneScreen" to="." method="_on_tc_capture"]
 [connection signal="blend_pressed" from="PhoneScreen" to="." method="_on_tc_blend"]
 [connection signal="exit_confirmed" from="PhoneScreen" to="." method="_on_tc_exit"]

@@ -54,8 +54,9 @@ XREAL SDK for Unity 3.1.0 native libraries. Everything below is community-revers
 | **Phone 3D pointer** (host IMU) | ✅ (demo) | Tilt the phone to aim a 3D ray in the glasses (`demo/phone_pointer.gd`). GDScript fuses the orientation from the NRController's raw IMU (`accel` for pitch and roll, `gyro` for yaw) exposed by `XrealSystem.poll_controller()`, because the NRController *fused pose* and Godot's own `Input.get_gyroscope()` both read empty on this host. The ray highlights what it hits and the trigger selects it; an on-screen left/right-hand toggle switches the beam origin; bias-learning and a deadzone damp the gyro drift. `recenter` sets forward. |
 
 Also ported: image tracking, marker tracking, depth meshing, photo and blended capture, and FPV
-streaming. Device verification is still pending for some;
-see [`docs/plans/ar-features-plan.md`](docs/plans/ar-features-plan.md).
+streaming. Depth meshing carries the SDK's per-vertex semantic classification, and a scan saved on
+the glasses becomes an `ArrayMesh` or a `.glb` through an editor dock. Device verification is still
+pending for some; see [`docs/plans/ar-features-plan.md`](docs/plans/ar-features-plan.md).
 
 ## Install (prebuilt)
 
@@ -321,7 +322,8 @@ addons/godot_xreal/      the installable addon
   plugin.cfg/.gd         EditorPlugin — also registers the editor docks
   export_plugin.gd       Android export: manifest, permissions, .aar/assets staging
   xreal_rig.tscn         XrealHeadTracker + Camera3D rig
-  editor/                docks: vendor_import_dock.gd (SDK import), image_db_dock.gd
+  editor/                docks: vendor_import_dock.gd (SDK import), image_db_dock.gd,
+                         mesh_snapshot_dock.gd (depth-mesh scan -> ArrayMesh/.glb)
   android/               bridge Java source (nr_plugins.json + .aar vendored, git-ignored)
   bin/                   built libs (git-ignored): android/libgodot_xreal.so + desktop dummy stubs
 src/                     the Rust GDExtension
