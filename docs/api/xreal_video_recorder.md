@@ -73,6 +73,16 @@ Which 3D render layers the capture camera sees (SDK VideoCapture's Culling Mask)
 
 Capture size and bitrate preset (SDK VideoCapture's Resolution Level). `CUSTOM` uses the explicit record_width, record_height and record_bitrate below; every other value overrides them at start.
 
+<a id="property-stereo"></a>
+
+### stereo: bool = false
+
+Record both eyes side by side rather than one view, the equivalent of the SDK's `CaptureSide.Both`. The file keeps its width and halves its height, each eye filling one half, so it is squeezed horizontally the way side-by-side 3D formats are.
+
+Only the holograms separate: the glasses carry one RGB camera, so a blended recording shows the same real-world image in both halves. Stereo always goes through the composite viewport, even for VIRTUAL_ONLY, because that is what puts the two eyes side by side.
+
+Read when recording starts, so changing it mid-recording does nothing: the encoder is configured with the frame size at that moment and cannot be resized.
+
 ## Signals
 
 <a id="signal-active_changed"></a>
