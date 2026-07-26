@@ -283,7 +283,10 @@ Poll tracked-image changes since the last call: `{ "added": Array, "updated": Ar
 ### poll_mesh_blocks() -> Array
 
 Poll the current mesh blocks. Returns an `Array` of `Dictionary { id: String, state: int,  
- vertices: PackedVector3Array, normals: PackedVector3Array, indices: PackedInt32Array }`. `state == 2` means the block was removed; build/update an `ArrayMesh` per block otherwise.
+ vertices: PackedVector3Array, normals: PackedVector3Array, indices: PackedInt32Array,  
+ labels: PackedByteArray }`. `state == 2` means the block was removed; build/update an `ArrayMesh` per block otherwise.
+
+`labels` is the per-vertex semantic classification, one `MESH_LABEL_*` per vertex, so it is index-aligned with `vertices`. It is empty when the backend classified nothing, so compare its size against `vertices` before indexing it.
 
 <a id="method-poll_planes"></a>
 
@@ -448,3 +451,13 @@ Switch the tracking mode at runtime (`TRACKING_6DOF` / `TRACKING_3DOF` / `TRACKI
 | <a id="constant-ANCHOR_QUALITY_INSUFFICIENT"></a>`ANCHOR_QUALITY_INSUFFICIENT` | `0` | Anchor-quality level from [`estimate_anchor_quality()`](#method-estimate_anchor_quality): insufficient, so do not save here. |
 | <a id="constant-ANCHOR_QUALITY_SUFFICIENT"></a>`ANCHOR_QUALITY_SUFFICIENT` | `1` | Anchor-quality level: sufficient, the minimum recommended before saving. |
 | <a id="constant-ANCHOR_QUALITY_GOOD"></a>`ANCHOR_QUALITY_GOOD` | `2` | Anchor-quality level: good, a strong spot to save an anchor. |
+| <a id="constant-MESH_LABEL_BACKGROUND"></a>`MESH_LABEL_BACKGROUND` | `0` | `NRMeshingVertexSemanticLabel` for the `labels` of [`poll_mesh_blocks()`](#method-poll_mesh_blocks): whatever the classifier did not place, which is the catch-all rather than an "unknown surface" class. |
+| <a id="constant-MESH_LABEL_WALL"></a>`MESH_LABEL_WALL` | `1` | `NRMeshingVertexSemanticLabel`: a wall. |
+| <a id="constant-MESH_LABEL_BUILDING"></a>`MESH_LABEL_BUILDING` | `2` | `NRMeshingVertexSemanticLabel`: a building exterior. |
+| <a id="constant-MESH_LABEL_FLOOR"></a>`MESH_LABEL_FLOOR` | `4` | `NRMeshingVertexSemanticLabel`: the floor or ground. |
+| <a id="constant-MESH_LABEL_CEILING"></a>`MESH_LABEL_CEILING` | `5` | `NRMeshingVertexSemanticLabel`: the ceiling. |
+| <a id="constant-MESH_LABEL_HIGHWAY"></a>`MESH_LABEL_HIGHWAY` | `6` | `NRMeshingVertexSemanticLabel`: a road surface (the taxonomy is outdoor-first, so the label set carries classes an indoor scan never produces). |
+| <a id="constant-MESH_LABEL_SIDEWALK"></a>`MESH_LABEL_SIDEWALK` | `7` | `NRMeshingVertexSemanticLabel`: a pavement. |
+| <a id="constant-MESH_LABEL_GRASS"></a>`MESH_LABEL_GRASS` | `8` | `NRMeshingVertexSemanticLabel`: grass. |
+| <a id="constant-MESH_LABEL_DOOR"></a>`MESH_LABEL_DOOR` | `10` | `NRMeshingVertexSemanticLabel`: a door. |
+| <a id="constant-MESH_LABEL_TABLE"></a>`MESH_LABEL_TABLE` | `11` | `NRMeshingVertexSemanticLabel`: a table top. |

@@ -88,7 +88,7 @@ A tracked image was updated (same `Dictionary` shape as `image_added`).
 
 ### mesh_block_changed(block: Dictionary)
 
-A mesh block was added or updated, as `Dictionary { id, state, vertices, normals, indices }`.
+A mesh block was added or updated, as `Dictionary { id, state, vertices, normals, indices, labels }`, where `labels` is the per-vertex semantic classification and may be empty.
 
 <a id="signal-mesh_block_removed"></a>
 

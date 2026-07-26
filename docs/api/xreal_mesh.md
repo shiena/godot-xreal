@@ -9,11 +9,17 @@
 
 > The script declares no `class_name`, so **XrealMesh** is this reference's name for it, not a type you can write in GDScript. Use it by instancing `addons/godot_xreal/features/xreal_mesh.tscn`.
 
-Depth meshing as a drop-in feature component (Air 2 Ultra). It enables meshing through XrealSystem.set_meshing_enabled and builds or updates one ArrayMesh per block, a translucent overlay of the scanned environment. Mesh-block changes stream in through the shared XrealAR poller, whose "mesh" stream is gated on this toggle, so it polls only while meshing is on.
+Depth meshing as a drop-in feature component (Air 2 Ultra). It enables meshing through XrealSystem.set_meshing_enabled and builds or updates one ArrayMesh per block, a translucent overlay of the scanned environment, tinted per vertex by the semantic class the SDK assigns it (wall, floor, ceiling, door, table and so on). Mesh-block changes stream in through the shared XrealAR poller, whose "mesh" stream is gated on this toggle, so it polls only while meshing is on.
 
 World-locked: add this component under a world-fixed node, such as the scene root and NOT the head rig, so the mesh stays registered to the real room as the head moves. Switching OFF drops every block mesh from the scene but leaves the SDK meshing running, so switching ON repopulates from the next poll without a rescan: GetMeshBlockInfo reports the whole current block set each time, not just what changed.
 
 ## Properties
+
+<a id="property-colorize_by_label"></a>
+
+### colorize_by_label: bool = true
+
+Tint each vertex by its semantic class (wall, floor, ceiling, door, table and so on) instead of painting the whole scan one colour. It falls back to the flat tint per block whenever the backend ships no classification for it. Read when a block mesh is built, so a change takes effect from the next block update rather than repainting what is already on screen.
 
 <a id="property-enabled"></a>
 
@@ -36,3 +42,25 @@ Emitted when the feature is unavailable, e.g. meshing is unsupported on this dev
 ### set_enabled(on: bool) -> bool
 
 Toggle meshing and return the resulting state. It returns false on an unsupported device, that is anything but an Air 2 Ultra, so a UI toggle can flip itself back off.
+
+## Constants
+
+<a id="constant-LABEL_COLORS"></a>
+
+### LABEL_COLORS = {0: Color(0.6, 0.62, 0.65, 1), 1: Color(0.2, 0.45, 0.95, 1), 2: Color(0.6, 0.3, 0.9, 1), 4: Color(0.15, 0.8, 0.35, 1), 5: Color(0.15, 0.85, 0.9, 1), 6: Color(0.4, 0.42, 0.5, 1), 7: Color(0.8, 0.7, 0.35, 1), 8: Color(0.55, 0.9, 0.15, 1), 10: Color(1, 0.55, 0.1, 1), 11: Color(0.95, 0.25, 0.65, 1)}
+
+Per-vertex semantic class -> colour, keyed by the XrealSystem.MESH_LABEL_* values. They are spread around the hue circle rather than picked for realism, since the point is telling adjacent surfaces apart through a translucent overlay: an unclassified vertex reads as neutral grey and every named class as its own hue. Written as sRGB literals and converted once in _label_palette.
+
+Grey background, blue wall, purple building, green floor, cyan ceiling, slate highway, tan sidewalk, lime grass, orange door, pink table. The gaps at 3 and 9 are gaps in the SDK's own enum.
+
+<a id="constant-UNKNOWN_LABEL_COLOR"></a>
+
+### UNKNOWN_LABEL_COLOR = Color(1, 0.15, 0.15, 1)
+
+Colour for a label value outside LABEL_COLORS, which only a future SDK taxonomy would produce. Deliberately an alarming red, so an unmapped class shows up instead of blending in.
+
+<a id="constant-OVERLAY_ALPHA"></a>
+
+### OVERLAY_ALPHA = 0.22
+
+Opacity of the whole overlay, low enough to read the real room through the scan.
