@@ -703,6 +703,10 @@ def main() -> int:
                     help="AAC sample rate; 0 (default) measures it from the RTP clock")
     ap.add_argument("--audio-channels", type=int, default=1, help="AAC channel count (default 1)")
     ap.add_argument("--http-port", type=int, default=8080, help="web port (default 8080)")
+    ap.add_argument("--http-host", default="0.0.0.0",
+                    help="address to bind the web server to (default 0.0.0.0, every interface, so "
+                         "phones and laptops on the same LAN can open it; 127.0.0.1 restricts it "
+                         "to this machine)")
     ap.add_argument("--control-port", type=int, default=pair_server.CONTROL_PORT,
                     help=f"loopback shutdown port (default {pair_server.CONTROL_PORT})")
     ap.add_argument("--ip", help="address to advertise to the app (default: the NIC facing it)")
@@ -717,9 +721,10 @@ def main() -> int:
     timeline = Timeline()
 
     try:
-        http_server = http.server.ThreadingHTTPServer(("0.0.0.0", args.http_port), make_handler(hub))
+        http_server = http.server.ThreadingHTTPServer((args.http_host, args.http_port),
+                                                      make_handler(hub))
     except OSError as e:
-        print(f"[fpv] cannot bind HTTP {args.http_port}: {e}", file=sys.stderr)
+        print(f"[fpv] cannot bind HTTP {args.http_host}:{args.http_port}: {e}", file=sys.stderr)
         return 1
 
     # Bind the RTP UDP ports here, not inside the receiver threads: a bind failure there is only a
@@ -744,6 +749,18 @@ def main() -> int:
           f"(AAC {rate_note}, x{args.audio_channels})", flush=True)
     print(f"[fpv] open http://localhost:{args.http_port} in a browser, then hit Stream in the app",
           flush=True)
+    # The bind above already listens on every interface, so the page is reachable from the LAN;
+    # printing the address is what makes that usable, since nobody wants to go looking for it. It is
+    # the same NIC-picking trick pairing uses (a connect() on UDP, which sends nothing), against a
+    # public address so it resolves the route to the LAN rather than to loopback. On Windows the
+    # firewall still has to allow inbound TCP on this port for the private profile; see
+    # scripts/stream_server/README.md.
+    if args.http_host in ("0.0.0.0", "::"):
+        try:
+            print(f"[fpv] on this LAN: http://{pair_server.local_ip_towards('8.8.8.8')}:"
+                  f"{args.http_port}", flush=True)
+        except OSError:
+            pass  # no route out; localhost above is all we can honestly offer
     return pair_server.run(args.ip, hint="[pair] pairing runs in-process; no second server needed.",
                            control_port=args.control_port)
 
