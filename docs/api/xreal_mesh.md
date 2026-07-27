@@ -59,7 +59,9 @@ Convert a saved file with the "XREAL Mesh Snapshot" editor dock, which turns it 
 
 { "format": "godot-xreal.mesh-snapshot", "version": 1, "space": "godot", "encoding": "base64", "saved_at": "&lt;ISO 8601 UTC>", "blocks": [ { "id": "&lt;16 hex digits>", "vertex_count": int, "index_count": int, "vertices": "&lt;base64 float32 xyz>", "normals": "&lt;base64 float32 xyz>", "indices": "&lt;base64 int32>", "labels": "&lt;base64 uint8, may be empty>" } ] }
 
-The arrays are base64 rather than JSON numbers on purpose: a room scan runs to hundreds of thousands of floats, and writing those as text costs roughly ten times the bytes and long enough on the phone to stall the frame. Everything is already in Godot space with Godot winding, so a reader needs no conversion.
+The arrays are base64 rather than JSON numbers on purpose: a room scan runs to hundreds of thousands of floats, and writing those as text costs roughly ten times the bytes and long enough on the phone to stall the frame.
+
+The geometry is verbatim what the scene holds, which is the RUNTIME's space, not a canonical Godot one: this port negates Y on top of the canonical Unity-to-Godot conversion to cancel the eye SubViewports rendering inverted (docs/plans/coordinate-systems-notes.md). Winding is right for that space. A reader that wants canonical Godot has to negate Y and reverse each triangle with it, which is what the "XREAL Mesh Snapshot" dock does.
 
 <a id="method-set_enabled"></a>
 

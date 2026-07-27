@@ -1111,9 +1111,15 @@ fn image_to_dict(im: &crate::native::ImageSample) -> VarDictionary {
 /// path: raw → Unity is `(x, y, -z)` and Unity → this port's Godot is `(x, -y, -z)`, which composes to
 /// `(x, -y, z)`.
 ///
-/// That leaves our space a pure 180-degree rotation about X of Unity's, so triangles keep Unity's
-/// clockwise-front winding, the opposite of Godot's counter-clockwise-front rule. Emit each
-/// triangle reversed so front faces stay front.
+/// The indices go through untouched. They used to be emitted reversed, on the reasoning that our
+/// space is a 180-degree rotation about X of Unity's and so keeps Unity's clockwise-front winding.
+/// The step that reasoning misses is that the input is raw, not Unity: `(x, -y, z)` applied to raw
+/// has determinant -1, so the conversion has ALREADY swapped each triangle's front and back, and
+/// reversing on top of that swaps it a second time. Device-measured over two real scans, comparing
+/// every triangle's counter-clockwise normal against the SDK's own vertex normals: reversed, 74,026
+/// of 74,036 and 97,380 of 97,390 triangles faced away from their normals; verbatim, all but ten of
+/// each face the right way. The overlay draws CULL_DISABLED, which is why nothing on the glasses
+/// ever showed it.
 fn mesh_block_to_dict(b: &crate::depth_mesh::MeshBlock) -> VarDictionary {
     let mut verts = PackedVector3Array::new();
     for v in &b.vertices {
@@ -1124,10 +1130,8 @@ fn mesh_block_to_dict(b: &crate::depth_mesh::MeshBlock) -> VarDictionary {
         norms.push(Vector3::new(n[0], -n[1], n[2]));
     }
     let mut idx = PackedInt32Array::new();
-    for t in b.indices.chunks_exact(3) {
-        idx.push(t[0] as i32);
-        idx.push(t[2] as i32);
-        idx.push(t[1] as i32);
+    for &i in &b.indices {
+        idx.push(i as i32);
     }
     let mut d = VarDictionary::new();
     d.set(

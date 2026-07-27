@@ -10,9 +10,17 @@
 
 Editor dock: turns a depth-mesh snapshot written on the glasses into something the editor can open, an `ArrayMesh` resource or a .glb. It is the Godot answer to the Unity SDK's "Use Meshes in the Editor", which saves .obj files instead, and it keeps the per-vertex semantic classification that .obj has no way to carry.
 
-The workflow: run the demo on an Air 2 Ultra, turn Mesh on, scan the room, tap "Save Mesh". That writes one JSON file per tap (see xreal_mesh.gd's save_snapshot for the schema), on Android under the app's own external-storage folder so it comes off the device with a plain adb pull:
+The workflow: run the demo on an Air 2 Ultra, turn Mesh on, scan the room, tap "Save Mesh". That writes one JSON file per tap (see xreal_mesh.gd's save_snapshot for the schema), and either location comes off the device with a plain adb pull:
+
+adb pull /sdcard/Documents/godot-xreal
+
+for the demo, which publishes its snapshots to MediaStore, or
 
 adb pull /sdcard/Android/data/&lt;package>/files/MeshSave
+
+for the component's own default.
+
+The component writes to the app's external-storage folder and stops there; the demo then moves the file into shared storage under Documents, the way it does with captures and recordings, because Documents is what the phone's Files app can browse.
 
 Point this dock at one of those files and convert. From then on the real scan is in the scene, and iterating on anything that consumes the mesh no longer costs a redeploy and a rescan.
 
