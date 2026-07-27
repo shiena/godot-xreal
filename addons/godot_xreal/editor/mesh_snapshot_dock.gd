@@ -237,7 +237,7 @@ func _build_mesh(doc: Dictionary) -> ArrayMesh:
 		var id: String = block.get("id", "")
 		var flip := _canonical_check.button_pressed
 		var verts := _to_vector3_array(block.get("vertices", ""), flip)
-		var indices := _to_index_array(block.get("indices", ""))
+		var indices := _to_index_array(block.get("indices", ""), flip)
 		if verts.is_empty() or indices.is_empty():
 			continue
 		var normals := _to_vector3_array(block.get("normals", ""), flip)
@@ -411,20 +411,26 @@ func _to_vector3_array(encoded: String, flip: bool) -> PackedVector3Array:
 		out[i] = Vector3(floats[i * 3], sy * floats[i * 3 + 1], floats[i * 3 + 2])
 	return out
 
-## Base64 int32 back to triangle indices, verbatim in both spaces.
+## Base64 int32 back to triangle indices, reversed when `flip` un-mirrors the vertices.
 ##
-## Deliberately NOT reversed alongside the Y flip, which is the trap here: negating a single axis is
-## itself a mirror, and a mirror already swaps a triangle's front and back, so flipping the vertices
-## fixes the winding on its own. Reversing as well would undo that.
+## A snapshot's winding is correct for the space it is written in. Negating a single axis to reach
+## canonical Godot space is a mirror, and a mirror swaps every triangle's front and back, so the
+## winding has to follow or the whole scan converts inside out. Nothing on the glasses would show
+## that, since the runtime overlay draws with CULL_DISABLED, but a .glb in Blender is lit from the
+## wrong side.
 ##
-## Measured over a real 74,036-triangle scan, comparing each triangle's counter-clockwise normal
-## against the SDK's own vertex normals: as written, 74,026 triangles face AWAY from their normals,
-## i.e. the snapshot is inside out; flipping Y alone turns all 74,026 the right way round; flipping
-## and reversing puts them back to inside out. The runtime overlay never shows this, because it draws
-## with CULL_DISABLED, but a .glb in Blender is lit from the wrong side. See the note on the
-## reversal in mesh_block_to_dict (src/system.rs), which looks like one correction too many.
-func _to_index_array(encoded: String) -> PackedInt32Array:
-	return _from_base64(encoded).to_int32_array()
+## Snapshots taken before mesh_block_to_dict (src/system.rs) stopped reversing hold the opposite
+## winding and so convert inside out through here. Deliberate: the format version stayed at 1 rather
+## than teaching this reader both conventions, because those files were only ever a few test scans.
+func _to_index_array(encoded: String, flip: bool) -> PackedInt32Array:
+	var indices := _from_base64(encoded).to_int32_array()
+	if not flip:
+		return indices
+	for t in range(0, indices.size() - 2, 3):
+		var last := indices[t + 2]
+		indices[t + 2] = indices[t + 1]
+		indices[t + 1] = last
+	return indices
 
 ## The classes the conversion produced, for the status line: it says at a glance whether the scan
 ## was classified at all, and which surfaces to look for.

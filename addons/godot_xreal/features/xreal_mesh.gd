@@ -141,8 +141,13 @@ func set_enabled(on: bool) -> bool:
 ##
 ## The arrays are base64 rather than JSON numbers on purpose: a room scan runs to hundreds of
 ## thousands of floats, and writing those as text costs roughly ten times the bytes and long enough
-## on the phone to stall the frame. Everything is already in Godot space with Godot winding, so a
-## reader needs no conversion.
+## on the phone to stall the frame.
+##
+## The geometry is verbatim what the scene holds, which is the RUNTIME's space, not a canonical
+## Godot one: this port negates Y on top of the canonical Unity-to-Godot conversion to cancel the
+## eye SubViewports rendering inverted (docs/plans/coordinate-systems-notes.md). Winding is right for
+## that space. A reader that wants canonical Godot has to negate Y and reverse each triangle with it,
+## which is what the "XREAL Mesh Snapshot" dock does.
 func save_snapshot() -> String:
 	if _meshes.is_empty():
 		error.emit("[xreal-mesh] no mesh blocks yet, so nothing to save; scan the room first")
