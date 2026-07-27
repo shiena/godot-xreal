@@ -1,10 +1,10 @@
 extends RefCounted
-## Save a captured JPG or recorded mp4 into the phone's shared gallery (MediaStore) from pure
-## GDScript, the Godot port of VRCameraUnity's GalleryHelper.kt with no Java/Kotlin plugin.
-## Godot 4.4+'s JavaClassWrapper drives the Android MediaStore API directly (a constructor is
-## called as a method named after the class, e.g. ContentValues.ContentValues()). This is demo-only
-## glue: the addon's capture and recorder components return the saved file's path and leave what to
-## do with it to the app.
+## Move a file the app produced, a captured JPG, a recorded mp4 or a mesh snapshot, into the phone's
+## shared storage (MediaStore) from pure GDScript, after VRCameraUnity's GalleryHelper.kt but with no
+## Java/Kotlin plugin. Godot 4.4+'s JavaClassWrapper drives the Android MediaStore API directly (a
+## constructor is called as a method named after the class, e.g. ContentValues.ContentValues()). This
+## is demo-only glue: the addon's capture, recorder and mesh components return the saved file's path
+## and leave what to do with it to the app.
 ##
 ## min_sdk is 29, so only the scoped-storage flow exists: MediaStore insert with RELATIVE_PATH and
 ## IS_PENDING, write through the resolver's OutputStream, then clear IS_PENDING. The app's own
@@ -15,15 +15,37 @@ extends RefCounted
 ## not browsable, and only the gallery copy was ever reachable. On this device the duplicates had
 ## quietly reached 47 MB.
 
+## MediaStore collections, as (Uri class, columns class) pairs. The first resolves the collection
+## Uri through getContentUri(); the second carries the MediaColumns constants. They coincide for the
+## two media collections, because Images$Media and Video$Media implement their own column
+## interfaces, but MediaStore$Files merely *nests* FileColumns rather than implementing it, so a
+## non-media save has to read its column names off the nested interface.
+const _IMAGES := "android.provider.MediaStore$Images$Media"
+const _VIDEOS := "android.provider.MediaStore$Video$Media"
+const _FILES := "android.provider.MediaStore$Files"
+const _FILE_COLUMNS := "android.provider.MediaStore$Files$FileColumns"
+
 ## Move an image at `src_path` into the phone gallery under Pictures/godot-xreal.
 ## Returns whether it was saved. No-op off Android.
 static func save_image(src_path: String, mime := "image/jpeg") -> bool:
-	return _save(src_path, mime, false)
+	return _save(src_path, mime, _IMAGES, _IMAGES, "Pictures/godot-xreal")
 
 ## Move a video at `src_path` into the phone gallery under Movies/godot-xreal.
 ## Returns whether it was saved. No-op off Android.
 static func save_video(src_path: String, mime := "video/mp4") -> bool:
-	return _save(src_path, mime, true)
+	return _save(src_path, mime, _VIDEOS, _VIDEOS, "Movies/godot-xreal")
+
+## Move a non-media file, a mesh snapshot for instance, into shared storage under
+## Documents/godot-xreal. Returns whether it was saved. No-op off Android.
+##
+## Documents and Download are the only shared collections that take an arbitrary type, since the
+## media ones reject a MIME they do not own, so this goes through MediaStore.Files. What it buys is
+## reach: the phone's Files app browses Documents and `adb pull /sdcard/Documents/godot-xreal` reads
+## it on a stock device, neither of which is true of the app-private directory a snapshot lands in.
+## The lifetime differs too, in that a shared item survives an uninstall and is the user's to
+## delete, where app-private storage is wiped with the app.
+static func save_document(src_path: String, mime := "application/json") -> bool:
+	return _save(src_path, mime, _FILES, _FILE_COLUMNS, "Documents/godot-xreal")
 
 ## Copy chunk size: recordings can run to hundreds of MB, so never load the whole file at once.
 const _CHUNK := 4 * 1024 * 1024
@@ -44,39 +66,38 @@ static func _java_reason() -> String:
 	var ex := JavaClassWrapper.get_exception()
 	return "" if ex == null else ": %s" % ex
 
-static func _save(src_path: String, mime: String, is_video: bool) -> bool:
+static func _save(src_path: String, mime: String, uri_class_name: String,
+		columns_class_name: String, rel_dir: String) -> bool:
 	if OS.get_name() != "Android":
 		return false
 	var src := FileAccess.open(src_path, FileAccess.READ)
 	if src == null or src.get_length() == 0:
-		push_warning("[demo-gallery] cannot read %s" % src_path)
+		push_warning("[demo-storage] cannot read %s" % src_path)
 		return false
 	var name := src_path.get_file()
 	var activity := XrealAndroidBridge.get_activity()
 	var content_values_class := JavaClassWrapper.wrap("android.content.ContentValues")
-	var media_class := JavaClassWrapper.wrap(
-		"android.provider.MediaStore$Video$Media" if is_video
-		else "android.provider.MediaStore$Images$Media")
-	if activity == null or content_values_class == null or media_class == null:
-		push_warning("[demo-gallery] Android runtime/classes unavailable")
+	var uri_class := JavaClassWrapper.wrap(uri_class_name)
+	var columns_class := JavaClassWrapper.wrap(columns_class_name)
+	if activity == null or content_values_class == null or uri_class == null or columns_class == null:
+		push_warning("[demo-storage] Android runtime/classes unavailable")
 		return false
-	var rel_dir := "Movies/godot-xreal" if is_video else "Pictures/godot-xreal"
 	var resolver = activity.getContentResolver()
-	# Column names are the real MediaStore.MediaColumns constants, read straight off `media_class`:
-	# JavaClassWrapper exposes a Java class's public static fields as properties, and Images$Media
-	# and Video$Media inherit MediaColumns' through ImageColumns and VideoColumns. It exposes only
-	# primitive and String constants, though, so the volume below stays a literal ("external_primary"
-	# is the value of MediaStore.VOLUME_EXTERNAL_PRIMARY) and getContentUri() still resolves the
-	# collection Uri, because a Uri-typed constant like EXTERNAL_CONTENT_URI is out of reach.
+	# Column names are the real MediaStore.MediaColumns constants, read straight off `columns_class`:
+	# JavaClassWrapper exposes a Java class's public static fields as properties, and Images$Media,
+	# Video$Media and Files$FileColumns all inherit MediaColumns'. It exposes only primitive and
+	# String constants, though, so the volume below stays a literal ("external_primary" is the value
+	# of MediaStore.VOLUME_EXTERNAL_PRIMARY) and getContentUri() still resolves the collection Uri,
+	# because a Uri-typed constant like EXTERNAL_CONTENT_URI is out of reach.
 	var values = content_values_class.ContentValues()
-	values.put(media_class.DISPLAY_NAME, name)
-	values.put(media_class.MIME_TYPE, mime)
-	values.put(media_class.RELATIVE_PATH, rel_dir)
-	values.put(media_class.IS_PENDING, 1)
-	var item = resolver.insert(media_class.getContentUri("external_primary"), values)
+	values.put(columns_class.DISPLAY_NAME, name)
+	values.put(columns_class.MIME_TYPE, mime)
+	values.put(columns_class.RELATIVE_PATH, rel_dir)
+	values.put(columns_class.IS_PENDING, 1)
+	var item = resolver.insert(uri_class.getContentUri("external_primary"), values)
 	var reason := _java_reason()
 	if item == null:
-		push_warning("[demo-gallery] MediaStore insert failed for %s%s" % [name, reason])
+		push_warning("[demo-storage] MediaStore insert failed for %s%s" % [name, reason])
 		return false
 	# NB: JavaClassWrapper cannot pass null for String or String[] parameters ("Cannot convert
 	# argument from Nil to String"), so the no-selection update and delete calls below pass "" plus
@@ -87,7 +108,7 @@ static func _save(src_path: String, mime: String, is_video: bool) -> bool:
 	reason = _java_reason()
 	if out == null:
 		resolver.delete(item, no_where, no_args)
-		push_warning("[demo-gallery] openOutputStream failed for %s%s" % [name, reason])
+		push_warning("[demo-storage] openOutputStream failed for %s%s" % [name, reason])
 		return false
 	while src.get_position() < src.get_length():
 		out.write(src.get_buffer(_CHUNK))  # PackedByteArray -> byte[]
@@ -97,7 +118,7 @@ static func _save(src_path: String, mime: String, is_video: bool) -> bool:
 		if reason != "":
 			out.close()
 			resolver.delete(item, no_where, no_args)
-			push_warning("[demo-gallery] write failed for %s%s" % [name, reason])
+			push_warning("[demo-storage] write failed for %s%s" % [name, reason])
 			return false
 	out.flush()
 	reason = _java_reason()
@@ -107,20 +128,20 @@ static func _save(src_path: String, mime: String, is_video: bool) -> bool:
 	src.close()  # closed here, not left to scope: the source is deleted below
 	if reason != "":
 		resolver.delete(item, no_where, no_args)
-		push_warning("[demo-gallery] could not finish writing %s%s" % [name, reason])
+		push_warning("[demo-storage] could not finish writing %s%s" % [name, reason])
 		return false
 	values.clear()
-	values.put(media_class.IS_PENDING, 0)
+	values.put(columns_class.IS_PENDING, 0)
 	# Clear IS_PENDING to publish the item. While it is pending, other apps (the gallery) cannot
 	# see it, and it sits on disk as ".pending-<epoch>-<name>". Verify the row really updated.
 	var updated = resolver.update(item, values, no_where, no_args)
 	reason = _java_reason()
 	if updated == null or int(updated) < 1:
 		resolver.delete(item, no_where, no_args)
-		push_warning("[demo-gallery] IS_PENDING clear failed for %s%s, still hidden in the gallery"
+		push_warning("[demo-storage] IS_PENDING clear failed for %s%s, so it stays hidden from other apps"
 			% [name, reason])
 		return false
-	print("[demo-gallery] saved -> %s/%s" % [rel_dir, name])
+	print("[demo-storage] saved -> %s/%s" % [rel_dir, name])
 	# Published, so the app-private original is now a second copy nobody can see. Dropping it only
 	# here, past every failure return above, is what makes a failed save non-destructive: the
 	# capture stays in user:// and can be retried, which a delete-then-verify would not allow.
@@ -128,6 +149,6 @@ static func _save(src_path: String, mime: String, is_video: bool) -> bool:
 	# still report success rather than let the caller think the capture was lost.
 	var err := DirAccess.remove_absolute(src_path)
 	if err != OK:
-		push_warning("[demo-gallery] saved, but could not remove the original %s (err %d)"
+		push_warning("[demo-storage] saved, but could not remove the original %s (err %d)"
 			% [src_path, err])
 	return true

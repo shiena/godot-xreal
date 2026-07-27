@@ -6,10 +6,20 @@ extends VBoxContainer
 ## that .obj has no way to carry.
 ##
 ## The workflow: run the demo on an Air 2 Ultra, turn Mesh on, scan the room, tap "Save Mesh". That
-## writes one JSON file per tap (see xreal_mesh.gd's save_snapshot for the schema), on Android under
-## the app's own external-storage folder so it comes off the device with a plain adb pull:
+## writes one JSON file per tap (see xreal_mesh.gd's save_snapshot for the schema), and either
+## location comes off the device with a plain adb pull:
+##
+##     adb pull /sdcard/Documents/godot-xreal
+##
+## for the demo, which publishes its snapshots to MediaStore, or
 ##
 ##     adb pull /sdcard/Android/data/<package>/files/MeshSave
+##
+## for the component's own default.
+##
+## The component writes to the app's external-storage folder and stops there; the demo then moves the
+## file into shared storage under Documents, the way it does with captures and recordings, because
+## Documents is what the phone's Files app can browse.
 ##
 ## Point this dock at one of those files and convert. From then on the real scan is in the scene,
 ## and iterating on anything that consumes the mesh no longer costs a redeploy and a rescan.
@@ -29,6 +39,7 @@ var _snapshot_edit: LineEdit
 var _output_edit: LineEdit
 var _res_check: CheckBox
 var _glb_check: CheckBox
+var _canonical_check: CheckBox
 var _status: RichTextLabel
 var _file_dialog: EditorFileDialog
 var _materials := {}  # class id (-1 = unclassified) -> the one material shared by every surface of it
@@ -47,7 +58,8 @@ func _build_ui() -> void:
 	var hint := Label.new()
 	hint.text = "A \"Save Mesh\" JSON from the glasses -> ArrayMesh or .glb."
 	hint.tooltip_text = ("Run the demo on an Air 2 Ultra, turn Mesh on, scan, then tap Save Mesh. "
-		+ "Pull the file with: adb pull /sdcard/Android/data/<package>/files/MeshSave")
+		+ "Pull the file with: adb pull /sdcard/Documents/godot-xreal (the demo), or "
+		+ "adb pull /sdcard/Android/data/<package>/files/MeshSave (the component's own default)")
 	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	# Cap the wrapped height. An autowrap Label reports its *wrapped* height as its minimum, and a
 	# dock tab that has never been the active one was never laid out, leaving it about 17 px wide, so
@@ -100,6 +112,18 @@ func _build_ui() -> void:
 		+ "materials; the ids themselves do not survive the format.")
 	formats.add_child(_glb_check)
 	add_child(formats)
+
+	# On by default, because every consumer of a converted scan outside the glasses, this viewport,
+	# Blender, a collision shape, wants a canonical mesh. Untick it only to reproduce the runtime's
+	# own space, for instance to lay a converted scan over the live overlay in the running app.
+	_canonical_check = CheckBox.new()
+	_canonical_check.text = "Godot space (flip Y)"
+	_canonical_check.button_pressed = true
+	_canonical_check.tooltip_text = ("A snapshot is written in the runtime's mirrored space (the eye "
+		+ "viewports render with an inverted Y), so it opens upside down everywhere else. This "
+		+ "negates Y, which also turns the triangles the right way round. Untick to keep the "
+		+ "runtime's space.")
+	add_child(_canonical_check)
 
 	var convert := Button.new()
 	convert.text = "Convert"
@@ -211,11 +235,12 @@ func _build_mesh(doc: Dictionary) -> ArrayMesh:
 	for entry in doc.get("blocks", []):
 		var block: Dictionary = entry
 		var id: String = block.get("id", "")
-		var verts := _to_vector3_array(block.get("vertices", ""))
-		var indices := _from_base64(block.get("indices", "")).to_int32_array()
+		var flip := _canonical_check.button_pressed
+		var verts := _to_vector3_array(block.get("vertices", ""), flip)
+		var indices := _to_index_array(block.get("indices", ""))
 		if verts.is_empty() or indices.is_empty():
 			continue
-		var normals := _to_vector3_array(block.get("normals", ""))
+		var normals := _to_vector3_array(block.get("normals", ""), flip)
 		if normals.size() != verts.size():
 			normals = PackedVector3Array()
 		var labels := _from_base64(block.get("labels", ""))
@@ -367,16 +392,39 @@ static func _label_name(label: int) -> String:
 static func _from_base64(encoded: String) -> PackedByteArray:
 	return PackedByteArray() if encoded.is_empty() else Marshalls.base64_to_raw(encoded)
 
-## Base64 float32 triples back to points. The snapshot is already in Godot space with Godot winding,
-## so there is nothing to convert here.
-func _to_vector3_array(encoded: String) -> PackedVector3Array:
+## Base64 float32 triples back to points, negating Y when `flip` asks for canonical Godot space.
+##
+## A snapshot is written in the RUNTIME's space, not a canonical Godot one: the port's eye
+## SubViewports render with an inverted Y, and the whole conversion chain compensates by negating Y
+## on top of the canonical Unity(LH) -> Godot(RH) negate-Z (see docs/plans/coordinate-systems-notes.md
+## and mesh_block_to_dict in src/system.rs). That is a mirror, so what looks right through the
+## glasses opens upside down and left-right swapped anywhere else: in this editor's viewport, in a
+## .glb in Blender, or against physics. Negating Y here undoes it, which is device-verified against a
+## real scan: the floor's vertices sit at y = +1.12 and the ceiling's at y = -1.45 as written.
+func _to_vector3_array(encoded: String, flip: bool) -> PackedVector3Array:
 	var floats := _from_base64(encoded).to_float32_array()
 	var out := PackedVector3Array()
 	@warning_ignore("integer_division")
 	out.resize(floats.size() / 3)
+	var sy := -1.0 if flip else 1.0
 	for i in out.size():
-		out[i] = Vector3(floats[i * 3], floats[i * 3 + 1], floats[i * 3 + 2])
+		out[i] = Vector3(floats[i * 3], sy * floats[i * 3 + 1], floats[i * 3 + 2])
 	return out
+
+## Base64 int32 back to triangle indices, verbatim in both spaces.
+##
+## Deliberately NOT reversed alongside the Y flip, which is the trap here: negating a single axis is
+## itself a mirror, and a mirror already swaps a triangle's front and back, so flipping the vertices
+## fixes the winding on its own. Reversing as well would undo that.
+##
+## Measured over a real 74,036-triangle scan, comparing each triangle's counter-clockwise normal
+## against the SDK's own vertex normals: as written, 74,026 triangles face AWAY from their normals,
+## i.e. the snapshot is inside out; flipping Y alone turns all 74,026 the right way round; flipping
+## and reversing puts them back to inside out. The runtime overlay never shows this, because it draws
+## with CULL_DISABLED, but a .glb in Blender is lit from the wrong side. See the note on the
+## reversal in mesh_block_to_dict (src/system.rs), which looks like one correction too many.
+func _to_index_array(encoded: String) -> PackedInt32Array:
+	return _from_base64(encoded).to_int32_array()
 
 ## The classes the conversion produced, for the status line: it says at a glance whether the scan
 ## was classified at all, and which surfaces to look for.

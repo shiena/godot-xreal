@@ -214,17 +214,28 @@ func _snapshot_dir() -> String:
 	var external := _android_external_files_dir()
 	return external.path_join("MeshSave") if not external.is_empty() else "user://mesh_snapshots"
 
-## `Context.getExternalFilesDir(null)`, the app's own directory on external storage, or "" when it
-## is unavailable. It needs no permission, is wiped with the app, and `adb pull` reads it on a
-## stock device, which is exactly what `user://` on Android is not.
+## `Context.getExternalFilesDir`, the app's own directory on external storage, or "" when it is
+## unavailable. It needs no permission, is wiped with the app, and `adb pull` reads it on a stock
+## device, which is exactly what `user://` on Android is not.
+##
+## The argument is "" and NOT the `null` the Android docs ask for, because JavaClassWrapper picks
+## the Java overload from the Variant types it is handed and a nil Variant is compatible with an
+## Object parameter alone, never a String one. `getExternalFilesDir(null)` therefore matches no
+## method at all and returns null without raising, which silently sent every snapshot to the
+## `user://` fallback that no one can pull off a stock device. Empty is equivalent on the Java
+## side, where `new File(dir, "")` resolves straight back to `dir`.
 func _android_external_files_dir() -> String:
 	if OS.get_name() != "Android":
 		return ""
 	var activity := XrealAndroidBridge.get_activity()
 	if activity == null:
 		return ""
-	var dir = activity.getExternalFilesDir(null)
-	return "" if dir == null else str(dir.getAbsolutePath())
+	var dir = activity.getExternalFilesDir("")
+	if dir == null:
+		push_warning("[xreal-mesh] getExternalFilesDir is unavailable, so snapshots fall back to "
+			+ "user://, which is internal storage and out of reach of `adb pull`")
+		return ""
+	return str(dir.getAbsolutePath())
 
 ## Local wall-clock stamp for the file name, "20260726_143012", which sorts chronologically.
 func _timestamp() -> String:

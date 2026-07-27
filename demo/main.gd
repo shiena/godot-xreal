@@ -28,11 +28,11 @@ extends Node3D
 # defensive: a missing or failed extension shows a diagnostic instead of a blank scene.
 const RIG_SCENE := "res://addons/godot_xreal/xreal_rig.tscn"
 
-# Demo-side gallery saver (pure GDScript MediaStore through JavaClassWrapper): the capture
-# components return the saved JPG's path and the demo forwards it into the phone gallery. It
-# stays out of the addon on purpose, because publishing captures to the shared gallery is the
-# app's decision.
-const GalleryHelper := preload("res://demo/gallery_helper.gd")
+# Demo-side shared-storage saver (pure GDScript MediaStore through JavaClassWrapper): the capture,
+# recorder and mesh components return the saved file's path and the demo forwards it into the phone
+# gallery or, for a mesh snapshot, Documents. It stays out of the addon on purpose, because
+# publishing an app's files to shared storage is the app's decision.
+const StorageHelper := preload("res://demo/storage_helper.gd")
 
 # XrealHeadTracker key/action constants, mirrored locally so this script parses even
 # when the GDExtension is absent (desktop editor).
@@ -134,7 +134,7 @@ func _ready() -> void:
 	_stream.active_changed.connect(_on_feature_active.bind("stream"))
 	_recorder.active_changed.connect(_on_feature_active.bind("record"))
 	# A finished recording (the finalized mp4's path) goes into the phone gallery, like the photos.
-	_recorder.finished.connect(func(path: String) -> void: GalleryHelper.save_video(path))
+	_recorder.finished.connect(func(path: String) -> void: StorageHelper.save_video(path))
 	# Surface each feature component's `error` signal at the load site, here the debug Status label
 	# and logcat. A real app might disable a control or show a toast; the point is that the failure
 	# is detectable rather than buried in a warning.
@@ -319,8 +319,15 @@ func _on_tc_mesh_save() -> void:
 ## the user needs in order to `adb pull` it.
 func _on_mesh_snapshot_saved(path: String, block_count: int) -> void:
 	print("[demo] mesh snapshot -> %s (%d blocks)" % [path, block_count])
+	# Publish it to shared storage the way the captures and recordings go, which moves the file out of
+	# the app's own directory and into Documents/godot-xreal, where the Files app and a plain
+	# `adb pull` reach it. A refusal is not fatal: the snapshot is still on disk at `path`, so the
+	# status line reports whichever location actually holds it.
+	var location := path
+	if StorageHelper.save_document(path):
+		location = "Documents/godot-xreal/%s" % path.get_file()
 	if _status:
-		_status.text = "Mesh saved (%d blocks): %s" % [block_count, path]
+		_status.text = "Mesh saved (%d blocks): %s" % [block_count, location]
 
 ## Phone-menu "Record" toggle, driving the XrealVideoRecorder component: with the camera on it
 ## records the camera+AR blend, with the camera off the AR view alone. The resulting state comes
@@ -354,14 +361,14 @@ func _on_tc_image_cycle() -> void:
 func _on_tc_capture() -> void:
 	var path: String = await _photo_capture.capture_photo()
 	if path != "":
-		GalleryHelper.save_image(path)
+		StorageHelper.save_image(path)
 
 ## Phone-menu "Blend Photo" button: capture a blended camera+AR (mixed-reality) photo, into the
 ## phone gallery like the plain photo.
 func _on_tc_blend() -> void:
 	var path: String = await _blend_capture.capture_blended()
 	if path != "":
-		GalleryHelper.save_image(path)
+		StorageHelper.save_image(path)
 
 ## Phone-menu "Exit": quit. The touch controller shows a Yes/No dialog first and emits this only
 ## on Yes. This is the exit for glasses without physical keys (the Air 2 Ultra has only an
