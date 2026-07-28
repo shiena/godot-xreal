@@ -208,9 +208,12 @@ jobs:
           NAME="godot-xreal-${VER}"
           # Drop-in tree: extract over a Godot project, then vendor the XREAL libs (see INSTALL.md).
           mkdir -p "${NAME}/addons"
-          cp godot_xreal.gdextension "${NAME}/"
           cp LICENSE-MIT LICENSE-APACHE "${NAME}/"
           cp -r addons/godot_xreal "${NAME}/addons/"   # aar / tools / bin are gitignored -> not in the checkout
+          # The .gdextension ships inside the addon (its res:// paths are absolute, so Godot does not
+          # care where the file sits). One copy only: a root copy next to it would register the
+          # extension twice.
+          cp godot_xreal.gdextension godot_xreal.gdextension.uid "${NAME}/addons/godot_xreal/"
           # Built libraries into the addon's bin/ (Godot convention; the .gdextension points here).
           bin="${NAME}/addons/godot_xreal/bin"
           mkdir -p "$bin/android" "$bin/windows" "$bin/linux" "$bin/macos"
@@ -228,8 +231,8 @@ jobs:
 
           ## Install
           1. Copy this folder's contents into your Godot **4.7** project root, merging
-             `godot_xreal.gdextension` and `addons/godot_xreal/` (the built libraries are inside
-             `addons/godot_xreal/bin/`, where the .gdextension references them).
+             `addons/godot_xreal/` (`godot_xreal.gdextension` sits inside the addon, and the built
+             libraries it references are in `addons/godot_xreal/bin/`).
           2. Enable the plugin: Project > Project Settings > Plugins > "Godot XREAL".
           3. Vendor the XREAL proprietary libraries (NOT redistributable, so not included) with the
              **XREAL Import** editor dock: pick `com.xreal.xr(.tgz|.tar.gz)`. Pin the SDK to the version
@@ -250,9 +253,9 @@ jobs:
           # the plugin, so it runs as-is. The addon subtree is copied from the package assembled
           # above, so both archives ship byte-identical binaries.
           mkdir -p "${NAME}/scripts" "${NAME}/docs"
-          cp -r "${SRC}/addons" "${NAME}/"
-          cp "${SRC}/godot_xreal.gdextension" "${SRC}/LICENSE-MIT" "${SRC}/LICENSE-APACHE" "${NAME}/"
-          cp godot_xreal.gdextension.uid project.godot export_presets.cfg "${NAME}/"
+          cp -r "${SRC}/addons" "${NAME}/"   # brings godot_xreal.gdextension(+.uid) inside the addon
+          cp "${SRC}/LICENSE-MIT" "${SRC}/LICENSE-APACHE" "${NAME}/"
+          cp project.godot export_presets.cfg "${NAME}/"
           cp -r demo "${NAME}/"
           cp -r scripts/stream_server "${NAME}/scripts/"   # FPV receivers, run on the PC not in Godot
           cp -r docs/api "${NAME}/docs/"                   # generated class reference
