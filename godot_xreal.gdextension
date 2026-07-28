@@ -27,14 +27,15 @@ macos.x86_64 = "res://addons/godot_xreal/bin/macos/libgodot_xreal_dummy.x86_64.d
 
 [dependencies]
 ; The vendored XREAL core libraries that the GDExtension dlopen()s at startup.
-; Populate ./jniLibs/arm64-v8a/ with scripts/vendor_xreal_libs.ps1 before exporting.
+; Populate addons/godot_xreal/jniLibs/arm64-v8a/ with scripts/vendor_xreal_libs.ps1
+; (or the XREAL Import editor dock) before exporting.
 ; The 5 NR libs (libnr_api / libnr_loader / libnr_libusb / libnr_plugin_6dof /
 ; libnr_rgb_camera) are deliberately NOT listed: Gradle merges each vendored .aar's
 ; jni/arm64-v8a/*.so from addons/godot_xreal/android/ into the APK, so listing them
 ; here would just ship duplicates.
 android.arm64 = {
-"res://jniLibs/arm64-v8a/libXREALNativeSessionManager.so" : "",
-"res://jniLibs/arm64-v8a/libXREALXRPlugin.so" : "",
-"res://jniLibs/arm64-v8a/libVulkanSupport.so" : "",
-"res://jniLibs/arm64-v8a/libmedia_codec.so" : ""
+"res://addons/godot_xreal/jniLibs/arm64-v8a/libXREALNativeSessionManager.so" : "",
+"res://addons/godot_xreal/jniLibs/arm64-v8a/libXREALXRPlugin.so" : "",
+"res://addons/godot_xreal/jniLibs/arm64-v8a/libVulkanSupport.so" : "",
+"res://addons/godot_xreal/jniLibs/arm64-v8a/libmedia_codec.so" : ""
 }

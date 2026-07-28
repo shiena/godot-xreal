@@ -130,7 +130,7 @@ This repo already ships the wiring — the steps below are what produced the cur
    cargo ndk -t arm64-v8a build --release   # scripts/build.* copy the .so to addons/godot_xreal/bin/android/
    pwsh scripts/vendor_xreal_libs.ps1 -XrealPackage "<...>/com.xreal.xr/package"
    ```
-   `vendor_xreal_libs.ps1` stages the 4 `.so` into `jniLibs/arm64-v8a/` (the 3 core + the FPV
+   `vendor_xreal_libs.ps1` stages the 4 `.so` into `addons/godot_xreal/jniLibs/arm64-v8a/` (the 3 core + the FPV
    `libmedia_codec.so`) and the engine-agnostic aars (`nr_loader`, `nr_common`, `nr_api`,
    `nr_spatial_anchor`, `nr_image_tracking`, `GlassesDisplayPlugEvent`,
    **`Log-Control`** — they also carry the NR native libs, which Gradle merges into the APK) into
@@ -260,7 +260,7 @@ After doing that, re-apply the project-specific XREAL wiring below.
    - `android/build/libs/debug/arm64-v8a/`
    - `android/build/libs/release/arm64-v8a/`
 
-   Copy the current `jniLibs/arm64-v8a/*.so` into both directories. Required files:
+   Copy the current `addons/godot_xreal/jniLibs/arm64-v8a/*.so` into both directories. Required files:
 
    ```text
    libgodot_xreal.so
@@ -280,8 +280,8 @@ After doing that, re-apply the project-specific XREAL wiring below.
      android\build\libs\debug\arm64-v8a, `
      android\build\libs\release\arm64-v8a | Out-Null
 
-   Copy-Item -Path jniLibs\arm64-v8a\*.so -Destination android\build\libs\debug\arm64-v8a -Force
-   Copy-Item -Path jniLibs\arm64-v8a\*.so -Destination android\build\libs\release\arm64-v8a -Force
+   Copy-Item -Path addons\godot_xreal\jniLibs\arm64-v8a\*.so -Destination android\build\libs\debug\arm64-v8a -Force
+   Copy-Item -Path addons\godot_xreal\jniLibs\arm64-v8a\*.so -Destination android\build\libs\release\arm64-v8a -Force
    ```
 
 6. Restore XREAL/NR Android AAR dependencies into the template.

@@ -20,7 +20,7 @@ Run the vendoring for the new package — pick ONE:
 - `./scripts/vendor_xreal_libs.sh <pkg-root-or-com.xreal.xr.tar.gz>` (mac/Linux)
 - or the in-editor **XREAL vendor dock** (`addons/godot_xreal/editor/vendor_import_dock.gd`).
 
-This stages (all git-ignored): 3 core `.so` + `libmedia_codec.so` → `jniLibs/arm64-v8a/`; 7 `.aar` +
+This stages (all git-ignored): 3 core `.so` + `libmedia_codec.so` → `addons/godot_xreal/jniLibs/arm64-v8a/`; 7 `.aar` +
 `nr_plugins.json` → `addons/godot_xreal/android/`; `trackableImageTools` → `addons/godot_xreal/tools/`.
 
 - The `.so` and the Rust offsets (step 2) are a **pair** — never ship a new `.so` against stale
@@ -90,7 +90,7 @@ In addition to 1–7:
 
 | Artifact | Where it lands | Drifts on SDK update because… |
 |---|---|---|
-| 3 core `.so` + `libmedia_codec.so` | `jniLibs/arm64-v8a/` | recompiled → offsets/symbols move (steps 2, 4) |
+| 3 core `.so` + `libmedia_codec.so` | `addons/godot_xreal/jniLibs/arm64-v8a/` | recompiled → offsets/symbols move (steps 2, 4) |
 | 7 `.aar` | `addons/godot_xreal/android/` | internal classes / carried `.so` change (steps 5, 6) |
 | `nr_plugins.json` | `addons/godot_xreal/android/` | opaque `"versions"` hash + backend path (step 1) |
 | `trackableImageTools` | `addons/godot_xreal/tools/` | host tool; CLI flags could change |

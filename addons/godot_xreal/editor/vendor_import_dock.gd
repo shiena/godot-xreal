@@ -5,7 +5,7 @@ extends VBoxContainer
 ## already-extracted package root, and it extracts with the system `tar` and copies the .so, .aar
 ## and host tool to the gitignored destinations the Android export needs:
 ##
-##   3 core .so + libmedia_codec.so -> jniLibs/arm64-v8a/        (dlopen'd, packed via .gdextension)
+##   3 core .so + libmedia_codec.so -> addons/godot_xreal/jniLibs/arm64-v8a/ (dlopen'd, packed via .gdextension)
 ##   7 .aar                         -> addons/godot_xreal/android/ (shipped by export_plugin.gd)
 ##   nr_plugins.json                -> addons/godot_xreal/android/ (NR perception manifest, to assets/)
 ##   trackableImageTools            -> addons/godot_xreal/tools/   (host image-DB build tool)
@@ -23,7 +23,8 @@ extends VBoxContainer
 # manifest.
 const MIN_VERSION := "3.1.0"
 
-# The arm64-v8a core .so in Runtime/Plugins/Android/arm64-v8a/, going to jniLibs/arm64-v8a/.
+# The arm64-v8a core .so in Runtime/Plugins/Android/arm64-v8a/, going to
+# addons/godot_xreal/jniLibs/arm64-v8a/.
 const CORE_SO := ["libXREALNativeSessionManager.so", "libXREALXRPlugin.so", "libVulkanSupport.so"]
 # The FPV HW encoder lives under the Camera Features plugin path.
 const MEDIA_CODEC_REL := "Runtime/Scripts/Android/Camera Features/Plugins/Android/arm64/libmedia_codec.so"
@@ -145,7 +146,7 @@ func _import(path: String) -> void:
 		return
 
 	# Destinations (all gitignored).
-	var jni := ProjectSettings.globalize_path("res://jniLibs/arm64-v8a")
+	var jni := ProjectSettings.globalize_path("res://addons/godot_xreal/jniLibs/arm64-v8a")
 	var addon := ProjectSettings.globalize_path("res://addons/godot_xreal/android")
 	var tools := ProjectSettings.globalize_path("res://addons/godot_xreal/tools")
 	for d in [jni, addon, tools]:
@@ -153,7 +154,7 @@ func _import(path: String) -> void:
 
 	var missing := PackedStringArray()
 
-	# 1) the core .so and libmedia_codec.so, going to jniLibs/arm64-v8a
+	# 1) the core .so and libmedia_codec.so, going to addons/godot_xreal/jniLibs/arm64-v8a
 	for so in CORE_SO:
 		_copy(src_abi.path_join(so), jni.path_join(so), "so   " + so, log_lines, missing)
 	_copy(pkg.path_join(MEDIA_CODEC_REL), jni.path_join("libmedia_codec.so"), "so   libmedia_codec.so", log_lines, missing)

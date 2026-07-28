@@ -3,8 +3,8 @@
 # package, in one go (all destinations are git-ignored). POSIX twin of vendor_xreal_libs.ps1,
 # used by build.sh on non-Windows platforms:
 #
-#   - 3 core .so       -> jniLibs/arm64-v8a/           (copied; dlopen'd by the GDExtension,
-#                                                        packed via godot_xreal.gdextension)
+#   - 3 core .so       -> addons/godot_xreal/jniLibs/arm64-v8a/  (copied; dlopen'd by the
+#                                                        GDExtension, packed via godot_xreal.gdextension)
 #   - 7 .aar           -> addons/godot_xreal/android/  (shipped into the APK by export_plugin.gd:
 #                                                        Java/JNI layer + manifest merge; Gradle
 #                                                        also merges each .aar's jni/arm64-v8a/*.so,
@@ -92,11 +92,12 @@ if [ "$ver_core" != "$MIN_VERSION" ] && \
 fi
 echo "com.xreal.xr version $pkg_ver (>= $MIN_VERSION): ok"
 
-jni_dir="$repo_root/jniLibs/arm64-v8a"
+jni_dir="$repo_root/addons/godot_xreal/jniLibs/arm64-v8a"
 addon_dir="$repo_root/addons/godot_xreal/android"
 mkdir -p "$jni_dir" "$addon_dir"
 
-# --- 1) 3 core .so -> jniLibs/arm64-v8a (dlopen'd; listed in godot_xreal.gdextension [dependencies])
+# --- 1) 3 core .so -> addons/godot_xreal/jniLibs/arm64-v8a (dlopen'd; listed in
+#        godot_xreal.gdextension [dependencies])
 core_libs=(libXREALNativeSessionManager.so libXREALXRPlugin.so libVulkanSupport.so)
 for lib in "${core_libs[@]}"; do
     if [ ! -f "$src_abi/$lib" ]; then warn "Missing in package: $lib"; continue; fi
@@ -168,7 +169,7 @@ fi
 # --- Final verification: everything the export needs (build.ps1/build.sh check the same lists).
 missing=()
 for lib in "${core_libs[@]}"; do
-    [ -f "$jni_dir/$lib" ] || missing+=("jniLibs/arm64-v8a/$lib")
+    [ -f "$jni_dir/$lib" ] || missing+=("addons/godot_xreal/jniLibs/arm64-v8a/$lib")
 done
 for f in "${aars[@]}"; do
     [ -f "$addon_dir/$f" ] || missing+=("addons/godot_xreal/android/$f")
@@ -181,5 +182,5 @@ if [ ${#missing[@]} -gt 0 ]; then
     printf '  - %s\n' "${missing[@]}"
     exit 1
 fi
-echo -e "\033[32mDone: 3 core .so -> jniLibs/arm64-v8a, 7 .aar + nr_plugins.json -> addons/godot_xreal/android, trackableImageTools -> addons/godot_xreal/tools.\033[0m"
+echo -e "\033[32mDone: 3 core .so -> addons/godot_xreal/jniLibs/arm64-v8a, 7 .aar + nr_plugins.json -> addons/godot_xreal/android, trackableImageTools -> addons/godot_xreal/tools.\033[0m"
 echo "(NR .so ship via the .aar; nractivitylife*.aar deliberately excluded: Unity-only launcher.)"

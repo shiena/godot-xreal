@@ -9,7 +9,6 @@
 demo/addons/
 # Godot Android build template (top-level only; NOT addons/godot_xreal/android/).
 /android/
-jniLibs
 
 # Build artifacts (incl. the desktop dummy stubs built into dummy/ by
 # scripts/build_dummy_libs.ps1 / .sh: build locally, don't commit)
@@ -36,8 +35,12 @@ jniLibs
 Thumbs.db
 
 
+# XREAL vendored core .so (dlopen'd; listed in godot_xreal.gdextension [dependencies]),
+# staged by scripts/vendor_xreal_libs.* / the XREAL Import dock. SDK-derived, not redistributable.
+/addons/godot_xreal/jniLibs/
+
 # XREAL addon vendored binaries (AARs), vendored locally
-# (see docs/plans/android-export-plugin-migration.md), like jniLibs/*.so.
+# (see docs/plans/android-export-plugin-migration.md), like the jniLibs .so above.
 /addons/godot_xreal/android/*.aar
 
 # XREAL NR perception manifest: SDK-derived, and it may change across SDK versions, so it is vendored
