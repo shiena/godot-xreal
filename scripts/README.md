@@ -12,7 +12,7 @@ workarounds that bite every time: the Godot export hang, and the force-stop-befo
 requirement (relaunching a not-fully-dead instance leaves the glasses black).
 
 `vendor_xreal_libs.ps1` / `vendor_xreal_libs.sh` is the one-time prerequisite. It stages every
-XREAL runtime piece (4 `.so` → `jniLibs/arm64-v8a/`, 7 `.aar` → `addons/godot_xreal/android/`,
+XREAL runtime piece (4 `.so` → `addons/godot_xreal/jniLibs/arm64-v8a/`, 7 `.aar` → `addons/godot_xreal/android/`,
 with the aars also carrying the NR native libs into the APK) out of a local copy of the SDK
 package, either the extracted `package/` dir or the `com.xreal.xr.tar.gz` archive itself, which it
 extracts to a temp dir. The build scripts wrap it as `-Extract` / `--extract`. The export's gradle
@@ -55,7 +55,7 @@ support `-Check` / `--check` to verify that the committed output is in sync:
 - **Godot 4.7-stable** (console binary): it must match the templates, and 4.8.dev fails with a
   version mismatch. The scripts call `godot` by default; override with `-Godot` / `$env:GODOT` (PS)
   or `GODOT=…` (sh) if it isn't on PATH under that name.
-- **XREAL runtime pieces vendored**: the 4 `.so` in `jniLibs/arm64-v8a/` plus the 7 `.aar`
+- **XREAL runtime pieces vendored**: the 4 `.so` in `addons/godot_xreal/jniLibs/arm64-v8a/` plus the 7 `.aar`
   in `addons/godot_xreal/android/`, none of which are in the repo.
   `vendor_xreal_libs.ps1 -XrealPackage <…>/package` (or `-XrealPackage <…>/com.xreal.xr.tar.gz`,
   or the build scripts' `-Extract` / `--extract <tar.gz>`) stages all of them from a local copy of

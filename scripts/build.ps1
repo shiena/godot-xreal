@@ -61,7 +61,7 @@ function Adbx { if ($Device) { & $Adb -s $Device @args } else { & $Adb @args } }
 
 # The XREAL runtime pieces the APK must bundle. They are NOT in this repo, so vendor them from
 # the XREAL SDK for Unity; see the README or the guide below:
-#   - 3 core .so in jniLibs/arm64-v8a (packed via godot_xreal.gdextension [dependencies])
+#   - 3 core .so in addons/godot_xreal/jniLibs/arm64-v8a (packed via godot_xreal.gdextension [dependencies])
 #   - 5 .aar in addons/godot_xreal/android (shipped into the APK by the addon's export_plugin.gd:
 #     Java/JNI layer + manifest merge; the aars also carry the NR native libs, which Gradle
 #     merges into the APK)
@@ -77,10 +77,10 @@ $RequiredAddonFiles = @(
     'GlassesDisplayPlugEvent-2.4.2.aar', 'Log-Control-1.2.aar', 'nr_plugins.json'
 )
 function Require-VendoredLibs {
-    $jniDir = Join-Path $repoRoot 'jniLibs\arm64-v8a'
+    $jniDir = Join-Path $repoRoot 'addons\godot_xreal\jniLibs\arm64-v8a'
     $addonDir = Join-Path $repoRoot 'addons\godot_xreal\android'
     $missing = @($RequiredLibs | Where-Object { -not (Test-Path (Join-Path $jniDir $_)) } |
-            ForEach-Object { "jniLibs/arm64-v8a/$_" }) +
+            ForEach-Object { "addons/godot_xreal/jniLibs/arm64-v8a/$_" }) +
         @($RequiredAddonFiles | Where-Object { -not (Test-Path (Join-Path $addonDir $_)) } |
             ForEach-Object { "addons/godot_xreal/android/$_" })
     if (-not $missing) { return }
@@ -93,7 +93,7 @@ Vendor them once from a local copy of the package (nothing is downloaded):
   1. Obtain the XREAL SDK for Unity package `com.xreal.xr.tar.gz` and extract it (-> a `package/` dir).
   2. Run  pwsh scripts/vendor_xreal_libs.ps1 -XrealPackage <...>\package
      which stages everything:
-       - 3 core .so -> jniLibs/arm64-v8a/      (dlopen'd by the GDExtension)
+       - 3 core .so -> addons/godot_xreal/jniLibs/arm64-v8a/ (dlopen'd by the GDExtension)
        - 5 .aar -> addons/godot_xreal/android/ (shipped by the addon's export plugin; they also
          carry the NR native libs, which Gradle merges into the APK)
      (The XrealBridge Java sources are compiled by the export's gradle build, so no JDK step here.)

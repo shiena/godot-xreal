@@ -88,7 +88,7 @@ tgz `com.xreal.xr.tar.gz` で提供され、動作確認済みのバージョン
 vendoring が扱うのは XREAL 純正ライブラリだけです。
 アドオン本体の `libgodot_xreal.so` は従来どおり `cargo ndk` ビルド（またはプリビルト）から入ります。
 
-`.so` 4 個は `jniLibs/arm64-v8a/` へ置きます。
+`.so` 4 個は `addons/godot_xreal/jniLibs/arm64-v8a/` へ置きます。
 `godot_xreal.gdextension` の `[dependencies]` 経由で APK に同梱され、起動時に `dlopen` されます。
 先頭3つのコピー元は `Runtime/Plugins/Android/arm64-v8a/` です。
 
@@ -297,7 +297,7 @@ src/                     Rust GDExtension 本体
 demo/                    AR デモ（main.tscn + 各 manager: hand/anchor/image/mesh/stream/
                          capture/blend + スマホタッチコントローラ）
 dummy/                   デスクトップ GDExtension スタブのソース（gdext_dummy.c）= ビルド先は addons/godot_xreal/bin/
-jniLibs/                 vendoring した XREAL コア .so（git 管理外）
+addons/godot_xreal/jniLibs/  vendoring した XREAL コア .so（git 管理外）
 scripts/                 build + vendor_xreal_libs + build_dummy_libs + build_image_db（.ps1/.sh）
   stream_server/         FPV 受信サーバー: fpv_server.py（ブラウザ）+ receive.ps1/.sh（ffplay/録画）
 .github/workflows/       CI（fmt/clippy/test/build）+ Release（プリビルトアドオン）

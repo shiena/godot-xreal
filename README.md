@@ -96,7 +96,7 @@ files in the same git-ignored destinations (see the tables below):
 Vendoring handles only XREAL's proprietary libs; the addon's own `libgodot_xreal.so` still comes from
 the `cargo ndk` build or a prebuilt release. What lands where:
 
-The four `.so` files go to `jniLibs/arm64-v8a/`. `godot_xreal.gdextension` packs them next to the
+The four `.so` files go to `addons/godot_xreal/jniLibs/arm64-v8a/`. `godot_xreal.gdextension` packs them next to the
 GDExtension through its `[dependencies]` block, and the app `dlopen`s them at startup. The first three
 come from `Runtime/Plugins/Android/arm64-v8a/`:
 
@@ -343,7 +343,7 @@ src/                     the Rust GDExtension
 demo/                    AR demo (main.tscn + managers: hand/anchor/image/mesh/stream/
                          capture/blend + phone touch controller)
 dummy/                   desktop GDExtension stub source (gdext_dummy.c) — built into addons/godot_xreal/bin/
-jniLibs/                 vendored XREAL core .so (git-ignored)
+addons/godot_xreal/jniLibs/  vendored XREAL core .so (git-ignored)
 scripts/                 build + vendor_xreal_libs + build_dummy_libs + build_image_db (.ps1/.sh)
   stream_server/         FPV receivers: fpv_server.py (browser) + receive.ps1/.sh (ffplay/record)
 .github/workflows/       CI (fmt/clippy/test/build) + Release (prebuilt addon)

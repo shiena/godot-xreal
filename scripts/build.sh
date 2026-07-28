@@ -69,7 +69,7 @@ adbx() { if [ -n "$DEVICE" ]; then "$ADB" -s "$DEVICE" "$@"; else "$ADB" "$@"; f
 
 # The XREAL runtime pieces the APK must bundle. They are NOT in this repo, so vendor them from
 # the XREAL SDK for Unity; see the README or the guide printed below:
-#   - 3 core .so in jniLibs/arm64-v8a (packed via godot_xreal.gdextension [dependencies])
+#   - 3 core .so in addons/godot_xreal/jniLibs/arm64-v8a (packed via godot_xreal.gdextension [dependencies])
 #   - 5 .aar in addons/godot_xreal/android (shipped into the APK by the addon's export_plugin.gd:
 #     Java/JNI layer + manifest merge; the aars also carry the NR native libs, which Gradle
 #     merges into the APK)
@@ -81,9 +81,9 @@ REQUIRED_LIBS=(libXREALNativeSessionManager.so libXREALXRPlugin.so libVulkanSupp
 REQUIRED_ADDON_FILES=(nr_loader.aar nr_api.aar nr_common.aar nr_spatial_anchor.aar nr_image_tracking.aar \
                       GlassesDisplayPlugEvent-2.4.2.aar Log-Control-1.2.aar nr_plugins.json)
 require_vendored_libs() {
-    local jni_dir="$repo_root/jniLibs/arm64-v8a" addon_dir="$repo_root/addons/godot_xreal/android" missing=()
+    local jni_dir="$repo_root/addons/godot_xreal/jniLibs/arm64-v8a" addon_dir="$repo_root/addons/godot_xreal/android" missing=()
     local f
-    for f in "${REQUIRED_LIBS[@]}"; do [ -f "$jni_dir/$f" ] || missing+=("jniLibs/arm64-v8a/$f"); done
+    for f in "${REQUIRED_LIBS[@]}"; do [ -f "$jni_dir/$f" ] || missing+=("addons/godot_xreal/jniLibs/arm64-v8a/$f"); done
     for f in "${REQUIRED_ADDON_FILES[@]}"; do [ -f "$addon_dir/$f" ] || missing+=("addons/godot_xreal/android/$f"); done
     [ ${#missing[@]} -eq 0 ] && return 0
     {
@@ -96,7 +96,7 @@ Vendor them once from a local copy of the package (nothing is downloaded):
   1. Obtain the XREAL SDK for Unity package `com.xreal.xr.tar.gz` and extract it (-> a `package/` dir).
   2. Run  scripts/vendor_xreal_libs.sh <...>/package
      (on Windows: pwsh scripts/vendor_xreal_libs.ps1 -XrealPackage <...>) which stages everything:
-       - 3 core .so -> jniLibs/arm64-v8a/      (dlopen'd by the GDExtension)
+       - 3 core .so -> addons/godot_xreal/jniLibs/arm64-v8a/ (dlopen'd by the GDExtension)
        - 5 .aar -> addons/godot_xreal/android/ (shipped by the addon's export plugin; they also
          carry the NR native libs, which Gradle merges into the APK)
      (The XrealBridge Java sources are compiled by the export's gradle build, so no JDK step here.)

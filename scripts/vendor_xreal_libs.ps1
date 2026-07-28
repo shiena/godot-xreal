@@ -4,8 +4,8 @@
     Vendor the XREAL runtime libraries the Android export needs out of the Unity `com.xreal.xr`
     package, in one go (all destinations are git-ignored):
 
-      - 3 core .so       -> jniLibs/arm64-v8a/           (copied; dlopen'd by the GDExtension,
-                                                          packed via godot_xreal.gdextension)
+      - 3 core .so       -> addons/godot_xreal/jniLibs/arm64-v8a/  (copied; dlopen'd by the
+                                                          GDExtension, packed via godot_xreal.gdextension)
       - 7 .aar           -> addons/godot_xreal/android/  (shipped into the APK by export_plugin.gd:
                                                           Java/JNI layer + manifest merge; Gradle
                                                           also merges each .aar's jni/arm64-v8a/*.so
@@ -99,11 +99,12 @@ try {
     }
     Write-Host "com.xreal.xr version $pkgVer (>= $minVersion) - ok"
 
-    $jniDir = Join-Path $repo 'jniLibs/arm64-v8a'
+    $jniDir = Join-Path $repo 'addons/godot_xreal/jniLibs/arm64-v8a'
     $addonDir = Join-Path $repo 'addons/godot_xreal/android'
     New-Item -ItemType Directory -Force -Path $jniDir, $addonDir | Out-Null
 
-    # --- 1) 3 core .so -> jniLibs/arm64-v8a (dlopen'd; listed in godot_xreal.gdextension [dependencies])
+    # --- 1) 3 core .so -> addons/godot_xreal/jniLibs/arm64-v8a (dlopen'd; listed in
+    #        godot_xreal.gdextension [dependencies])
     $coreLibs = @(
         'libXREALNativeSessionManager.so',
         'libXREALXRPlugin.so',
@@ -182,7 +183,7 @@ try {
     # --- Final verification: everything the export needs (build.ps1/build.sh check the same lists).
     $missing = @()
     foreach ($lib in $coreLibs) {
-        if (-not (Test-Path (Join-Path $jniDir $lib))) { $missing += "jniLibs/arm64-v8a/$lib" }
+        if (-not (Test-Path (Join-Path $jniDir $lib))) { $missing += "addons/godot_xreal/jniLibs/arm64-v8a/$lib" }
     }
     foreach ($f in $aars) {
         if (-not (Test-Path (Join-Path $addonDir $f))) { $missing += "addons/godot_xreal/android/$f" }
@@ -195,7 +196,7 @@ try {
         $missing | ForEach-Object { Write-Host "  - $_" }
         exit 1
     }
-    Write-Host "Done: 3 core .so -> jniLibs/arm64-v8a, 7 .aar + nr_plugins.json -> addons/godot_xreal/android, trackableImageTools -> addons/godot_xreal/tools." -ForegroundColor Green
+    Write-Host "Done: 3 core .so -> addons/godot_xreal/jniLibs/arm64-v8a, 7 .aar + nr_plugins.json -> addons/godot_xreal/android, trackableImageTools -> addons/godot_xreal/tools." -ForegroundColor Green
     Write-Host "(NR .so ship via the .aar; nractivitylife*.aar deliberately excluded: Unity-only launcher.)"
 }
 finally {
