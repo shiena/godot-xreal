@@ -33,10 +33,10 @@ static const StubSignal _s_XrealAR[] = {
 };
 static const StubMethod _m_XrealCameraFeed[] = {
   {"poll_frame",1,"",0,0},
-  {"get_y_texture",24,"ImageTexture",0,0},
+  {"get_y_texture",24,"Texture2D",0,0},
   {"get_y_data",29,"",0,0},
   {"get_y_data_size",24,"Vector2i",0,0},
-  {"get_cbcr_texture",24,"ImageTexture",0,0},
+  {"get_cbcr_texture",24,"Texture2D",0,0},
 };
 static const StubMethod _m_XrealHeadTracker[] = {
   {"is_tracking",1,"",0,0},
