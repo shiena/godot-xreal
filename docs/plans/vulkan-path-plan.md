@@ -377,5 +377,11 @@ Y/CbCr textures. The `cpu_luma_step` CPU path is unaffected throughout.
 ## Ship shape
 
 One Pro keeps gl_compatibility as the shipping default; Vulkan is a second export preset
-(`rendering_method` is a project-level setting) until stage 2 passes color verification and soak
-(the historical crash bar: frame #1500+ / 25 s+ stable, per `multiview-investigation.md`).
+("Android Vulkan", package `com.example.godotxreal.vulkan`, coexisting with the GL app -
+`rendering_method` is a project-level setting baked per preset at export time). All four stages
+are device-verified (2026-07-31): glasses rendering at 58-60 FPS with colors matching the GL
+build, the camera on the vk_rd path, and FPV streaming and mp4 recording through the opaque-fd
+encoder bundles with the periodic-IDR workaround. The glasses path stays behind
+`debug.xreal.vulkan_glasses` (default OFF) until the 60 min x 3 thermal sign-off soak passes; the
+crash bar (frame #1500+ / 25 s+) is long cleared. Flipping that default ON, after the soak, is
+what makes the Vulkan preset a first-class shipping option alongside the GL default.
