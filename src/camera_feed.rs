@@ -554,7 +554,13 @@ impl XrealCameraFeed {
             y_buf.copy_from_slice(&p.y[..expected]);
             snapshot_us = t.elapsed().as_micros() as u64;
             let t = Instant::now();
-            crate::native::interleave_cbcr(p.u, p.v, p.chroma_width, p.chroma_height, &mut cbcr);
+            crate::native::interleave_cbcr_rgba(
+                p.u,
+                p.v,
+                p.chroma_width,
+                p.chroma_height,
+                &mut cbcr,
+            );
             interleave_us = t.elapsed().as_micros() as u64;
             if luma_step > 0 {
                 let t = Instant::now();
@@ -900,7 +906,7 @@ fn vk_cam_render_upload(shared: &VkCamShared) {
                     rd.texture_create(&fmt, &RdTextureView::new_gd())
                 };
                 let y = make(&mut rd, DataFormat::R8_UNORM, job.yw, job.yh);
-                let c = make(&mut rd, DataFormat::R8G8_UNORM, job.cw, job.ch);
+                let c = make(&mut rd, DataFormat::R8G8B8A8_UNORM, job.cw, job.ch);
                 if !y.is_valid() || !c.is_valid() {
                     godot_warn!(
                         "[xreal] vk camera: RD texture creation failed (y={y:?} cbcr={c:?}); \

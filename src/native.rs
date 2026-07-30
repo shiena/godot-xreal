@@ -470,6 +470,23 @@ pub fn interleave_cbcr(u: &[u8], v: &[u8], width: i32, height: i32, out: &mut Ve
     }
 }
 
+/// OPT2 (RGBA8 experiment): pack (Cb, Cr, 0, 255) per texel, so a `Texture2DRD` wrapping an
+/// `R8G8B8A8_UNORM` texture (which maps identity, unlike `R8G8_UNORM -> LA8`) exposes `.rg` as
+/// (Cb, Cr) with no shader change. Costs 4 bytes/texel instead of 2 (double the chroma upload).
+pub fn interleave_cbcr_rgba(u: &[u8], v: &[u8], width: i32, height: i32, out: &mut Vec<u8>) {
+    let n = (width.max(0) as usize) * (height.max(0) as usize);
+    let m = n.min(u.len()).min(v.len());
+    if out.len() != m * 4 {
+        out.resize(m * 4, 0);
+    }
+    for (dst, (&cb, &cr)) in out.chunks_exact_mut(4).zip(u[..m].iter().zip(&v[..m])) {
+        dst[0] = cb; // Cb = U -> .r
+        dst[1] = cr; // Cr = V -> .g
+        dst[2] = 0;
+        dst[3] = 255;
+    }
+}
+
 /// Per-stage cost of one grab, in microseconds, so the SDK's own calls can be told apart from the
 /// client-side work around them. `XrealCameraFeed` reports it when `debug.xreal.camera_timing` is
 /// set.
