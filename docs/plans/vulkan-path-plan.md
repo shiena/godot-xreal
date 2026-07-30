@@ -385,3 +385,21 @@ encoder bundles with the periodic-IDR workaround. The glasses path stays behind
 `debug.xreal.vulkan_glasses` (default OFF) until the 60 min x 3 thermal sign-off soak passes; the
 crash bar (frame #1500+ / 25 s+) is long cleared. Flipping that default ON, after the soak, is
 what makes the Vulkan preset a first-class shipping option alongside the GL default.
+
+## Camera colour on the Vulkan renderer (2026-07-31)
+
+The RGB camera panel came out bright and desaturated under Vulkan (an unlit dark-blue monitor
+read as light grey (222,223,222) vs the GL build's (67,63,78); AR objects were byte-identical
+between renderers, e.g. the cyan box (152,237,255) on both). Root cause, found in Godot's own
+sources: the Compatibility renderer's `drivers/gles3/shaders/scene.glsl` applies an extra
+`albedo = srgb_to_linear(albedo)` ("Convert colors to linear", ~line 2398) to the shader-set
+ALBEDO, executed even for unshaded materials; the Forward Mobile / Clustered RD shaders do NOT
+(`srgb_to_linear` count 0). `xreal_ycbcr.gdshader`'s single `srgb_to_linear` was calibrated
+against Compatibility's double transform, so on Forward Mobile it linearizes once too few. AR
+StandardMaterials are unaffected because Godot manages their albedo sRGB->linear itself.
+
+Fix: a `double_srgb` uniform on the YCbCr shaders; the consumers set it from
+`RenderingServer.get_rendering_device() != null` (non-null only on the RD/Vulkan renderers), so
+Vulkan linearizes twice to reproduce Compatibility's result and the GL path is unchanged.
+Verifying on the camera preview first, then rolling out to ycbcr_2d / blend_2d and their setters
+(photo/blend/stream/recorder).
