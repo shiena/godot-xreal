@@ -1,6 +1,8 @@
 # Vulkan rendering path — staged plan for a re-attempt
 
-Status: **stage 0 = GO, stage 1a = first data point OK** (device-verified 2026-07-30 on Beam Pro).
+Status: **stage 0 = GO, stage 1 (phone screen) = done bar three adopted follow-ups**
+(device-verified 2026-07-30 on Beam Pro). Stages: phone screen -> glasses rendering -> camera
+rendering -> FPV stream, one commit each, each design cross-checked against a second opinion.
 
 - **Stage 0 PASSED**: `src/ahb_probe.rs` (one-shot, render thread, `debug.xreal.ahb_probe 0` to
   skip). RGBA8 1968x1134 with `GPU_COLOR_OUTPUT|GPU_SAMPLED_IMAGE`: isSupported=1, allocate ok
@@ -17,8 +19,81 @@ Status: **stage 0 = GO, stage 1a = first data point OK** (device-verified 2026-0
   overrides (`.some_feature` suffix) never reach the Android renderer choice. The baked `_cl_`
   command line is the per-preset mechanism that works (the 4.7 boot log then reads
   "renderer: mobile (Default)"; the two APKs' assets differ only in `_cl_`, verified by unzip).
-- **Stage 1a first data point**: the demo boots and renders correctly under Vulkan Mobile on the
-  Beam Pro (Adreno 710, `renderingDevice: vulkan`, no crash at idle; soak + workload still to do).
+- **Stage 1 (phone screen) DONE**: the demo boots and renders correctly under Vulkan Mobile on the
+  Beam Pro (Adreno 710, `renderingDevice: vulkan`). 10 min soak: no crash, no validation error,
+  head tracking live throughout, clean exit through the app's Exit button. **Perf baseline for
+  stages 2-4: 60 FPS** (406 samples at 60, 102 at 59, 9 at 61, 4 at 58; `--print-fps` is in the
+  Vulkan preset's command line). `video_encoder::start()` now refuses to run under Vulkan, so the
+  Stream and Record toggles fail cleanly through their existing error paths instead of feeding the
+  encoder a VkImage handle (device-verified: warning logged, demo shows "recorder start failed",
+  toggle flips back, app survives).
+- **GL touch-point audit (mine + a second opinion), stage 1 outcome**: the only genuinely unsafe
+  pattern under Vulkan is *interpreting Godot's native handle as a GL texture name*. Photo and
+  blend capture use Godot's own viewport readback (`get_texture().get_image()`), not GL FFI, so
+  they are renderer-agnostic. `camera_feed`'s PBO fast path already gates on
+  `gl::has_current_context()`, false under Vulkan, and falls back to the `Image` path.
+  `stream_push_frame` cannot reach GL because the encoder can never be active. So the single
+  `start()` gate is sufficient; an extra gate there would be dead code.
+
+### Stage 1 second-opinion review (two designs compared, 2026-07-30)
+
+A second architect audited the same code independently. Where it beat my design, adopted:
+
+- **ADOPTED - `camera_feed`'s direct path must also gate on `renderer_is_gl()`**, not on
+  `has_current_context()` alone. My reasoning ("false under Vulkan, so the fallback already
+  happens") holds only until stage 2 creates a private EGL context on the render thread: a context
+  that happens to be current would let the direct path treat a `VkImage` as a GL name. Check the
+  renderer FIRST, so Vulkan never touches the GL/EGL loader.
+- **ADOPTED - a self-defence gate at the top of `run_render_thread_tick()`.** `node.rs` is the only
+  caller today; the gate keeps a future second caller out of `CreateTexture` / blit / submit. Its
+  corollary is right too: do NOT push `renderer_is_gl()` down into the `gl.rs` primitives, because
+  stage 2 will drive those same helpers from a private EGL context while Godot runs Vulkan. Gate
+  the entry point, not the toolbox.
+- **ADOPTED - expose a capability (`XrealSystem.is_render_texture_encoder_supported()`) and refuse
+  in the GDScript components before pairing / permissions.** Backed by what the device actually
+  did: tapping Record under Vulkan popped the RECORD_AUDIO permission dialog and only then failed.
+  Rust keeps the hard safety gate; GDScript avoids the pointless side effects and reports a
+  specific reason instead of a generic "start failed". Stage 4 then flips one function.
+
+Rejected, with reasons:
+
+- **`submit_frame`/`stream_push_frame` returning a new `-2` "unsupported renderer" code.** The
+  encoder cannot be active while `start()` refuses, so `submit_frame` already returns `-1` without
+  touching GL: this adds an API contract for a state that cannot occur. Stage 4 revisits `start()`
+  and `submit_frame()` together anyway.
+- **A `renderer_is_gl()` gate inside `ahb_probe::run_once()`.** The probe is deliberately a
+  GL-mechanism probe, and stage 2 may want to run it (or its successor) under Vulkan from the
+  private EGL context. Gating it internally would block that. The caller in `node.rs` gates it.
+- **A verification-only `xreal/demo_phone_3d_preview` setting plus a fixed 3D workload.** Worth it
+  if stage 1 were the end of the line, but stage 2 puts the 3D world on screen through the eye
+  SubViewports by construction, which is the same workload without a demo-side flag to carry.
+- **60 min x 3 sessions before moving on.** Kept as the bar for the stage-2 sign-off, not stage 1:
+  10 min clean at 60 FPS is enough to know the phone path is not the risk, and the thermal-soak
+  budget is better spent once eye rendering is in.
+
+## Next steps (resume here)
+
+1. **Stage 1 leftovers (adopted above, not yet implemented)**: the `camera_feed` renderer gate, the
+   `run_render_thread_tick()` self-defence gate, and the capability API + GDScript UX refusal in
+   `xreal_stream.gd` / `xreal_video_recorder.gd` / `demo/main.gd::_apply_capabilities()`.
+2. **Stage 2 - glasses rendering.** Consult a second opinion first, then build: a private EGL
+   context on the render thread (Godot no longer provides one), RGBA8 AHardwareBuffers per eye
+   (stage 0 proved the share), the AHB-backed `VkImage` reached through
+   `RenderingDevice.texture_create_from_extension` + `RenderingServer.texture_rd_create` (both
+   confirmed present in the 0.5.3 bindings, alongside `RenderingDevice.get_driver_resource` for
+   pulling the eye SubViewport's `VkImage`), or a simpler first cut of one `RenderingDevice`
+   `texture_copy` per eye. Keep the fake-`IUnityXRDisplay` GL submission unchanged. **Re-run the
+   RGBA8-vs-sRGB color A/B on device** (the old measurement was against gl_compatibility output)
+   and the crash bar of frame #1500+ / 25 s+.
+3. **Stage 3 - camera rendering.** Confirm on device that the `Image` fallback works under Vulkan
+   (expected, it is renderer-agnostic), then recover the ~525 us class with
+   `RenderingDevice.texture_update` + `Texture2DRD`.
+4. **Stage 4 - FPV stream.** Reuse the stage-2 private EGL context + AHB share to give the encoder
+   a real GL name, then lift the `video_encoder::start()` gate. Verify with the PC receivers in
+   `scripts/stream_server/`.
+
+Working branch: `feat/vulkan-path`. Soak helper: the scratchpad `soak_vulkan.ps1` (launch, watch,
+screenshot, exit through the Exit button, extract FPS + error logs).
 
 Original memo (2026-07-30, from a godot-gsplat planning session) follows.
 The one prior attempt is a single line in `port-plan.md` round c: "Vulkan crashed in the Forward
