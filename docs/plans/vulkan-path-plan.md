@@ -1,9 +1,20 @@
 # Vulkan rendering path — staged plan for a re-attempt
 
-Status: **stage 0 = GO, stage 1 (phone screen) = done, adopted follow-ups implemented; next =
-stage 2 design** (stage 1 device-verified 2026-07-30 on Beam Pro). Stages: phone screen -> glasses
-rendering -> camera rendering -> FPV stream, one commit each, each design cross-checked against a
-second opinion.
+Status: **stages 0-1 done; stage 2 (glasses rendering) = WORKING ON DEVICE, 2026-07-30** - stereo
+content on the glasses under Vulkan Mobile at 58-60 FPS, head-tracked, colors exact vs the GL
+build, 10 min soak clean. Remaining for the stage-2 sign-off: the 60 min x 3 thermal soak, then
+flip `debug.xreal.vulkan_glasses` default ON for the Vulkan preset. Stages: phone screen ->
+glasses rendering -> camera rendering -> FPV stream, one commit each, each design cross-checked
+against a second opinion.
+
+- **Stage 2 device results (Beam Pro, 2026-07-30)**: 14 opaque-fd eye slots imported and
+  registered (7 per eye); solid-color probe correct per eye (left red / right blue, screencap of
+  display id 4626964009369245188); real stereo content with live head tracking; crash bar passed
+  (fill #5400+); **58-60 FPS with the pipelined-fence sync (now the default; the QueueWaitIdle
+  fallback `vk_sync 0` measured 52-53)**; 10 min soak: 20/20 alive checks, 60 FPS at thermal
+  steady state, clean Exit-button teardown; **color A/B vs the GL build: cyan object mean
+  (151,236,254) IDENTICAL, pink floor within 2/255** - the raw-copy path carries display-ready
+  bytes exactly as designed, no sRGB double-transform.
 
 - **Stage 0 PASSED**: `src/ahb_probe.rs` (one-shot, render thread, `debug.xreal.ahb_probe 0` to
   skip). RGBA8 1968x1134 with `GPU_COLOR_OUTPUT|GPU_SAMPLED_IMAGE`: isSupported=1, allocate ok

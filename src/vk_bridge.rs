@@ -9,10 +9,12 @@
 //! SDK receives, exactly as under GL. Per frame, a bridge-owned command buffer copies each eye
 //! SubViewport's `VkImage` into the acquired slot's `VkImage` (`vkCmdCopyImage`: raw texels, so
 //! Godot's display-ready sRGB-encoded bytes arrive unaltered), bracketed by
-//! `VK_QUEUE_FAMILY_EXTERNAL` acquire/release barriers, and the v1 sync is `vkQueueWaitIdle`
-//! before `SubmitCurrentFrame`. The design and its alternatives (a fullscreen sampled pass as
-//! fill v2, a SYNC_FD fence as sync v2) are recorded in `docs/plans/vulkan-path-plan.md` and
-//! `docs/archive/codex-vulkan-stage2-design.md`.
+//! `VK_QUEUE_FAMILY_EXTERNAL` acquire/release barriers. Sync defaults to a one-frame pipelined
+//! fence (`debug.xreal.vk_sync 0` falls back to a `vkQueueWaitIdle` before
+//! `SubmitCurrentFrame`, which cost 60->52 FPS on device); see `fill_eyes`. The design and its
+//! alternatives (a fullscreen sampled pass as fill v2, a SYNC_FD fence as sync v2, the latter
+//! blocked on an extension Godot does not enable) are recorded in
+//! `docs/plans/vulkan-path-plan.md` and `docs/archive/codex-vulkan-stage2-design.md`.
 //!
 //! Why OPAQUE_FD and not the plan's original AHardwareBuffer: the AHB import needs
 //! `VK_ANDROID_external_memory_android_hardware_buffer`, which Godot 4.7 never enables on its
@@ -1028,14 +1030,16 @@ pub fn fill_eyes(targets: &[(u32, usize)]) -> u32 {
         return 0;
     }
     let solid = android_prop_i32(b"debug.xreal.vk_solid\0").unwrap_or(0);
-    // Sync mode: 0 (default) waits the queue idle after this frame's submit, the correctness-first
-    // v1. 1 pipelines by one frame: submit with a fence, and wait for the PREVIOUS frame's fence
-    // here at entry, which in steady state has long signaled, so the CPU never stalls on the GPU.
-    // The pipelined window is benign by construction: the compositor starts sampling a slot only
-    // after SubmitCurrentFrame, our copy into it was enqueued before that, and the compositor's
-    // next composite is a vsync away, while the not-yet-reusable command buffer is protected by
-    // exactly this entry wait.
-    let sync_mode = android_prop_i32(b"debug.xreal.vk_sync\0").unwrap_or(0);
+    // Sync mode: 1 (default) pipelines by one frame: submit with a fence, and wait for the
+    // PREVIOUS frame's fence here at entry, which in steady state has long signaled, so the CPU
+    // never stalls on the GPU. The pipelined window is benign by construction: the compositor
+    // starts sampling a slot only after SubmitCurrentFrame, our copy into it was enqueued before
+    // that, and the compositor's next composite is a vsync away, while the not-yet-reusable
+    // command buffer is protected by exactly this entry wait. 0 is the correctness-first
+    // debug fallback: wait the queue idle after this frame's submit. Device-measured 2026-07-30:
+    // mode 1 = 58-60 FPS (the stage-1 baseline, 10 min soak clean, colors exact vs the GL build);
+    // mode 0 = 52-53 FPS (the CPU serializes on the whole GPU frame).
+    let sync_mode = android_prop_i32(b"debug.xreal.vk_sync\0").unwrap_or(1);
     let n = FILL_LOG.fetch_add(1, Ordering::Relaxed);
 
     // Whatever the current mode, a pending fence from a pipelined frame must be waited out
