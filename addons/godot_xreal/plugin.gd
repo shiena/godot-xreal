@@ -99,6 +99,17 @@ const PROJECT_SETTINGS: Array[Dictionary] = [
 		"type": TYPE_BOOL,
 		"default": false,
 	},
+	{
+		# Periodic-IDR workaround for the FPV stream / mp4 recorder. libmedia_codec 3.1.0 emits only
+		# one keyframe at start, so a viewer that joins or reloads mid-stream never gets a decodable
+		# starting point; this asks the codec for a sync frame about once a second so late joiners
+		# work. ON by default. It reaches the codec through a reverse-engineered object layout, so an
+		# SDK update may need it re-checked (see docs/archive/codex-idr-analysis.md); turn it off to
+		# fall back to the single-IDR behaviour. `debug.xreal.idr_hack` overrides this at runtime.
+		"name": "xreal/idr_workaround",
+		"type": TYPE_BOOL,
+		"default": true,
+	},
 ]
 
 func _register_project_settings() -> void:

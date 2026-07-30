@@ -39,7 +39,7 @@ struct Encoder {
     destroy: FnDestroy,
     handle: u64,
     /// Whether to inject periodic `request-sync` (the IDR workaround; see [`maybe_request_idr`]),
-    /// sampled from `debug.xreal.idr_hack` at start.
+    /// resolved by [`resolve_idr_hack`] at start.
     idr_hack: bool,
 }
 
@@ -54,9 +54,10 @@ struct Encoder {
 // `*(handle + 0x88)` is the video object and `*(+0x08)` of that is the `AMediaCodec*`. We reach it
 // through `libmediandk.so` and ask for a sync frame ~once a second.
 //
-// This depends on that opaque C++ layout, so it is gated behind `debug.xreal.idr_hack` (default
-// off) and pinned to the analyzed build (GNU Build ID 75a6536f531fa7de046db96609c7e119ad5287f4);
-// an SDK bump needs the offsets re-checked. `request-sync` failing or the layout being wrong at
+// This depends on that opaque C++ layout, so it is a toggle: the `xreal/idr_workaround`
+// ProjectSetting (default ON), overridable at runtime by `debug.xreal.idr_hack` (0/1). It is
+// pinned to the analyzed build (GNU Build ID 75a6536f531fa7de046db96609c7e119ad5287f4); an SDK
+// bump needs the offsets re-checked. `request-sync` failing or the layout being wrong at
 // worst produces no key frame - the pointers are null-checked, so a changed layout degrades to
 // the old single-IDR behaviour rather than crashing, as long as +0x88/+0x08 still land on
 // readable memory.
@@ -238,6 +239,28 @@ struct EncoderConfig {
     with_internal: bool,
     with_alpha: bool,
     audio_rate: Option<i32>,
+    /// Whether to inject the periodic-IDR workaround; resolved on the main thread in [`start`].
+    idr_hack: bool,
+}
+
+/// Resolve the periodic-IDR workaround setting, MAIN THREAD ONLY (it reads `ProjectSettings`).
+/// Priority: the `debug.xreal.idr_hack` system property overrides at runtime (0/1); otherwise the
+/// `xreal/idr_workaround` ProjectSetting; otherwise ON by default. See
+/// docs/archive/codex-idr-analysis.md.
+fn resolve_idr_hack() -> bool {
+    if let Some(v) = crate::session::android_prop_i32(b"debug.xreal.idr_hack\0") {
+        return v == 1;
+    }
+    use godot::classes::ProjectSettings;
+    use godot::obj::Singleton;
+    let ps = ProjectSettings::singleton();
+    if ps.has_setting("xreal/idr_workaround") {
+        ps.get_setting("xreal/idr_workaround")
+            .try_to::<bool>()
+            .unwrap_or(true)
+    } else {
+        true
+    }
 }
 
 /// Start streaming the FPV to `output`, which is an `rtp://ip:port`, an `rtmp://…` or a local file
@@ -263,6 +286,8 @@ pub fn start(
     with_alpha: bool,
     audio_rate: Option<i32>,
 ) -> bool {
+    // Resolve the IDR workaround here, on the main thread (stream_start is a #[func]): the Vulkan
+    // path's native start runs on the render tick, where ProjectSettings must not be read.
     let config = EncoderConfig {
         output: output.to_string(),
         width,
@@ -273,6 +298,7 @@ pub fn start(
         with_internal,
         with_alpha,
         audio_rate,
+        idr_hack: resolve_idr_hack(),
     };
     if !crate::gl::renderer_is_gl() {
         // The stage-4 Vulkan path needs the bridge machinery (the tick, the private EGL context,
@@ -312,6 +338,7 @@ unsafe fn start_native(config: &EncoderConfig) -> Option<Encoder> {
         with_internal,
         with_alpha,
         audio_rate,
+        idr_hack: _, // read from `config` at the end, after `config.clone()` above moved the rest
     } = config.clone();
     let output = output.as_str();
     {
@@ -407,12 +434,10 @@ unsafe fn start_native(config: &EncoderConfig) -> Option<Encoder> {
             "[xreal] FPV stream started -> {output} ({width}x{height} @{fps} {bitrate}bps codecType={})",
             codec_type(output)
         );
-        let idr_hack = crate::session::android_prop_i32(b"debug.xreal.idr_hack\0") == Some(1);
-        if idr_hack {
+        if config.idr_hack {
             IDR_COUNTER.store(0, Ordering::Relaxed);
             godot::global::godot_print!(
-                "[xreal] IDR workaround enabled (debug.xreal.idr_hack=1): request-sync every {} frames",
-                IDR_PERIOD_FRAMES
+                "[xreal] IDR workaround enabled: request-sync every {IDR_PERIOD_FRAMES} frames"
             );
         }
         Some(Encoder {
@@ -421,7 +446,7 @@ unsafe fn start_native(config: &EncoderConfig) -> Option<Encoder> {
             stop,
             destroy,
             handle,
-            idr_hack,
+            idr_hack: config.idr_hack,
         })
     }
 }

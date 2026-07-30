@@ -225,14 +225,17 @@ Image path never had the GL driver's per-texel tiling cost, so the win is NOT th
      JSON field or HWEncoder* export changes it, and the lib never calls
      `AMediaCodec_setParameters`. Fix taken: reach the underlying `AMediaCodec*` through the
      encoder object layout codex confirmed (`*(handle+0x88)` -> `*(+0x08)`) and inject Android's
-     `request-sync` once a second via `libmediandk.so`. Gated by `debug.xreal.idr_hack` (default
-     off; it depends on that opaque layout, pinned to Build ID
-     75a6536f531fa7de046db96609c7e119ad5287f4). **Device-verified 2026-07-31: WORKS** -
-     `request-sync -> 0`, MediaCodec logged `coding.request-sync-frame.value = 1`, and a browser
-     that reloaded (late-joined) 12 s INTO the stream rendered the AR view within ~4 s (black
-     forever without the hack). Rejected alternatives: a binary patch of the vendored .so (`nop`
-     the intra-refresh `setInt32` at 0x20DA70 - clean but rewrites a gitignored vendor lib and
-     fights the vendor flow), and the receiver-only ceiling (connect the viewer before start).
+     `request-sync` once a second via `libmediandk.so`. **Default ON** through the
+     `xreal/idr_workaround` ProjectSetting (registered in `plugin.gd`, so it shows in Project
+     Settings and end users can turn it off without adb), overridable at runtime by
+     `debug.xreal.idr_hack` (0/1). It depends on that opaque layout, pinned to Build ID
+     75a6536f531fa7de046db96609c7e119ad5287f4, so an SDK bump needs the offsets re-checked.
+     **Device-verified 2026-07-31: WORKS** - `request-sync -> 0`, MediaCodec logged
+     `coding.request-sync-frame.value = 1`, and a browser that reloaded (late-joined) 12 s INTO
+     the stream rendered the AR view within ~4 s (black forever without the hack). Rejected
+     alternatives: a binary patch of the vendored .so (`nop` the intra-refresh `setInt32` at
+     0x20DA70 - clean but rewrites a gitignored vendor lib and fights the vendor flow), and the
+     receiver-only ceiling (connect the viewer before start).
    - **Encoder-only mode (Vulkan, glasses kill switch OFF): WIRED.** The bridge machinery is
      split from the glasses kill switch: `ensure_init()` brings the Vulkan side up on demand,
      `bridge_ready()` is the encoder's gate, `glasses_enabled()` stays the eye-rendering gate.
