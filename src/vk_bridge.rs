@@ -536,6 +536,8 @@ static EYE_SOURCES: Mutex<[EyeSource; 2]> = Mutex::new([EyeSource::ZERO; 2]);
 /// the app degrades to the stage-1 phone-only behavior.
 static BROKEN: AtomicBool = AtomicBool::new(false);
 static FILL_LOG: AtomicU32 = AtomicU32::new(0);
+/// One-shot "Vulkan side initialized" log gate (ensure_init is idempotent, may be called often).
+static VK_INIT_LOGGED: AtomicBool = AtomicBool::new(false);
 /// Set while a fill submission's fence has not been waited on yet (pipelined sync, vk_sync=1).
 static FENCE_PENDING: AtomicBool = AtomicBool::new(false);
 /// One-shot eye-source format log gate.
@@ -559,32 +561,44 @@ fn broken(reason: &str) {
     }
 }
 
-/// Is the bridge switched on for this process? Renderer must be Vulkan and the kill switch
-/// (`debug.xreal.vulkan_glasses`, default OFF while stage 2 is in bring-up) must be set.
-pub fn enabled() -> bool {
+/// Is the glasses-rendering kill switch on? Renderer must be Vulkan and
+/// `debug.xreal.vulkan_glasses` (default OFF while stage 2 is in bring-up) must be set. This
+/// gates the eye rendering ONLY; the encoder path (stage 4) can run the bridge machinery without
+/// it (encoder-only mode), so it keys on [`bridge_ready`] instead.
+pub fn glasses_enabled() -> bool {
     static ENABLED: OnceLock<bool> = OnceLock::new();
     *ENABLED.get_or_init(|| {
         let on = !crate::gl::renderer_is_gl()
             && android_prop_i32(b"debug.xreal.vulkan_glasses\0") == Some(1);
         if on {
             godot::global::godot_print!(
-                "[xreal] vk_bridge: enabled (debug.xreal.vulkan_glasses=1)"
+                "[xreal] vk_bridge: glasses rendering enabled (debug.xreal.vulkan_glasses=1)"
             );
         }
         on
     })
 }
 
-/// [`enabled`] and initialized and not [`BROKEN`]: the per-frame gate.
+/// The glasses-rendering per-frame gate: the kill switch is on AND the bridge initialized.
 pub fn active() -> bool {
-    enabled() && !BROKEN.load(Ordering::Relaxed) && VK.get().is_some_and(|v| v.is_some())
+    glasses_enabled() && bridge_ready()
 }
 
-/// Resolve Godot's Vulkan handles and the bridge's own command pool. Call once from the main
-/// thread (node.rs) while `enabled()`; failures latch [`BROKEN`] and log the reason.
-pub fn init_from_main_thread() {
-    if VK.get().is_some() {
-        return;
+/// Whether the bridge machinery (Vulkan side, command pool, fence) is initialized and healthy.
+/// This is the encoder path's gate: it holds in encoder-only mode too, where the glasses kill
+/// switch is off. Cheap and thread-safe (a load, no init), so the render-thread tick may call
+/// it; [`ensure_init`] does the one-time setup from the main thread.
+pub fn bridge_ready() -> bool {
+    !BROKEN.load(Ordering::Relaxed) && VK.get().is_some_and(|v| v.is_some())
+}
+
+/// Resolve Godot's Vulkan handles and the bridge's own command pool + fence. Idempotent; call
+/// from the main thread when the bridge is first needed, whether for glasses rendering or the
+/// encoder. Returns whether the bridge is usable; failures latch [`BROKEN`] and log the reason.
+/// Never from the render thread: it queries `RenderingServer` handles.
+pub fn ensure_init() -> bool {
+    if crate::gl::renderer_is_gl() {
+        return false;
     }
     let api = VK.get_or_init(|| match load_vk() {
         Ok(api) => Some(api),
@@ -593,9 +607,10 @@ pub fn init_from_main_thread() {
             None
         }
     });
-    if api.is_some() {
+    if api.is_some() && !VK_INIT_LOGGED.swap(true, Ordering::Relaxed) {
         godot::global::godot_print!("[xreal] vk_bridge: Vulkan side initialized");
     }
+    bridge_ready()
 }
 
 fn load_vk() -> Result<VkApi, String> {
@@ -1587,5 +1602,59 @@ pub fn fill_eyes(targets: &[(u32, usize)]) -> u32 {
             );
         }
         filled
+    }
+}
+
+/// Encoder-only mode (stage 4, glasses kill switch off): submit JUST the encoder-bundle copy,
+/// with no eye slots. Tick thread, private EGL context bound, AFTER [`wait_entry_fence`] (the
+/// tick already called it). Records nothing and does not submit when there is no encoder source
+/// yet, so an idle encoder costs one command-buffer reset and nothing on the queue.
+pub fn submit_encoder_only() {
+    let Some(api) = vk() else { return };
+    if BROKEN.load(Ordering::Relaxed) {
+        return;
+    }
+    unsafe {
+        let r = (api.reset_command_buffer)(api.command_buffer, 0);
+        if r != VK_SUCCESS {
+            broken(&format!("vkResetCommandBuffer(enc) -> {r}"));
+            return;
+        }
+        let begin = VkCommandBufferBeginInfo {
+            s_type: VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+            p_next: std::ptr::null(),
+            flags: VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+            p_inheritance_info: std::ptr::null(),
+        };
+        if (api.begin_command_buffer)(api.command_buffer, &begin) != VK_SUCCESS {
+            broken("vkBeginCommandBuffer(enc)");
+            return;
+        }
+        let recorded = record_encoder_copy(api);
+        if (api.end_command_buffer)(api.command_buffer) != VK_SUCCESS {
+            broken("vkEndCommandBuffer(enc)");
+            return;
+        }
+        if !recorded {
+            return; // nothing to encode this frame; leave the queue and fence untouched
+        }
+        let submit = VkSubmitInfo {
+            s_type: VK_STRUCTURE_TYPE_SUBMIT_INFO,
+            p_next: std::ptr::null(),
+            wait_semaphore_count: 0,
+            p_wait_semaphores: std::ptr::null(),
+            p_wait_dst_stage_mask: std::ptr::null(),
+            command_buffer_count: 1,
+            p_command_buffers: &api.command_buffer,
+            signal_semaphore_count: 0,
+            p_signal_semaphores: std::ptr::null(),
+        };
+        if (api.queue_submit)(api.queue, 1, &submit, api.fence) != VK_SUCCESS {
+            broken("vkQueueSubmit(enc)");
+            return;
+        }
+        // Same pipelined fence as the eye path: the next tick's wait_entry_fence proves this copy
+        // complete before the encoder is handed the bundle.
+        FENCE_PENDING.store(true, Ordering::Relaxed);
     }
 }

@@ -1446,7 +1446,9 @@ pub fn run_render_thread_tick() {
 /// the bridge orders its copy against Godot's eye rendering purely by same-queue submission
 /// order; see `vk_bridge.rs`.
 pub fn run_vulkan_render_thread_tick() {
-    if !crate::vk_bridge::active() {
+    // The bridge machinery must be up (glasses rendering OR encoder-only mode). node.rs only
+    // registers this callback once ensure_init() succeeded, so bridge_ready() holds here.
+    if !crate::vk_bridge::bridge_ready() {
         return;
     }
     if !crate::egl_context::bind() {
@@ -1458,8 +1460,15 @@ pub fn run_vulkan_render_thread_tick() {
     // here, with the private context bound.
     crate::vk_bridge::wait_entry_fence();
     crate::video_encoder::vk_tick();
-    ensure_gfx_thread_started();
-    run_frame_tick_with(FillBackend::Vulkan);
+    if crate::vk_bridge::glasses_enabled() {
+        // Glasses rendering: the SDK compositor is driven and fill_eyes records both the eye
+        // copies and (piggybacked) the encoder copy in one submission.
+        ensure_gfx_thread_started();
+        run_frame_tick_with(FillBackend::Vulkan);
+    } else {
+        // Encoder-only mode: no eyes, no SDK compositor - just the encoder-bundle copy.
+        crate::vk_bridge::submit_encoder_only();
+    }
     crate::egl_context::unbind();
 }
 

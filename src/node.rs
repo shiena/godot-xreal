@@ -165,18 +165,26 @@ impl INode3D for XrealHeadTracker {
                 Variant::nil()
             });
             RenderingServer::singleton().call_on_render_thread(&callable);
-        } else if crate::vk_bridge::enabled() {
-            crate::vk_bridge::init_from_main_thread();
-            self.ensure_stereo();
-            // The Vulkan tick MUST run after Godot submitted this frame's rendering: the bridge
-            // orders its eye copy against the SubViewport rendering purely by same-queue
-            // submission order. The frame-drawn callback is exactly that point; it is one-shot,
-            // so re-request it every frame.
-            let callable = Callable::from_fn("xreal_vk_tick", |_| {
-                crate::unity_plugin::run_vulkan_render_thread_tick();
-                Variant::nil()
-            });
-            RenderingServer::singleton().request_frame_drawn_callback(&callable);
+        } else {
+            // Vulkan: the tick runs when the glasses kill switch is on (eye rendering) OR the HW
+            // encoder has work (stage-4 encoder-only mode, glasses off - streaming/recording the
+            // AR view without the eye submission). Either way it needs the bridge machinery up.
+            let glasses = crate::vk_bridge::glasses_enabled();
+            let want_encoder = crate::video_encoder::is_active();
+            if (glasses || want_encoder) && crate::vk_bridge::ensure_init() {
+                if glasses {
+                    self.ensure_stereo();
+                }
+                // The Vulkan tick MUST run after Godot submitted this frame's rendering: the
+                // bridge orders its copies against the SubViewport rendering purely by same-queue
+                // submission order. The frame-drawn callback is exactly that point; it is
+                // one-shot, so re-request it every frame.
+                let callable = Callable::from_fn("xreal_vk_tick", |_| {
+                    crate::unity_plugin::run_vulkan_render_thread_tick();
+                    Variant::nil()
+                });
+                RenderingServer::singleton().request_frame_drawn_callback(&callable);
+            }
         }
         // Primary path: drive the eye cameras from the **display** InputManager pose, the exact pose the
         // compositor reprojects the glasses layer against. It carries the full orientation, ROLL

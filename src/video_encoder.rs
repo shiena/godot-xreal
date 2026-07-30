@@ -10,8 +10,9 @@
 //! `crate::unity_plugin::run_render_thread_tick` or `RenderingServer::call_on_render_thread`, and
 //! never on the main thread. `codecType` is derived from the output URL scheme.
 
-use std::ffi::{c_char, CString};
-use std::sync::Mutex;
+use std::ffi::{c_char, c_void, CString};
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{Mutex, OnceLock};
 
 use libloading::Library;
 
@@ -37,6 +38,114 @@ struct Encoder {
     stop: FnStop,
     destroy: FnDestroy,
     handle: u64,
+    /// Whether to inject periodic `request-sync` (the IDR workaround; see [`maybe_request_idr`]),
+    /// sampled from `debug.xreal.idr_hack` at start.
+    idr_hack: bool,
+}
+
+// --- Periodic-IDR workaround (docs/archive/codex-idr-analysis.md) -----------------------------
+//
+// The vendored libmedia_codec.so 3.1.0 configures the H.264 encoder with
+// `intra-refresh-period=10`, which replaces periodic IDR key frames with cyclic intra refresh, so
+// a late-joining RTP/FLV viewer never gets a decodable starting point (regression from the older
+// lib, which emitted an IDR about once a second). The lib exposes no key-frame request and calls
+// `AMediaCodec_setParameters` nowhere, but the underlying codec still honours Android's
+// `request-sync` parameter. codex located the codec object: from the HWEncoder handle,
+// `*(handle + 0x88)` is the video object and `*(+0x08)` of that is the `AMediaCodec*`. We reach it
+// through `libmediandk.so` and ask for a sync frame ~once a second.
+//
+// This depends on that opaque C++ layout, so it is gated behind `debug.xreal.idr_hack` (default
+// off) and pinned to the analyzed build (GNU Build ID 75a6536f531fa7de046db96609c7e119ad5287f4);
+// an SDK bump needs the offsets re-checked. `request-sync` failing or the layout being wrong at
+// worst produces no key frame - the pointers are null-checked, so a changed layout degrades to
+// the old single-IDR behaviour rather than crashing, as long as +0x88/+0x08 still land on
+// readable memory.
+
+const MEDIA_NDK_LIB: &str = "libmediandk.so";
+/// Offset of the video object within the HWEncoder handle, then of the `AMediaCodec*` within it.
+const OFF_VIDEO_OBJ: usize = 0x88;
+const OFF_CODEC_PTR: usize = 0x08;
+
+type FnFormatNew = unsafe extern "C" fn() -> *mut c_void;
+type FnFormatSetInt32 = unsafe extern "C" fn(*mut c_void, *const c_char, i32);
+type FnFormatDelete = unsafe extern "C" fn(*mut c_void);
+type FnCodecSetParameters = unsafe extern "C" fn(*mut c_void, *const c_void) -> i32;
+
+struct MediaNdk {
+    format_new: FnFormatNew,
+    format_set_int32: FnFormatSetInt32,
+    format_delete: FnFormatDelete,
+    codec_set_parameters: FnCodecSetParameters,
+    _lib: Library,
+}
+
+unsafe impl Send for MediaNdk {}
+unsafe impl Sync for MediaNdk {}
+
+static MEDIA_NDK: OnceLock<Option<MediaNdk>> = OnceLock::new();
+/// Frames since the last requested key frame, shared across the GL and Vulkan feed paths (only
+/// one encoder is ever live).
+static IDR_COUNTER: AtomicU32 = AtomicU32::new(0);
+/// Request a sync frame roughly once a second; both feed paths tick at the ~60 Hz render rate.
+const IDR_PERIOD_FRAMES: u32 = 60;
+
+fn media_ndk() -> Option<&'static MediaNdk> {
+    MEDIA_NDK
+        .get_or_init(|| unsafe {
+            let lib = Library::new(MEDIA_NDK_LIB).ok()?;
+            let format_new = *lib.get::<FnFormatNew>(b"AMediaFormat_new\0").ok()?;
+            let format_set_int32 = *lib
+                .get::<FnFormatSetInt32>(b"AMediaFormat_setInt32\0")
+                .ok()?;
+            let format_delete = *lib.get::<FnFormatDelete>(b"AMediaFormat_delete\0").ok()?;
+            let codec_set_parameters = *lib
+                .get::<FnCodecSetParameters>(b"AMediaCodec_setParameters\0")
+                .ok()?;
+            Some(MediaNdk {
+                format_new,
+                format_set_int32,
+                format_delete,
+                codec_set_parameters,
+                _lib: lib,
+            })
+        })
+        .as_ref()
+}
+
+/// Called once per fed frame. When the IDR workaround is on, asks the codec for a sync frame every
+/// [`IDR_PERIOD_FRAMES`]. Any thread; the encoder feed is already serialized per path.
+fn maybe_request_idr(handle: u64, idr_hack: bool) {
+    if !idr_hack || handle == 0 {
+        return;
+    }
+    if IDR_COUNTER.fetch_add(1, Ordering::Relaxed) % IDR_PERIOD_FRAMES != IDR_PERIOD_FRAMES - 1 {
+        return;
+    }
+    let Some(ndk) = media_ndk() else { return };
+    unsafe {
+        // Walk the encoder object layout to the AMediaCodec*, null-checking each hop.
+        let video = *((handle as *const u8).add(OFF_VIDEO_OBJ) as *const *mut c_void);
+        if video.is_null() {
+            return;
+        }
+        let codec = *((video as *const u8).add(OFF_CODEC_PTR) as *const *mut c_void);
+        if codec.is_null() {
+            return;
+        }
+        let fmt = (ndk.format_new)();
+        if fmt.is_null() {
+            return;
+        }
+        (ndk.format_set_int32)(fmt, c"request-sync".as_ptr(), 0);
+        let r = (ndk.codec_set_parameters)(codec, fmt);
+        (ndk.format_delete)(fmt);
+        static LOGGED: AtomicU32 = AtomicU32::new(0);
+        if LOGGED.fetch_add(1, Ordering::Relaxed) < 3 {
+            godot::global::godot_print!(
+                "[xreal] IDR workaround: request-sync -> {r} (codec={codec:?})"
+            );
+        }
+    }
 }
 
 // The fn pointers borrow from `_lib`, which is kept alive alongside them. Moving them across
@@ -167,11 +276,11 @@ pub fn start(
     };
     if !crate::gl::renderer_is_gl() {
         // The stage-4 Vulkan path needs the bridge machinery (the tick, the private EGL context,
-        // the opaque-fd bundles). Without it the encoder stays unavailable, as in stage 1.
-        if !crate::vk_bridge::active() {
+        // the opaque-fd bundles), but NOT the glasses kill switch: ensure_init brings the bridge
+        // up on demand, so the encoder works in encoder-only mode too (glasses rendering off).
+        if !crate::vk_bridge::ensure_init() {
             godot::global::godot_warn!(
-                "[xreal] FPV encoder unavailable: Vulkan renderer without the vk bridge \
-                 (enable debug.xreal.vulkan_glasses)"
+                "[xreal] FPV encoder unavailable: Vulkan bridge failed to initialize"
             );
             return false;
         }
@@ -298,12 +407,21 @@ unsafe fn start_native(config: &EncoderConfig) -> Option<Encoder> {
             "[xreal] FPV stream started -> {output} ({width}x{height} @{fps} {bitrate}bps codecType={})",
             codec_type(output)
         );
+        let idr_hack = crate::session::android_prop_i32(b"debug.xreal.idr_hack\0") == Some(1);
+        if idr_hack {
+            IDR_COUNTER.store(0, Ordering::Relaxed);
+            godot::global::godot_print!(
+                "[xreal] IDR workaround enabled (debug.xreal.idr_hack=1): request-sync every {} frames",
+                IDR_PERIOD_FRAMES
+            );
+        }
         Some(Encoder {
             _lib: lib,
             update_surface,
             stop,
             destroy,
             handle,
+            idr_hack,
         })
     }
 }
@@ -320,7 +438,11 @@ pub fn submit_frame(gl_texture_id: usize, timestamp: u64) -> i32 {
     }
     let guard = ENCODER.lock().expect("encoder mutex");
     match guard.as_ref() {
-        Some(enc) => unsafe { (enc.update_surface)(enc.handle, gl_texture_id, timestamp) },
+        Some(enc) => {
+            let status = unsafe { (enc.update_surface)(enc.handle, gl_texture_id, timestamp) };
+            maybe_request_idr(enc.handle, enc.idr_hack);
+            status
+        }
         None => -1,
     }
 }
@@ -427,7 +549,6 @@ pub fn vk_tick() {
         VkEncState::Running(enc) => {
             if let Some((gl_name, ts)) = crate::vk_bridge::encoder_take_ready() {
                 let status = unsafe { (enc.update_surface)(enc.handle, gl_name as usize, ts) };
-                use std::sync::atomic::Ordering;
                 let n = crate::vk_bridge::ENC_FED.fetch_add(1, Ordering::Relaxed);
                 if n < 3 || n.is_multiple_of(300) || status != 0 {
                     godot::global::godot_print!(
@@ -437,6 +558,7 @@ pub fn vk_tick() {
                 // GL-side completion release before the bundle's next Vulkan reuse: external
                 // memory sharing supplies no GL->Vulkan execution ordering by itself.
                 crate::vk_bridge::gl_finish();
+                maybe_request_idr(enc.handle, enc.idr_hack);
             }
             *st = VkEncState::Running(enc);
         }

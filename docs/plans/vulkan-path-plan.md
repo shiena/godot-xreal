@@ -219,16 +219,31 @@ Image path never had the GL driver's per-texel tiling cost, so the win is NOT th
    before publish). Two findings along the way:
    - **Fixed**: the components sampled the encoder backend at `_ready`, before the bridge
      initializes, and silently stayed on the GL push path (`da10e2f`).
-   - **Known limitation, NOT stage-4's doing: no periodic IDR from libmedia_codec 3.1.0.** The
-     encoder emits exactly one keyframe at start, so a viewer must be connected BEFORE the
-     stream starts; late joiners wait forever (fpv_server arms viewers on keyframes). The GL
-     build streams with the SAME behavior (device-verified back-to-back), so this is the
-     SDK-3.1.0 vendored lib's change (the "keyframe about once a second" note in fpv_server.py
-     dates from the pre-3.1.0 lib), not the Vulkan path. Follow-up: codex RE of
-     libmedia_codec's IDR/request-sync handling (no HWEncoder* keyframe export exists), or a
-     receiver-side workaround.
-   - Also not wired yet: encoder-only mode (Vulkan with the glasses kill switch OFF) - the tick
-     only runs with the bridge active; `get_render_texture_encoder_backend()` returns 0 there.
+   - **Periodic IDR: root cause found (codex RE, `docs/archive/codex-idr-analysis.md`) and a
+     workaround wired.** libmedia_codec 3.1.0 sets `intra-refresh-period=10`, which replaces
+     periodic IDR with cyclic intra refresh; `i-frame-interval=1` is correct but overridden. No
+     JSON field or HWEncoder* export changes it, and the lib never calls
+     `AMediaCodec_setParameters`. Fix taken: reach the underlying `AMediaCodec*` through the
+     encoder object layout codex confirmed (`*(handle+0x88)` -> `*(+0x08)`) and inject Android's
+     `request-sync` once a second via `libmediandk.so`. Gated by `debug.xreal.idr_hack` (default
+     off; it depends on that opaque layout, pinned to Build ID
+     75a6536f531fa7de046db96609c7e119ad5287f4). **Device-verified 2026-07-31: WORKS** -
+     `request-sync -> 0`, MediaCodec logged `coding.request-sync-frame.value = 1`, and a browser
+     that reloaded (late-joined) 12 s INTO the stream rendered the AR view within ~4 s (black
+     forever without the hack). Rejected alternatives: a binary patch of the vendored .so (`nop`
+     the intra-refresh `setInt32` at 0x20DA70 - clean but rewrites a gitignored vendor lib and
+     fights the vendor flow), and the receiver-only ceiling (connect the viewer before start).
+   - **Encoder-only mode (Vulkan, glasses kill switch OFF): WIRED.** The bridge machinery is
+     split from the glasses kill switch: `ensure_init()` brings the Vulkan side up on demand,
+     `bridge_ready()` is the encoder's gate, `glasses_enabled()` stays the eye-rendering gate.
+     node.rs registers the tick when glasses OR the encoder wants it; the tick runs
+     `submit_encoder_only()` (encoder-bundle copy alone, no eyes, no SDK compositor) when glasses
+     are off. `get_render_texture_encoder_backend()` returns 2 for any Vulkan renderer with a
+     RenderingDevice. (Needs a live SDK session, i.e. glasses connected, since node.rs's process
+     early-returns without one.) **Device-verified 2026-07-31: WORKS** - with
+     `debug.xreal.vulkan_glasses 0` (phone-only, head tracking live, no eye rendering), Stream
+     ran through `submit_encoder_only` (ping-pong copy/fed status=0) and the browser rendered the
+     live AR view.
 
 ### Stage 4 second-opinion review (two designs compared, 2026-07-31)
 

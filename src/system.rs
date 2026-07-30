@@ -782,13 +782,18 @@ impl XrealSystem {
     /// Which backend feeds the HW encoder: `0` = unsupported, `1` = the GL renderer's direct
     /// texture-name push ([`Self::stream_push_frame`]), `2` = the Vulkan bridge
     /// (vulkan-path-plan.md stage 4), where components publish the source viewport each frame
-    /// through [`Self::stream_publish_viewport`] instead. Backend 2 requires the stage-2 bridge
-    /// machinery (`debug.xreal.vulkan_glasses` enabled and initialized).
+    /// through [`Self::stream_publish_viewport`] instead. Backend 2 is reported whenever the
+    /// renderer is Vulkan with a live `RenderingDevice`, independent of the glasses kill switch
+    /// (the encoder works in encoder-only mode too); the bridge itself initializes lazily at
+    /// `stream_start`, and a hard init failure there turns the stream off through its error path.
     #[func]
     fn get_render_texture_encoder_backend(&self) -> i64 {
         if crate::gl::renderer_is_gl() {
             1
-        } else if crate::vk_bridge::active() {
+        } else if godot::classes::RenderingServer::singleton()
+            .get_rendering_device()
+            .is_some()
+        {
             2
         } else {
             0
