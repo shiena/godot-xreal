@@ -10,6 +10,7 @@ use godot::classes::sub_viewport::UpdateMode;
 use godot::classes::{Camera3D, INode3D, Node3D, ProjectSettings, RenderingServer, SubViewport};
 use godot::prelude::*;
 
+use crate::gl;
 use crate::session;
 
 /// Per-eye render size (matches the XREAL swapchain buffers created via CreateTexture).
@@ -113,6 +114,19 @@ impl INode3D for XrealHeadTracker {
         // Drain the glasses hardware events (keys, wear sensor, brightness and the rest) that the native
         // callback queued on the SDK thread, and re-emit them as signals.
         self.poll_hardware_events();
+        // Stage-0 AHB bridge probe, fallback trigger: when no session ever goes live (glasses
+        // absent), the primary run_frame_tick trigger never fires, so schedule the one-shot probe
+        // on the render thread from here. Double-runs are impossible (run_once is latched).
+        // GL renderer only: the probe is a GL-build probe by design (under Vulkan, Godot owns no
+        // EGL context, so it could only report "no context"; the stage-2 private-context bridge is
+        // where a Vulkan-side equivalent would live).
+        if self.frames == 600 && gl::renderer_is_gl() {
+            let callable = Callable::from_fn("xreal_ahb_probe", |_| {
+                crate::ahb_probe::run_once();
+                Variant::nil()
+            });
+            RenderingServer::singleton().call_on_render_thread(&callable);
+        }
         let Some(session) = session::shared() else {
             self.tracking = false;
             return;
@@ -132,18 +146,25 @@ impl INode3D for XrealHeadTracker {
             }
         }
 
-        // Build the per-eye offscreen render rig once we are in the tree and so have a World3D.
-        self.ensure_stereo();
+        // The glasses display path runs ONLY under the GL (Compatibility) renderer: it feeds the
+        // SDK compositor client GL texture names out of Godot's own EGL context. Under a Vulkan
+        // renderer that context does not exist, so skip the stereo rig and the swapchain drive
+        // (until the vulkan-path-plan stage-2 bridge exists) while everything below — head
+        // tracking, signals, the phone display — keeps working.
+        if gl::renderer_is_gl() {
+            // Build the per-eye offscreen render rig once we are in the tree and so have a World3D.
+            self.ensure_stereo();
 
-        // Drive the XREAL swapchain on the rendering thread, which the EGL context requires. The first
-        // call invokes GfxThreadStart, running CreateSwapchainEx, then the GL textures, then
-        // SetSwapChainBuffers. Later calls drive PopulateNextFrameDesc so the SDK's GLThread has a frame
-        // handle.
-        let callable = Callable::from_fn("xreal_render_tick", |_| {
-            crate::unity_plugin::run_render_thread_tick();
-            Variant::nil()
-        });
-        RenderingServer::singleton().call_on_render_thread(&callable);
+            // Drive the XREAL swapchain on the rendering thread, which the EGL context requires. The first
+            // call invokes GfxThreadStart, running CreateSwapchainEx, then the GL textures, then
+            // SetSwapChainBuffers. Later calls drive PopulateNextFrameDesc so the SDK's GLThread has a frame
+            // handle.
+            let callable = Callable::from_fn("xreal_render_tick", |_| {
+                crate::unity_plugin::run_render_thread_tick();
+                Variant::nil()
+            });
+            RenderingServer::singleton().call_on_render_thread(&callable);
+        }
         // Primary path: drive the eye cameras from the **display** InputManager pose, the exact pose the
         // compositor reprojects the glasses layer against. It carries the full orientation, ROLL
         // included, which the compact session-manager NrPose lacks; see
