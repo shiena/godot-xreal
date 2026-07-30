@@ -156,6 +156,7 @@ static const StubMethod _m_XrealSystem[] = {
   {"stream_push_frame",2,"",2,_a_XrealSystem_stream_push_frame},
   {"stream_stop",0,"",0,0},
   {"is_stream_active",1,"",0,0},
+  {"is_render_texture_encoder_supported",1,"",0,0},
   {"set_stereo_mode",0,"",1,_a_XrealSystem_set_stereo_mode},
   {"set_focus_plane",1,"",2,_a_XrealSystem_set_focus_plane},
   {"set_tracking_type",0,"",1,_a_XrealSystem_set_tracking_type},
@@ -205,7 +206,7 @@ static const StubMembers stub_members[] = {
   {"XrealCameraFeed",_m_XrealCameraFeed,5,0,0,0,0},
   {"XrealHandTracker",0,0,0,0,0,0},
   {"XrealHeadTracker",_m_XrealHeadTracker,3,_s_XrealHeadTracker,10,_c_XrealHeadTracker,9},
-  {"XrealSystem",_m_XrealSystem,68,0,0,_c_XrealSystem,26},
+  {"XrealSystem",_m_XrealSystem,69,0,0,_c_XrealSystem,26},
 };
 enum { STUB_MEMBERS_COUNT = sizeof(stub_members) / sizeof(stub_members[0]) };
-#define STUB_SN_POOL 535
+#define STUB_SN_POOL 539
