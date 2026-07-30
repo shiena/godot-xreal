@@ -14,7 +14,9 @@ against a second opinion.
   fallback `vk_sync 0` measured 52-53)**; 10 min soak: 20/20 alive checks, 60 FPS at thermal
   steady state, clean Exit-button teardown; **color A/B vs the GL build: cyan object mean
   (151,236,254) IDENTICAL, pink floor within 2/255** - the raw-copy path carries display-ready
-  bytes exactly as designed, no sRGB double-transform.
+  bytes exactly as designed, no sRGB double-transform. **Vulkan-vs-GL FPS parity, same method
+  (frame_tick 300-frame intervals, back-to-back runs): GL 59.8 vs Vulkan 59.4** - both
+  vsync-locked, the bridge's overhead is inside measurement noise.
 
 - **Stage 0 PASSED**: `src/ahb_probe.rs` (one-shot, render thread, `debug.xreal.ahb_probe 0` to
   skip). RGBA8 1968x1134 with `GPU_COLOR_OUTPUT|GPU_SAMPLED_IMAGE`: isSupported=1, allocate ok
@@ -168,9 +170,35 @@ parameter is the ex-builder form in gdext 0.5.3.
    implication: `VK_KHR_external_semaphore_fd` is NOT enabled by Godot, so if `vkQueueWaitIdle`
    ever misses 60 FPS the v2 escalation needs a patched export template after all (record the
    measurement first).
-3. **Stage 3 - camera rendering.** Confirm on device that the `Image` fallback works under Vulkan
-   (expected, it is renderer-agnostic), then recover the ~525 us class with
-   `RenderingDevice.texture_update` + `Texture2DRD`.
+3. **Stage 3 - camera rendering.** **3a DONE (2026-07-30)**: the `Image` fallback works under
+   Vulkan on device - `path=image` at the camera's ~29 fps, live color image in both eyes
+   alongside the AR scene, Project FPS holds 57-60, camera off/exit clean. The stage-1
+   capability grey-out (Record/Stream disabled under Vulkan) also verified visually. 3b: recover
+   the ~525 us class per the design review below.
+
+### Stage 3 second-opinion review (two designs compared, 2026-07-30)
+
+Both designs (ours in the session scratchpad, codex's in
+`docs/archive/codex-vulkan-stage3-design.md`) independently picked the same primary:
+**`RenderingDevice.texture_update` on the render thread + persistent `Texture2DRD` wrappers**,
+R8/RG8 textures with SAMPLING|CAN_UPDATE, getters widened to `Texture2D`, main thread keeps the
+SDK grab, GL PBO path untouched, and both explicitly rejected extending the stage-2 raw bridge
+first (staging-ring + own vkCmdCopyBufferToImage stays the escalation if `texture_update`'s
+extra CPU copy measures as the dominant cost, via `texture_create_from_extension`, never raw
+writes into Godot-created textures).
+
+**ADOPTED from codex - the contracts.** (1) `frame_changed` fires only after the render thread
+has actually issued both `texture_update`s, published back on the *next* main poll (a one-poll
+pipeline); our draft emitted after merely scheduling the upload, which would let a handler
+observe new `y_cpu` with stale textures - a real violation of the feed's emit-last invariant.
+(2) A two-slot latest-wins mailbox with a `dropped_pending` counter, never overwriting the slot
+the render thread borrowed. (3) Use `call_on_render_thread`, NOT the stage-2 frame-drawn
+callback, which is deliberately post-render and would add a guaranteed extra frame. (4) Explicit
+teardown order (clear `texture_rd_rid` -> `free_rid` on the render thread -> drop wrappers; no
+Drop-based cleanup). (5) `feed_camera_server=true` keeps the whole Image path. (6) The probe
+ladder (format-support query, Y-only stall probe, cross-plane generation-mismatch synthetic).
+Kill switch `debug.xreal.vulkan_camera`, default OFF for the first landing, sampled at capture
+start. Path label `vk_rd`.
 4. **Stage 4 - FPV stream.** Reuse the stage-2 private EGL context + AHB share to give the encoder
    a real GL name, then lift the `video_encoder::start()` gate. Verify with the PC receivers in
    `scripts/stream_server/`.
