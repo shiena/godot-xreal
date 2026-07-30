@@ -199,9 +199,40 @@ Drop-based cleanup). (5) `feed_camera_server=true` keeps the whole Image path. (
 ladder (format-support query, Y-only stall probe, cross-plane generation-mismatch synthetic).
 Kill switch `debug.xreal.vulkan_camera`, default OFF for the first landing, sampled at capture
 start. Path label `vk_rd`.
-4. **Stage 4 - FPV stream.** Reuse the stage-2 private EGL context + AHB share to give the encoder
-   a real GL name, then lift the `video_encoder::start()` gate. Verify with the PC receivers in
-   `scripts/stream_server/`.
+4. **Stage 4 - FPV stream. Design settled (2026-07-31, review below); build it.** Verify with
+   `scripts/stream_server/fpv_server.py` AND the browser actually rendering live video (packet
+   arrival alone does not pass), then Record -> mp4 -> gallery, then the GL regression pass.
+
+### Stage 4 second-opinion review (two designs compared, 2026-07-31)
+
+Both designs (ours in the session scratchpad, codex's in
+`docs/archive/codex-vulkan-stage4-design.md`) picked the same body: one more stage-2-style
+opaque-fd bundle at stream size, filled by `vkCmdCopyImage` in the existing bridge command
+buffer, `HWEncoderUpdateSurface` called inside the Vulkan tick with the private EGL context
+bound, a viewport-RID publish API replacing the GL-name push under Vulkan, the GL path
+byte-identical, and the recorder riding the same path.
+
+**ADOPTED from codex - it caught a real bug in ours.** Our draft called `UpdateSurface` right
+after the same tick's submit, but the pipelined fence proves completion only at the NEXT tick:
+the encoder could sample a bundle mid-copy. codex's fix is a **ping-pong pair of encoder
+bundles** - each tick encodes the bundle whose copy the entry fence just proved complete, and
+copies the new frame into the other - one frame of fixed latency, no `vkQueueWaitIdle` return.
+Also adopted: the **whole encoder lifecycle moves onto the tick thread** with the private
+context bound (Create/SetConfigration/Start/Stop/Destroy - the share-group capture point inside
+libmedia_codec is unknown, so never call any of it without the context), driven by an async
+state machine (Idle/StartPending/Running/StopPending/Failed) that GDScript observes instead of
+assuming synchronous starts; `glFinish()` after `UpdateSurface` before the bundle's next Vulkan
+reuse; the encoded timestamp stored at copy-record time (it describes the copied frame, not the
+encode tick); `get_render_texture_encoder_backend()` (0/1/2) with Vulkan support keyed to the
+bridge machinery, NOT the glasses kill switch, and the frame-drawn tick registered whenever
+either has work; `stream_push_frame` returns `-2` under Vulkan; the recorder's `finished(path)`
+deferred until Stop/Destroy actually completed on the tick (no racing the muxer); and the
+alternating-color tearing probe with a `vk_encoder_sync=0` wait-idle comparison mode.
+
+**REJECTED (deferred) from codex**: Frida/eglCreateContext share-argument tracing as a
+prerequisite - the production design takes tick-thread startup regardless, so the trace only
+explains, never changes, the decision; and `HWEncoderStartWithRenderInstance` stays out until
+RE'd (codex agrees).
 
 Working branch: `feat/vulkan-path`. Soak helper: the scratchpad `soak_vulkan.ps1` (launch, watch,
 screenshot, exit through the Exit button, extract FPS + error logs).
