@@ -149,8 +149,11 @@ if ($Export) {
     # a resident Gradle daemon behind, so the console binary hangs after writing the APK. The
     # non-console binary exits normally (~20-30s). See godot-android-export-hang-repro.
     Say "Godot export ($exportFlag `"$Preset`") -> $ApkOut"
-    $proc = Start-Process -FilePath $Godot -PassThru -WindowStyle Hidden -ArgumentList @(
-        '--headless', '--path', $repoRoot, $exportFlag, $Preset, $ApkOut
+    # Quote every argument: -ArgumentList joins with spaces WITHOUT quoting, so a preset name
+    # containing a space ("Android Vulkan") would otherwise split into preset + bogus output path.
+    $proc = Start-Process -FilePath $Godot -PassThru -WindowStyle Hidden -ArgumentList (
+        @('--headless', '--path', $repoRoot, $exportFlag, $Preset, $ApkOut) |
+            ForEach-Object { '"{0}"' -f $_ }
     )
     if (-not $proc.WaitForExit(180000)) {
         Stop-Process -Id $proc.Id -Force
