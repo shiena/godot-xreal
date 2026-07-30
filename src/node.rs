@@ -146,11 +146,12 @@ impl INode3D for XrealHeadTracker {
             }
         }
 
-        // The glasses display path runs ONLY under the GL (Compatibility) renderer: it feeds the
-        // SDK compositor client GL texture names out of Godot's own EGL context. Under a Vulkan
-        // renderer that context does not exist, so skip the stereo rig and the swapchain drive
-        // (until the vulkan-path-plan stage-2 bridge exists) while everything below — head
-        // tracking, signals, the phone display — keeps working.
+        // The glasses display path: under the GL (Compatibility) renderer it feeds the SDK
+        // compositor client GL texture names out of Godot's own EGL context; under Vulkan the
+        // stage-2 bridge does the same through per-slot AHardwareBuffers and a private EGL
+        // context (vk_bridge.rs), gated by `debug.xreal.vulkan_glasses`. With neither, the
+        // glasses submission is skipped while everything below — head tracking, signals, the
+        // phone display — keeps working.
         if gl::renderer_is_gl() {
             // Build the per-eye offscreen render rig once we are in the tree and so have a World3D.
             self.ensure_stereo();
@@ -164,6 +165,18 @@ impl INode3D for XrealHeadTracker {
                 Variant::nil()
             });
             RenderingServer::singleton().call_on_render_thread(&callable);
+        } else if crate::vk_bridge::enabled() {
+            crate::vk_bridge::init_from_main_thread();
+            self.ensure_stereo();
+            // The Vulkan tick MUST run after Godot submitted this frame's rendering: the bridge
+            // orders its eye copy against the SubViewport rendering purely by same-queue
+            // submission order. The frame-drawn callback is exactly that point; it is one-shot,
+            // so re-request it every frame.
+            let callable = Callable::from_fn("xreal_vk_tick", |_| {
+                crate::unity_plugin::run_vulkan_render_thread_tick();
+                Variant::nil()
+            });
+            RenderingServer::singleton().request_frame_drawn_callback(&callable);
         }
         // Primary path: drive the eye cameras from the **display** InputManager pose, the exact pose the
         // compositor reprojects the glasses layer against. It carries the full orientation, ROLL
@@ -464,15 +477,67 @@ impl XrealHeadTracker {
             }
         }
         let rs = RenderingServer::singleton();
-        // Use the actual render-target texture RID, from viewport_get_texture on the viewport RID, and
-        // not the ViewportTexture *resource* RID, whose native handle is 0.
-        let handle = |sv: &Gd<SubViewport>| -> u32 {
-            let tex_rid = rs.viewport_get_texture(sv.get_viewport_rid());
-            rs.texture_get_native_handle(tex_rid) as u32
+        if gl::renderer_is_gl() {
+            // Use the actual render-target texture RID, from viewport_get_texture on the viewport RID, and
+            // not the ViewportTexture *resource* RID, whose native handle is 0.
+            let handle = |sv: &Gd<SubViewport>| -> u32 {
+                let tex_rid = rs.viewport_get_texture(sv.get_viewport_rid());
+                rs.texture_get_native_handle(tex_rid) as u32
+            };
+            let left = handle(&rig.viewports[0]);
+            let right = handle(&rig.viewports[1]);
+            crate::unity_plugin::set_godot_eye_sources(left, right, EYE_W, EYE_H);
+        } else {
+            // Vulkan bridge: publish each eye SubViewport's VkImage (and its RD format) for the
+            // per-frame vkCmdCopyImage. Resolved every frame, because Godot may reallocate the
+            // render target, invalidating both the RID chain and the driver handle.
+            let left = Self::vk_eye_source(&rig.viewports[0]);
+            let right = Self::vk_eye_source(&rig.viewports[1]);
+            crate::vk_bridge::set_eye_sources(left, right);
+        }
+    }
+
+    /// Resolve one eye SubViewport's render-target texture down to its Vulkan identity for the
+    /// bridge: viewport RID -> render-target texture RID -> RD texture RID -> `VkImage` +
+    /// format. An unresolvable or non-RGBA8-class texture comes back `valid: false`, which the
+    /// fill turns into a black clear rather than a bad copy (RGBA8 class is required for the
+    /// raw-texel `vkCmdCopyImage`; a 16F/10-bit source would need the fill-v2 sampled pass).
+    fn vk_eye_source(sv: &Gd<SubViewport>) -> crate::vk_bridge::EyeSource {
+        use godot::classes::rendering_device::{DataFormat, DriverResource};
+        let rs = RenderingServer::singleton();
+        let zero = crate::vk_bridge::EyeSource::default();
+        let Some(mut rd) = rs.get_rendering_device() else {
+            return zero;
         };
-        let left = handle(&rig.viewports[0]);
-        let right = handle(&rig.viewports[1]);
-        crate::unity_plugin::set_godot_eye_sources(left, right, EYE_W, EYE_H);
+        let tex_rid = rs.viewport_get_texture(sv.get_viewport_rid());
+        let rd_rid = rs.texture_get_rd_texture(tex_rid);
+        if !rd_rid.is_valid() {
+            return zero;
+        }
+        let vk_image = rd.get_driver_resource(DriverResource::TEXTURE, rd_rid, 0);
+        let Some(fmt) = rd.texture_get_format(rd_rid) else {
+            return zero;
+        };
+        let format = fmt.get_format();
+        let srgb = format == DataFormat::R8G8B8A8_SRGB;
+        if !srgb && format != DataFormat::R8G8B8A8_UNORM {
+            static WARNED: std::sync::atomic::AtomicBool =
+                std::sync::atomic::AtomicBool::new(false);
+            if !WARNED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                godot_warn!(
+                    "[xreal] vk eye source format {format:?} is not RGBA8-class; the raw copy \
+                     cannot convert it (fill v2 needed) - eyes stay black"
+                );
+            }
+            return zero;
+        }
+        crate::vk_bridge::EyeSource {
+            vk_image,
+            width: fmt.get_width() as i32,
+            height: fmt.get_height() as i32,
+            srgb,
+            valid: vk_image != 0,
+        }
     }
 }
 

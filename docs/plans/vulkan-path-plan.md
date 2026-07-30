@@ -129,15 +129,34 @@ parameter is the ex-builder form in gdext 0.5.3.
    `xreal_video_recorder.gd` and the Stream / Record grey-out in
    `demo/main.gd::_apply_capabilities()`. Code-verified (clippy, tests, gdlint); the on-device
    spot-check rides along with the stage-2 soak.
-2. **Stage 2 - glasses rendering. Design settled (see the review above); build it**: bridge-owned
-   post-draw command buffer on Godot's queue, AHB bundle per `xr_create_texture` slot, fill v1 =
-   `vkCmdCopyImage` with exact source-layout restore (fill v2 = fullscreen pass if the probe or
-   validation kills v1), v1 sync = `vkQueueWaitIdle` (v2 = SYNC_FD semaphore -> EGL fence),
-   private EGL context bound/unbound around each SDK graphics op, `debug.xreal.vulkan_glasses`
-   default off. Keep the fake-`IUnityXRDisplay` GL submission unchanged. Bring-up ladder and
-   instruments: `docs/archive/codex-vulkan-stage2-design.md` section 9. **Re-run the
-   RGBA8-vs-sRGB color A/B on device** (the old measurement was against gl_compatibility output)
-   and the crash bar of frame #1500+ / 25 s+, then the 60 min x 3 soak.
+2. **Stage 2 - glasses rendering. Design settled (see the review above); building**: bridge-owned
+   post-draw command buffer on Godot's queue, one share bundle per `xr_create_texture` slot,
+   fill v1 = `vkCmdCopyImage` with exact source-layout restore (fill v2 = fullscreen pass if the
+   probe or validation kills v1), v1 sync = `vkQueueWaitIdle` (v2 = SYNC_FD semaphore -> EGL
+   fence), private EGL context bound/unbound around each SDK graphics op,
+   `debug.xreal.vulkan_glasses` default off. Keep the fake-`IUnityXRDisplay` GL submission
+   unchanged. Bring-up ladder and instruments:
+   `docs/archive/codex-vulkan-stage2-design.md` section 9. **Re-run the RGBA8-vs-sRGB color A/B
+   on device** (the old measurement was against gl_compatibility output) and the crash bar of
+   frame #1500+ / 25 s+, then the 60 min x 3 soak.
+
+   **Share mechanics pivot, device-forced (2026-07-30): OPAQUE_FD, not AHB.** The stage-0 AHB
+   share assumed the Vulkan side could import an AHardwareBuffer, but that import needs
+   `VK_ANDROID_external_memory_android_hardware_buffer`, and **Godot 4.7 never enables it on its
+   device** (checked in 4.7-stable `_register_requested_device_extension`). Device-verified
+   failure modes on the Beam Pro: `vkGetDeviceProcAddr` returns null for
+   `vkGetAndroidHardwareBufferPropertiesANDROID`, and the `vkGetInstanceProcAddr`-resolved stub
+   "succeeds" with `memoryTypeBits = 0`. The working, fully in-spec route inverts the export
+   direction: allocate an exportable `VkImage` on Godot's device, `vkGetMemoryFdKHR` (its
+   extension `VK_KHR_external_memory_fd` IS enabled by Godot, and `VK_KHR_external_memory` is
+   core 1.1) -> OPAQUE_FD -> `GL_EXT_memory_object_fd` import (`glImportMemoryFdEXT` +
+   `glTexStorageMem2DEXT`; the Adreno 710 advertises the extension, checked via
+   `dumpsys SurfaceFlinger`). The barriers use `VK_QUEUE_FAMILY_EXTERNAL` (core 1.1) instead of
+   `FOREIGN_EXT` (extension Godot lacks) for the same reason. Stage 0's conclusion still stands -
+   one allocation visible to both APIs - only the import mechanics changed. Note the sync-v2
+   implication: `VK_KHR_external_semaphore_fd` is NOT enabled by Godot, so if `vkQueueWaitIdle`
+   ever misses 60 FPS the v2 escalation needs a patched export template after all (record the
+   measurement first).
 3. **Stage 3 - camera rendering.** Confirm on device that the `Image` fallback works under Vulkan
    (expected, it is renderer-agnostic), then recover the ~525 us class with
    `RenderingDevice.texture_update` + `Texture2DRD`.

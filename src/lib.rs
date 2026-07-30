@@ -20,6 +20,7 @@ mod ahb_probe;
 mod camera_feed;
 mod controller_probe;
 mod depth_mesh;
+mod egl_context;
 mod ffi;
 mod gl;
 mod glasses_events;
@@ -34,6 +35,7 @@ mod signal_guard;
 mod system;
 mod unity_plugin;
 mod video_encoder;
+mod vk_bridge;
 
 struct GodotXrealExtension;
 
