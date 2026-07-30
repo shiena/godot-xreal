@@ -100,6 +100,17 @@ func set_enabled(on: bool) -> void:
 		_fail("[xreal-record] native encoder unavailable")
 		active_changed.emit(false)
 		return
+	# Refuse before the RECORD_AUDIO and app-audio consent dialogs when the HW encoder cannot run
+	# on this renderer (Vulkan, until the vulkan-path stage-4 bridge). Rust keeps the hard gate
+	# inside stream_start; checking here skips the pointless side effects and reports the specific
+	# reason instead of a generic start failure.
+	if (
+		_system.has_method(&"is_render_texture_encoder_supported")
+		and not _system.is_render_texture_encoder_supported()
+	):
+		_fail("[xreal-record] HW encoder needs the GL renderer; recording is unavailable under Vulkan")
+		active_changed.emit(false)
+		return
 	# There is one process-global HW encoder, so starting while the FPV stream runs would feed this
 	# second view into the receiver's stream instead of opening a second encoder.
 	if _system.has_method(&"is_stream_active") and _system.is_stream_active():

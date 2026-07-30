@@ -769,6 +769,18 @@ impl XrealSystem {
         crate::video_encoder::is_active()
     }
 
+    /// Whether the render-texture HW encoder behind [`Self::stream_start`], which both FPV
+    /// streaming and mp4 recording use, can run on the current renderer. It is `true` on the GL
+    /// (Compatibility) renderer and `false` under Vulkan, where the encoder's `UpdateSurface`
+    /// samples a client GL texture name that a Vulkan Godot cannot provide, until the vulkan-path
+    /// stage-4 bridge lands. Check it BEFORE pairing, permission dialogs or other start side
+    /// effects, and report the specific reason to the user; `stream_start` keeps the hard refusal
+    /// either way.
+    #[func]
+    fn is_render_texture_encoder_supported(&self) -> bool {
+        crate::gl::renderer_is_gl()
+    }
+
     /// Select the stereo rendering mode applied when the native session **bootstraps**, a startup
     /// selector: `0` is Multipass, both eyes, the default shipping path, and `2` is Multiview,
     /// single-pass-instanced. **Call it before the session starts**, for instance in an autoload

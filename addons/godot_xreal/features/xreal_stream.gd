@@ -106,6 +106,17 @@ func set_enabled(on: bool) -> void:
 	if not _system or not _system.has_method(&"stream_start") or _pairing == null:
 		active_changed.emit(false)
 		return
+	# Refuse before pairing and the permission dialogs when the HW encoder cannot run on this
+	# renderer (Vulkan, until the vulkan-path stage-4 bridge). Rust keeps the hard gate inside
+	# stream_start; checking here skips the pointless side effects and reports the specific reason
+	# instead of a generic start failure.
+	if (
+		_system.has_method(&"is_render_texture_encoder_supported")
+		and not _system.is_render_texture_encoder_supported()
+	):
+		_fail("[xreal-stream] HW encoder needs the GL renderer; streaming is unavailable under Vulkan")
+		active_changed.emit(false)
+		return
 	# One process-global HW encoder, shared with xreal_video_recorder: stream_start while it runs
 	# would not open a second encoder but feed our frames into the running recording.
 	if _system.has_method(&"is_stream_active") and _system.is_stream_active():

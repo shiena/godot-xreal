@@ -226,10 +226,17 @@ impl XrealCameraFeed {
         // Android, where Godot's main loop is the GL thread (see `crate::gl`), plus textures to upload
         // into. Everything else takes the Image path below, which also creates those textures on the
         // first frame and which `feed_camera_server` needs anyway.
+        //
+        // The renderer check comes FIRST, before the context probe, so under Vulkan this never touches
+        // the GL/EGL loader at all. The context probe alone is not a renderer gate: once the
+        // vulkan-path stage-2 bridge gives the render thread a private EGL context, a context that
+        // happens to be current here would let this path treat `texture_get_native_handle`'s VkImage
+        // as a GL texture name. Under Vulkan the feed always takes the renderer-agnostic Image path.
         if self.y_tex.is_some()
             && self.cbcr_tex.is_some()
             && !self.feed_camera_server
             && !PBO_FAILED.load(Ordering::Relaxed)
+            && crate::gl::renderer_is_gl()
             && crate::gl::has_current_context() == Some(true)
         {
             return self.poll_frame_direct(session, &mut grab);

@@ -1378,6 +1378,22 @@ pub fn populate_registered_display_frame_desc_with_ptr(desc: *mut c_void) -> i32
 /// On subsequent calls: drives `PopulateNextFrameDesc` so the SDK's GLThread always has
 /// a fresh frame handle for `SubmitCurrentFrame`.
 pub fn run_render_thread_tick() {
+    // Self-defence gate, not the primary dispatch: node.rs, today's only caller, already skips this
+    // call under a Vulkan renderer, but this entry point is what reaches CreateTexture, the eye
+    // blits and the frame submit, so a future second caller bounces off here instead of handing the
+    // SDK a VkImage as a GL name. Deliberately at the entry point and NOT inside the gl.rs
+    // primitives, which the vulkan-path stage-2 bridge will drive from a private EGL context while
+    // Godot itself runs Vulkan.
+    if !crate::gl::renderer_is_gl() {
+        static WARNED: AtomicBool = AtomicBool::new(false);
+        if !WARNED.swap(true, Ordering::Relaxed) {
+            godot::global::godot_warn!(
+                "[xreal] run_render_thread_tick under a non-GL renderer: ignoring (caller bug; \
+                 the GL glasses path is dispatched in node.rs)"
+            );
+        }
+        return;
+    }
     // Drain textures queued by `xr_destroy_texture`, which may run off this thread during teardown,
     // where our EGL context is not current. We are on the render thread with the context current, so
     // `glDeleteTextures` is safe here. This is the deferred deletion the destroy path promises, and it

@@ -1,8 +1,9 @@
 # Vulkan rendering path — staged plan for a re-attempt
 
-Status: **stage 0 = GO, stage 1 (phone screen) = done bar three adopted follow-ups**
-(device-verified 2026-07-30 on Beam Pro). Stages: phone screen -> glasses rendering -> camera
-rendering -> FPV stream, one commit each, each design cross-checked against a second opinion.
+Status: **stage 0 = GO, stage 1 (phone screen) = done, adopted follow-ups implemented; next =
+stage 2 design** (stage 1 device-verified 2026-07-30 on Beam Pro). Stages: phone screen -> glasses
+rendering -> camera rendering -> FPV stream, one commit each, each design cross-checked against a
+second opinion.
 
 - **Stage 0 PASSED**: `src/ahb_probe.rs` (one-shot, render thread, `debug.xreal.ahb_probe 0` to
   skip). RGBA8 1968x1134 with `GPU_COLOR_OUTPUT|GPU_SAMPLED_IMAGE`: isSupported=1, allocate ok
@@ -73,9 +74,12 @@ Rejected, with reasons:
 
 ## Next steps (resume here)
 
-1. **Stage 1 leftovers (adopted above, not yet implemented)**: the `camera_feed` renderer gate, the
-   `run_render_thread_tick()` self-defence gate, and the capability API + GDScript UX refusal in
-   `xreal_stream.gd` / `xreal_video_recorder.gd` / `demo/main.gd::_apply_capabilities()`.
+1. **Stage 1 leftovers: DONE (2026-07-30)**: the `camera_feed` renderer-first gate, the
+   `run_render_thread_tick()` self-defence gate (one-shot warning), and
+   `XrealSystem.is_render_texture_encoder_supported()` with the refusal in `xreal_stream.gd` /
+   `xreal_video_recorder.gd` and the Stream / Record grey-out in
+   `demo/main.gd::_apply_capabilities()`. Code-verified (clippy, tests, gdlint); the on-device
+   spot-check rides along with the stage-2 soak.
 2. **Stage 2 - glasses rendering.** Consult a second opinion first, then build: a private EGL
    context on the render thread (Godot no longer provides one), RGBA8 AHardwareBuffers per eye
    (stage 0 proved the share), the AHB-backed `VkImage` reached through
