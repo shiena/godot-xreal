@@ -156,6 +156,12 @@ Present rate in frames/second (compositor, integer ~60). `-1.0` while the metric
 
 One-line diagnostic / start status of the render-metrics handle.
 
+<a id="method-get_render_texture_encoder_backend"></a>
+
+### get_render_texture_encoder_backend() -> int
+
+Which backend feeds the HW encoder: `0` = unsupported, `1` = the GL renderer's direct texture-name push ([`stream_push_frame()`](#method-stream_push_frame)), `2` = the Vulkan bridge (vulkan-path-plan.md stage 4), where components publish the source viewport each frame through [`stream_publish_viewport()`](#method-stream_publish_viewport) instead. Backend 2 is reported whenever the renderer is Vulkan with a live `RenderingDevice`, independent of the glasses kill switch (the encoder works in encoder-only mode too); the bridge itself initializes lazily at `stream_start`, and a hard init failure there turns the stream off through its error path.
+
 <a id="method-get_teared_frame_count"></a>
 
 ### get_teared_frame_count() -> int
@@ -239,6 +245,12 @@ Whether the direct NR rendering/compositor API was resolved from libnr_loader.so
 ### is_plane_detection_available() -> bool
 
 Whether the connected glasses support plane detection. Gated by `is_ar_perception_available()` (6DoF + no RGB camera = the Air 2 Ultra). `false` until the session is up, so query it at toggle time, not at startup.
+
+<a id="method-is_render_texture_encoder_supported"></a>
+
+### is_render_texture_encoder_supported() -> bool
+
+Whether the render-texture HW encoder behind [`stream_start()`](#method-stream_start), which both FPV streaming and mp4 recording use, can run on the current renderer: [`get_render_texture_encoder_backend()`](#method-get_render_texture_encoder_backend) != 0. Check it BEFORE pairing, permission dialogs or other start side effects, and report the specific reason to the user; `stream_start` keeps the hard refusal either way.
 
 <a id="method-is_session_started"></a>
 
@@ -413,6 +425,12 @@ Returns 0 on success, -1 when libnr_loader.so was not resolved, or the native NR
 ### start_controller() -> String
 
 Discover + create + start the NRController subsystem (`libnr_loader.so`) and keep it alive for `poll_controller`. Returns a one-line diagnostic (count / id / connected &amp; handheld type). The phone-as-3D-pointer source (docs/plans/input-plan.md Phase C).
+
+<a id="method-stream_publish_viewport"></a>
+
+### stream_publish_viewport(viewport_rid: Rid, timestamp_ns: int) -> int
+
+Vulkan backend only: publish this frame's stream source, the composed SubViewport's viewport RID, plus a nanosecond timestamp describing the frame. Call it once per frame from `_process` while streaming or recording; the bridge copies the viewport's `VkImage` into an encoder bundle at the end of the frame and encodes it one frame later. Returns `0` accepted, `-1` while the encoder is idle, `-2` when the viewport cannot be resolved to an RGBA8-class Vulkan image (or the renderer is not the Vulkan backend).
 
 <a id="method-stream_push_frame"></a>
 
