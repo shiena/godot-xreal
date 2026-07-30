@@ -109,15 +109,39 @@ fn config_json(
     )
 }
 
-/// Whether a stream is currently active.
+/// Whether a stream is currently active (either the GL-path encoder or any non-idle state of
+/// the Vulkan lifecycle, StartPending and StopPending included, so mutual exclusion and the
+/// recorder's finalize-wait both observe the truth).
 pub fn is_active() -> bool {
-    ENCODER.lock().expect("encoder mutex").is_some()
+    ENCODER.lock().expect("encoder mutex").is_some() || vk_is_active()
+}
+
+/// The encoder configuration, owned by the stage-4 Vulkan state machine while a start is
+/// pending (the tick thread performs the actual native start; see [`vk_tick`]).
+#[derive(Clone)]
+struct EncoderConfig {
+    output: String,
+    width: i32,
+    height: i32,
+    bitrate: i32,
+    fps: i32,
+    with_mic: bool,
+    with_internal: bool,
+    with_alpha: bool,
+    audio_rate: Option<i32>,
 }
 
 /// Start streaming the FPV to `output`, which is an `rtp://ip:port`, an `rtmp://…` or a local file
 /// path. It creates, configures and starts the HW encoder, and returns `false` on any failure,
 /// whether a missing library or symbol or a non-zero `HWEncoder*` status. Feed frames with
 /// [`submit_frame`] from the render thread.
+///
+/// Under the Vulkan renderer with the stage-2 bridge active, this instead QUEUES an asynchronous
+/// start: every `HWEncoder*` lifecycle call must run on the Vulkan tick with the private EGL
+/// context bound (the context whose share group carries the bundle GL names; where the encoder's
+/// worker context latches on is unknown, so all of them go there). `true` then means "accepted";
+/// the next tick starts the encoder and a failure lands in the `Failed` state, observable through
+/// [`is_active`] going false.
 #[allow(clippy::too_many_arguments)]
 pub fn start(
     output: &str,
@@ -130,62 +154,97 @@ pub fn start(
     with_alpha: bool,
     audio_rate: Option<i32>,
 ) -> bool {
-    // GL renderer only, until the stage-4 Vulkan bridge (vulkan-path-plan.md): the encoder's
-    // UpdateSurface samples a client GL texture name on Godot's render-thread EGL context, and
-    // under a Vulkan renderer that context does not exist and texture_get_native_handle returns a
-    // VkImage, not a GL name. Both the FPV stream and the mp4 recorder start through here, so this
-    // one gate flips both demo toggles back through their existing error paths.
+    let config = EncoderConfig {
+        output: output.to_string(),
+        width,
+        height,
+        bitrate,
+        fps,
+        with_mic,
+        with_internal,
+        with_alpha,
+        audio_rate,
+    };
     if !crate::gl::renderer_is_gl() {
-        godot::global::godot_warn!(
-            "[xreal] FPV encoder unavailable under the Vulkan renderer (GL-only until the \
-             vulkan-path stage-4 bridge)"
-        );
-        return false;
+        // The stage-4 Vulkan path needs the bridge machinery (the tick, the private EGL context,
+        // the opaque-fd bundles). Without it the encoder stays unavailable, as in stage 1.
+        if !crate::vk_bridge::active() {
+            godot::global::godot_warn!(
+                "[xreal] FPV encoder unavailable: Vulkan renderer without the vk bridge \
+                 (enable debug.xreal.vulkan_glasses)"
+            );
+            return false;
+        }
+        return vk_request_start(config);
     }
     let mut guard = ENCODER.lock().expect("encoder mutex");
     if guard.is_some() {
         return true; // already streaming
     }
-    unsafe {
+    match unsafe { start_native(&config) } {
+        Some(enc) => {
+            *guard = Some(enc);
+            true
+        }
+        None => false,
+    }
+}
+
+/// The native open-configure-start flow, shared by the GL path (called inline on the main
+/// thread) and the Vulkan tick. Returns the live encoder or `None` with the reason logged.
+unsafe fn start_native(config: &EncoderConfig) -> Option<Encoder> {
+    let EncoderConfig {
+        output,
+        width,
+        height,
+        bitrate,
+        fps,
+        with_mic,
+        with_internal,
+        with_alpha,
+        audio_rate,
+    } = config.clone();
+    let output = output.as_str();
+    {
         let Ok(lib) = Library::new(MEDIA_CODEC_LIB) else {
             godot::global::godot_warn!("[xreal] dlopen {MEDIA_CODEC_LIB} failed");
-            return false;
+            return None;
         };
         let create: FnCreate = match lib.get::<FnCreate>(b"HWEncoderCreate\0") {
             Ok(s) => *s,
-            Err(_) => return false,
+            Err(_) => return None,
         };
         let set_config: FnSetConfig = match lib.get::<FnSetConfig>(b"HWEncoderSetConfigration\0") {
             Ok(s) => *s,
-            Err(_) => return false,
+            Err(_) => return None,
         };
         let set_media_projection: FnSetMediaProjection =
             match lib.get::<FnSetMediaProjection>(b"HWEncoderSetMediaProjection\0") {
                 Ok(s) => *s,
-                Err(_) => return false,
+                Err(_) => return None,
             };
         let start_fn: FnStart = match lib.get::<FnStart>(b"HWEncoderStart\0") {
             Ok(s) => *s,
-            Err(_) => return false,
+            Err(_) => return None,
         };
         let update_surface: FnUpdateSurface =
             match lib.get::<FnUpdateSurface>(b"HWEncoderUpdateSurface\0") {
                 Ok(s) => *s,
-                Err(_) => return false,
+                Err(_) => return None,
             };
         let stop: FnStop = match lib.get::<FnStop>(b"HWEncoderStop\0") {
             Ok(s) => *s,
-            Err(_) => return false,
+            Err(_) => return None,
         };
         let destroy: FnDestroy = match lib.get::<FnDestroy>(b"HWEncoderDestroy\0") {
             Ok(s) => *s,
-            Err(_) => return false,
+            Err(_) => return None,
         };
 
         let mut handle: u64 = 0;
         if create(&mut handle) != 0 || handle == 0 {
             godot::global::godot_warn!("[xreal] HWEncoderCreate failed");
-            return false;
+            return None;
         }
         let cfg = config_json(
             output,
@@ -200,12 +259,12 @@ pub fn start(
         );
         let Ok(cfg_c) = CString::new(cfg.as_str()) else {
             destroy(handle);
-            return false;
+            return None;
         };
         if set_config(handle, cfg_c.as_ptr()) != 0 {
             godot::global::godot_warn!("[xreal] HWEncoderSetConfigration failed: {cfg}");
             destroy(handle);
-            return false;
+            return None;
         }
         // This must come right after the config, as the SDK does: without it HWEncoderStart dereferenced
         // a null field and hit a SIGSEGV. The projection is not decoration. With `addInternalAudio` the
@@ -233,20 +292,19 @@ pub fn start(
         if start_fn(handle) != 0 {
             godot::global::godot_warn!("[xreal] HWEncoderStart failed");
             destroy(handle);
-            return false;
+            return None;
         }
         godot::global::godot_print!(
             "[xreal] FPV stream started -> {output} ({width}x{height} @{fps} {bitrate}bps codecType={})",
             codec_type(output)
         );
-        *guard = Some(Encoder {
+        Some(Encoder {
             _lib: lib,
             update_surface,
             stop,
             destroy,
             handle,
-        });
-        true
+        })
     }
 }
 
@@ -254,8 +312,12 @@ pub fn start(
 /// `RenderingServer.texture_get_native_handle` on the actual viewport color-texture RID that
 /// `viewport_get_texture` returns, not on the `ViewportTexture` proxy RID, and `timestamp` is in
 /// nanoseconds. **Render thread only.** It returns the encoder status: `0` for ok, `-1` when not
-/// streaming.
+/// streaming, `-2` under the Vulkan renderer, whose components publish through
+/// `stream_publish_viewport` instead (the integer here would be a `VkImage`, never a GL name).
 pub fn submit_frame(gl_texture_id: usize, timestamp: u64) -> i32 {
+    if !crate::gl::renderer_is_gl() {
+        return -2;
+    }
     let guard = ENCODER.lock().expect("encoder mutex");
     match guard.as_ref() {
         Some(enc) => unsafe { (enc.update_surface)(enc.handle, gl_texture_id, timestamp) },
@@ -263,8 +325,14 @@ pub fn submit_frame(gl_texture_id: usize, timestamp: u64) -> i32 {
     }
 }
 
-/// Stop and destroy the encoder. Idempotent.
+/// Stop and destroy the encoder. Idempotent. Under Vulkan this only *requests* the stop; the
+/// tick performs the native teardown, and [`is_active`] turns false when it is done (which is
+/// what the recorder waits on before publishing the mp4).
 pub fn stop() {
+    if !crate::gl::renderer_is_gl() {
+        vk_request_stop();
+        return;
+    }
     let mut guard = ENCODER.lock().expect("encoder mutex");
     if let Some(enc) = guard.take() {
         unsafe {
@@ -272,6 +340,111 @@ pub fn stop() {
             (enc.destroy)(enc.handle);
         }
         godot::global::godot_print!("[xreal] FPV stream stopped");
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Stage-4 Vulkan lifecycle state machine. Every native HWEncoder* call runs on the Vulkan tick
+// with the private EGL context bound: the encoder's worker context shares against SOME context
+// it observes during its lifecycle (which call latches it is unknown, so all of them get the
+// same one), and the bundle GL names only exist in the private context's share group. See
+// docs/archive/codex-vulkan-stage4-design.md.
+// ---------------------------------------------------------------------------------------------
+
+enum VkEncState {
+    Idle,
+    /// `stream_start` accepted; the next tick performs the native start.
+    StartPending(EncoderConfig),
+    Running(Encoder),
+    /// `stop()` requested; the next tick stops + destroys, then releases the bundles.
+    StopPending(Encoder),
+    /// The native start failed; cleared by the next start request.
+    Failed,
+}
+
+static VK_ENC: Mutex<VkEncState> = Mutex::new(VkEncState::Idle);
+
+fn vk_request_start(config: EncoderConfig) -> bool {
+    let mut st = VK_ENC.lock().expect("vk enc mutex");
+    match *st {
+        VkEncState::Idle | VkEncState::Failed => {
+            godot::global::godot_print!(
+                "[xreal] FPV encoder start queued (Vulkan tick will run it) -> {}",
+                config.output
+            );
+            *st = VkEncState::StartPending(config);
+            true
+        }
+        VkEncState::Running(_) | VkEncState::StartPending(_) => true, // already streaming
+        VkEncState::StopPending(_) => false, // teardown in flight; retry next frame
+    }
+}
+
+fn vk_request_stop() {
+    let mut st = VK_ENC.lock().expect("vk enc mutex");
+    *st = match std::mem::replace(&mut *st, VkEncState::Idle) {
+        VkEncState::Running(enc) => VkEncState::StopPending(enc),
+        VkEncState::StartPending(_) => VkEncState::Idle, // never started
+        other => other,
+    };
+}
+
+/// Whether the bridge should copy stream frames into the encoder bundles this tick.
+pub fn vk_wants_frames() -> bool {
+    matches!(
+        *VK_ENC.lock().expect("vk enc mutex"),
+        VkEncState::Running(_)
+    )
+}
+
+/// The Vulkan-side "encoder busy" flag folded into [`is_active`].
+fn vk_is_active() -> bool {
+    !matches!(
+        *VK_ENC.lock().expect("vk enc mutex"),
+        VkEncState::Idle | VkEncState::Failed
+    )
+}
+
+/// One encoder step on the Vulkan tick. MUST run with the private EGL context bound and after
+/// `vk_bridge::wait_entry_fence()`, which is what proves the ready bundle's copy complete.
+pub fn vk_tick() {
+    let mut st = VK_ENC.lock().expect("vk enc mutex");
+    match std::mem::replace(&mut *st, VkEncState::Idle) {
+        VkEncState::Idle => {}
+        VkEncState::Failed => *st = VkEncState::Failed,
+        VkEncState::StartPending(config) => match unsafe { start_native(&config) } {
+            Some(enc) => {
+                godot::global::godot_print!("[xreal] FPV encoder started on the Vulkan tick");
+                *st = VkEncState::Running(enc);
+            }
+            None => {
+                godot::global::godot_warn!(
+                    "[xreal] FPV encoder start FAILED on the Vulkan tick (state=Failed)"
+                );
+                *st = VkEncState::Failed;
+            }
+        },
+        VkEncState::Running(enc) => {
+            if let Some((gl_name, ts)) = crate::vk_bridge::encoder_take_ready() {
+                let status = unsafe { (enc.update_surface)(enc.handle, gl_name as usize, ts) };
+                if status != 0 {
+                    godot::global::godot_warn!("[xreal] HWEncoderUpdateSurface(vk) -> {status}");
+                }
+                // GL-side completion release before the bundle's next Vulkan reuse: external
+                // memory sharing supplies no GL->Vulkan execution ordering by itself.
+                crate::vk_bridge::gl_finish();
+            }
+            *st = VkEncState::Running(enc);
+        }
+        VkEncState::StopPending(enc) => {
+            unsafe {
+                (enc.stop)(enc.handle);
+                (enc.destroy)(enc.handle);
+            }
+            crate::vk_bridge::encoder_release_bundles();
+            godot::global::godot_print!("[xreal] FPV encoder stopped on the Vulkan tick");
+            *st = VkEncState::Idle;
+        }
     }
 }
 

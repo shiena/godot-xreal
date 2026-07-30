@@ -1452,6 +1452,12 @@ pub fn run_vulkan_render_thread_tick() {
     if !crate::egl_context::bind() {
         return;
     }
+    // Stage 4: the entry-fence wait proves LAST tick's copies (eyes AND the encoder bundle)
+    // complete, so the encoder step may hand its ready bundle to HWEncoderUpdateSurface before
+    // this tick records new work. Every native encoder lifecycle call happens inside vk_tick,
+    // here, with the private context bound.
+    crate::vk_bridge::wait_entry_fence();
+    crate::video_encoder::vk_tick();
     ensure_gfx_thread_started();
     run_frame_tick_with(FillBackend::Vulkan);
     crate::egl_context::unbind();

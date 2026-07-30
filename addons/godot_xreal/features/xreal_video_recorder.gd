@@ -81,9 +81,15 @@ var _rgb_offset := Vector3.ZERO     # RGB camera offset from the head (Godot spa
 var _eye_offsets := [Vector3.ZERO, Vector3.ZERO]  # per-eye display offsets, for the stereo parallax
 var _rgb_geom_done := false         # RGB blend geometry (FOV + offset) applied once, static per device
 var _epoch := 0                     # bumped on every start/stop; a frame captured for a prior session is dropped
+var _vk_backend := false            # encoder backend 2 = Vulkan bridge (publish RIDs, not GL names)
 
 func _ready() -> void:
 	_system = XrealShared.make_system()  # null off-device -> inert
+	_vk_backend = (
+		_system != null
+		and _system.has_method(&"get_render_texture_encoder_backend")
+		and _system.get_render_texture_encoder_backend() == 2
+	)
 
 func is_active() -> bool:
 	return _active
@@ -161,7 +167,22 @@ func _stop() -> void:
 		return
 	_active = false
 	_epoch += 1
-	_system.stream_stop()  # finalizes the mp4
+	_system.stream_stop()  # GL: finalizes the mp4 now; Vulkan: queues the tick-thread teardown
+	if _vk_backend:
+		# The mp4 is finalized by HWEncoderStop on the Vulkan tick, so wait for the encoder to
+		# report idle before publishing the path, or the gallery would race the muxer.
+		_finalize_vk()
+		return
+	print("[xreal-record] recording stopped -> %s" % _path)
+	active_changed.emit(false)
+	finished.emit(_path)
+
+func _finalize_vk() -> void:
+	var deadline := Time.get_ticks_msec() + 3000
+	while _system.is_stream_active() and Time.get_ticks_msec() < deadline:
+		await get_tree().process_frame
+	if _system.is_stream_active():
+		push_warning("[xreal-record] encoder stop did not finalize in time; mp4 may be truncated")
 	print("[xreal-record] recording stopped -> %s" % _path)
 	active_changed.emit(false)
 	finished.emit(_path)
@@ -306,6 +327,11 @@ func _process(_delta: float) -> void:
 		_comp_vp.render_target_update_mode = SubViewport.UPDATE_DISABLED  # idle the blend when unused
 	var viewport_rid := src_vp.get_viewport_rid()
 	var ts := Time.get_ticks_usec() * 1000  # nanoseconds
+	if _vk_backend:
+		# Vulkan bridge: publish the source viewport; the native side copies its VkImage at end
+		# of frame and encodes it one frame later (vulkan-path-plan.md stage 4).
+		_system.stream_publish_viewport(viewport_rid, ts)
+		return
 	var gen := _epoch  # a stop->restart bumps _epoch, so a frame captured for the old session is dropped
 	# ViewportTexture.get_rid() is a proxy RID, and in the Compatibility renderer its copied tex_id
 	# can stay 0, so resolve the viewport's real render-target color texture instead. Resolve the GL

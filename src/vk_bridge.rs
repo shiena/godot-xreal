@@ -410,6 +410,7 @@ type FnBindTexture = unsafe extern "C" fn(u32, u32);
 type FnTexParameteri = unsafe extern "C" fn(u32, u32, i32);
 type FnGetIntegerv = unsafe extern "C" fn(u32, *mut i32);
 type FnGetError = unsafe extern "C" fn() -> u32;
+type FnGlFinish = unsafe extern "C" fn();
 type FnCreateMemoryObjects = unsafe extern "C" fn(i32, *mut u32);
 type FnDeleteMemoryObjects = unsafe extern "C" fn(i32, *const u32);
 type FnMemoryObjectParameteriv = unsafe extern "C" fn(u32, u32, *const i32);
@@ -417,6 +418,7 @@ type FnImportMemoryFd = unsafe extern "C" fn(u32, u64, u32, i32);
 type FnTexStorageMem2D = unsafe extern "C" fn(u32, i32, u32, i32, i32, u32, u64);
 
 struct GlMem {
+    finish: FnGlFinish,
     gen_textures: FnGenTextures,
     delete_textures: FnDeleteTextures,
     bind_texture: FnBindTexture,
@@ -465,6 +467,7 @@ impl GlMem {
                 }};
             }
             Ok(GlMem {
+                finish: sym!(gles, "glFinish", FnGlFinish),
                 gen_textures: sym!(gles, "glGenTextures", FnGenTextures),
                 delete_textures: sym!(gles, "glDeleteTextures", FnDeleteTextures),
                 bind_texture: sym!(gles, "glBindTexture", FnBindTexture),
@@ -789,12 +792,33 @@ fn gl_mem() -> Option<&'static GlMem> {
 // Bundle lifecycle
 // ---------------------------------------------------------------------------------------------
 
-/// Allocate one eye slot: an exportable RGBA8 `VkImage` + dedicated `VkDeviceMemory` on Godot's
-/// device, its memory exported as an OPAQUE_FD (`vkGetMemoryFdKHR`) and imported into GL
-/// (`glImportMemoryFdEXT` + `glTexStorageMem2DEXT`). The private EGL context MUST be current:
-/// the caller is `xr_create_texture` inside the Vulkan tick. Returns the GL texture name the SDK
-/// gets, or `None` (latching [`BROKEN`]) on failure.
+/// Allocate one eye slot through [`create_share_bundle`] and register it in the bundle table.
+/// The private EGL context MUST be current: the caller is `xr_create_texture` inside the Vulkan
+/// tick. Returns the GL texture name the SDK gets, or `None` (latching [`BROKEN`]) on failure.
 pub fn create_eye_texture(width: i32, height: i32) -> Option<u32> {
+    let (gl_name, gl_memobj, vk_image, vk_memory) = create_share_bundle(width, height)?;
+    godot::global::godot_print!(
+        "[xreal] vk_bridge: eye slot {width}x{height} gl={gl_name} memobj={gl_memobj} \
+         vk_image={vk_image:#x} (opaque-fd share)"
+    );
+    BUNDLES.lock().expect("bundles mutex").push(EyeBundle {
+        gl_name,
+        gl_memobj,
+        vk_image,
+        vk_memory,
+        width,
+        height,
+        first_use: true,
+    });
+    Some(gl_name)
+}
+
+/// The opaque-fd share primitive both the eye slots and the stage-4 encoder bundles are made of:
+/// an exportable RGBA8 `VkImage` + dedicated `VkDeviceMemory` on Godot's device, its memory
+/// exported as an OPAQUE_FD (`vkGetMemoryFdKHR`) and imported into GL (`glImportMemoryFdEXT` +
+/// `glTexStorageMem2DEXT`). The private EGL context MUST be current. Returns
+/// `(gl_name, gl_memobj, vk_image, vk_memory)`, or `None` (latching [`BROKEN`]) on failure.
+fn create_share_bundle(width: i32, height: i32) -> Option<(u32, u32, VkHandle, VkHandle)> {
     let api = vk()?;
     let gm = gl_mem()?;
     unsafe {
@@ -938,22 +962,254 @@ pub fn create_eye_texture(width: i32, height: i32) -> Option<u32> {
             return None;
         }
 
-        godot::global::godot_print!(
-            "[xreal] vk_bridge: eye slot {width}x{height} gl={gl_name} memobj={memobj} \
-             vk_image={vk_image:#x} (alloc {} KiB, opaque-fd share)",
-            reqs.size / 1024
-        );
-        BUNDLES.lock().expect("bundles mutex").push(EyeBundle {
-            gl_name,
-            gl_memobj: memobj,
-            vk_image,
-            vk_memory,
-            width,
-            height,
-            first_use: true,
-        });
-        Some(gl_name)
+        Some((gl_name, memobj, vk_image, vk_memory))
     }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Stage-4 encoder bundles: a ping-pong pair of share bundles at stream size. Each tick, the
+// bundle whose copy the entry fence just proved complete is handed to the HW encoder
+// (UpdateSurface + glFinish, in video_encoder::vk_tick), while fill_eyes records the new frame's
+// copy into the other. One frame of fixed latency, no queue-wait; see the stage-4 design review.
+// ---------------------------------------------------------------------------------------------
+
+struct EncBundle {
+    gl_name: u32,
+    gl_memobj: u32,
+    vk_image: VkHandle,
+    vk_memory: VkHandle,
+    width: i32,
+    height: i32,
+    first_use: bool,
+    /// Timestamp of the frame copied into this bundle last tick; `Some` = encode-ready.
+    ready_ts: Option<u64>,
+}
+
+/// The published encoder source: the stream SubViewport's Vulkan identity plus the frame
+/// timestamp, latest wins (main thread writes, the tick reads).
+static ENCODER_SRC: Mutex<Option<(EyeSource, u64)>> = Mutex::new(None);
+static ENCODER_BUNDLES: Mutex<Vec<EncBundle>> = Mutex::new(Vec::new());
+
+/// Publish the stream viewport's Vulkan identity for this frame (main thread). Returns `false`
+/// when the source is unusable (wrong format class or no image).
+pub fn publish_encoder_source(src: EyeSource, timestamp_ns: u64) -> bool {
+    if !src.valid || src.vk_image == 0 {
+        return false;
+    }
+    *ENCODER_SRC.lock().expect("encoder src mutex") = Some((src, timestamp_ns));
+    true
+}
+
+/// Hand the encode-ready bundle to the caller (the tick's encoder step, AFTER
+/// [`wait_entry_fence`] proved its copy complete). Clears its ready flag; the bundle becomes the
+/// next tick's copy target. Returns `(gl_name, timestamp_ns)`.
+pub fn encoder_take_ready() -> Option<(u32, u64)> {
+    let mut bundles = ENCODER_BUNDLES.lock().expect("encoder bundles mutex");
+    let b = bundles.iter_mut().find(|b| b.ready_ts.is_some())?;
+    let ts = b.ready_ts.take().expect("checked");
+    Some((b.gl_name, ts))
+}
+
+/// `glFinish` on the private context: the GL-side completion release after `UpdateSurface`,
+/// before the sampled bundle's next Vulkan reuse. Tick thread with the context bound.
+pub fn gl_finish() {
+    if let Some(gm) = gl_mem() {
+        unsafe { (gm.finish)() };
+    }
+}
+
+/// Drop the encoder bundles (on encoder destroy or a size change). Tick thread, private EGL
+/// context bound, after [`wait_entry_fence`]; the encoder must already be stopped so nothing
+/// samples the GL names.
+pub fn encoder_release_bundles() {
+    let mut bundles = ENCODER_BUNDLES.lock().expect("encoder bundles mutex");
+    let (Some(api), Some(gm)) = (vk(), gl_mem()) else {
+        bundles.clear();
+        return;
+    };
+    for b in bundles.drain(..) {
+        unsafe {
+            (gm.delete_textures)(1, &b.gl_name);
+            (gm.delete_memory_objects)(1, &b.gl_memobj);
+            (api.destroy_image)(api.device, b.vk_image, std::ptr::null());
+            (api.free_memory)(api.device, b.vk_memory, std::ptr::null());
+        }
+    }
+}
+
+/// Record the encoder copy into the current command buffer: source transition, copy into the
+/// non-ready bundle, restore, EXTERNAL release. Called from inside [`fill_eyes`]'s recording
+/// (same submission as the eye copies). Creates or recreates the pair lazily at source size.
+/// Returns whether a copy was recorded.
+unsafe fn record_encoder_copy(api: &VkApi) -> bool {
+    if !crate::video_encoder::vk_wants_frames() {
+        return false;
+    }
+    let Some((src, ts)) = *ENCODER_SRC.lock().expect("encoder src mutex") else {
+        return false;
+    };
+    let mut bundles = ENCODER_BUNDLES.lock().expect("encoder bundles mutex");
+    if bundles.len() == 2 && (bundles[0].width != src.width || bundles[0].height != src.height) {
+        // Size changed between sessions: safe to rebuild here (post-entry-fence, encoder idle or
+        // just started and not yet fed).
+        drop(bundles);
+        encoder_release_bundles();
+        bundles = ENCODER_BUNDLES.lock().expect("encoder bundles mutex");
+    }
+    if bundles.is_empty() {
+        for _ in 0..2 {
+            let Some((gl_name, gl_memobj, vk_image, vk_memory)) =
+                create_share_bundle(src.width, src.height)
+            else {
+                return false; // BROKEN latched by the primitive
+            };
+            bundles.push(EncBundle {
+                gl_name,
+                gl_memobj,
+                vk_image,
+                vk_memory,
+                width: src.width,
+                height: src.height,
+                first_use: true,
+                ready_ts: None,
+            });
+        }
+        godot::global::godot_print!(
+            "[xreal] vk_bridge: encoder bundle pair created {}x{} (gl {} / {})",
+            src.width,
+            src.height,
+            bundles[0].gl_name,
+            bundles[1].gl_name
+        );
+    }
+    // Copy target: the non-ready bundle (the ready one is being sampled by the encoder).
+    let Some(target) = bundles.iter_mut().find(|b| b.ready_ts.is_none()) else {
+        return false; // both ready: encoder is not draining; skip this frame
+    };
+    let old_layout = if target.first_use {
+        VK_IMAGE_LAYOUT_UNDEFINED
+    } else {
+        VK_IMAGE_LAYOUT_GENERAL
+    };
+    target.first_use = false;
+    let acquire = VkImageMemoryBarrier {
+        s_type: VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+        p_next: std::ptr::null(),
+        src_access_mask: 0,
+        dst_access_mask: VK_ACCESS_TRANSFER_WRITE_BIT,
+        old_layout,
+        new_layout: VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+        src_queue_family_index: VK_QUEUE_FAMILY_EXTERNAL,
+        dst_queue_family_index: api.queue_family,
+        image: target.vk_image,
+        subresource_range: COLOR_RANGE,
+    };
+    (api.cmd_pipeline_barrier)(
+        api.command_buffer,
+        VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+        VK_PIPELINE_STAGE_TRANSFER_BIT,
+        0,
+        0,
+        std::ptr::null(),
+        0,
+        std::ptr::null(),
+        1,
+        &acquire,
+    );
+    let src_in = VkImageMemoryBarrier {
+        s_type: VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+        p_next: std::ptr::null(),
+        src_access_mask: VK_ACCESS_MEMORY_WRITE_BIT | VK_ACCESS_MEMORY_READ_BIT,
+        dst_access_mask: VK_ACCESS_TRANSFER_READ_BIT,
+        old_layout: VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+        new_layout: VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+        src_queue_family_index: u32::MAX,
+        dst_queue_family_index: u32::MAX,
+        image: src.vk_image,
+        subresource_range: COLOR_RANGE,
+    };
+    (api.cmd_pipeline_barrier)(
+        api.command_buffer,
+        VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+        VK_PIPELINE_STAGE_TRANSFER_BIT,
+        0,
+        0,
+        std::ptr::null(),
+        0,
+        std::ptr::null(),
+        1,
+        &src_in,
+    );
+    let region = VkImageCopy {
+        src_subresource: COLOR_LAYERS,
+        src_offset: VkOffset3D { x: 0, y: 0, z: 0 },
+        dst_subresource: COLOR_LAYERS,
+        dst_offset: VkOffset3D { x: 0, y: 0, z: 0 },
+        extent: VkExtent3D {
+            width: target.width as u32,
+            height: target.height as u32,
+            depth: 1,
+        },
+    };
+    (api.cmd_copy_image)(
+        api.command_buffer,
+        src.vk_image,
+        VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+        target.vk_image,
+        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+        1,
+        &region,
+    );
+    let src_out = VkImageMemoryBarrier {
+        s_type: VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+        p_next: std::ptr::null(),
+        src_access_mask: VK_ACCESS_TRANSFER_READ_BIT,
+        dst_access_mask: VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT,
+        old_layout: VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+        new_layout: VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+        src_queue_family_index: u32::MAX,
+        dst_queue_family_index: u32::MAX,
+        image: src.vk_image,
+        subresource_range: COLOR_RANGE,
+    };
+    (api.cmd_pipeline_barrier)(
+        api.command_buffer,
+        VK_PIPELINE_STAGE_TRANSFER_BIT,
+        VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+        0,
+        0,
+        std::ptr::null(),
+        0,
+        std::ptr::null(),
+        1,
+        &src_out,
+    );
+    let release = VkImageMemoryBarrier {
+        s_type: VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+        p_next: std::ptr::null(),
+        src_access_mask: VK_ACCESS_TRANSFER_WRITE_BIT,
+        dst_access_mask: 0,
+        old_layout: VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+        new_layout: VK_IMAGE_LAYOUT_GENERAL,
+        src_queue_family_index: api.queue_family,
+        dst_queue_family_index: VK_QUEUE_FAMILY_EXTERNAL,
+        image: target.vk_image,
+        subresource_range: COLOR_RANGE,
+    };
+    (api.cmd_pipeline_barrier)(
+        api.command_buffer,
+        VK_PIPELINE_STAGE_TRANSFER_BIT,
+        VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+        0,
+        0,
+        std::ptr::null(),
+        0,
+        std::ptr::null(),
+        1,
+        &release,
+    );
+    target.ready_ts = Some(ts);
+    true
 }
 
 /// Whether `gl_name` is a bridge-owned eye slot (used by `xr_destroy_texture` to route
@@ -1021,6 +1277,31 @@ pub fn set_eye_sources(left: EyeSource, right: EyeSource) {
     *EYE_SOURCES.lock().expect("eye sources mutex") = [left, right];
 }
 
+/// Wait out a pending pipelined fence and run queued bundle teardown. The tick calls this once
+/// at entry (before the encoder step, which relies on the fence having proven the previous
+/// frame's copies complete); [`fill_eyes`] calls it too, which is then a no-op. Returns `false`
+/// when the wait failed (the bridge is then latched broken).
+pub fn wait_entry_fence() -> bool {
+    let Some(api) = vk() else { return false };
+    // Whatever the current sync mode, a pending fence from a pipelined frame must be waited out
+    // before the command buffer is reset and before queued bundle teardown.
+    unsafe {
+        if FENCE_PENDING.swap(false, Ordering::Relaxed) {
+            let r = (api.wait_for_fences)(api.device, 1, &api.fence, 1, 1_000_000_000);
+            (api.reset_fences)(api.device, 1, &api.fence);
+            if r != VK_SUCCESS {
+                broken(&format!("vkWaitForFences -> {r}"));
+                return false;
+            }
+        }
+    }
+    // Queued bundle teardown: everything the GPU could still touch has completed here, whether
+    // through the entry wait above (pipelined) or last frame's queue-wait-idle (v1). Outside the
+    // BUNDLES lock, because drain takes that lock itself.
+    drain_destroyed();
+    true
+}
+
 /// Copy the published eye sources into the acquired slots, then wait the queue idle (sync v1).
 /// `targets` pairs each acquired slot's GL name with its eye index. Tick thread only, after
 /// Godot's frame submission. Returns the number of eyes filled.
@@ -1042,22 +1323,9 @@ pub fn fill_eyes(targets: &[(u32, usize)]) -> u32 {
     let sync_mode = android_prop_i32(b"debug.xreal.vk_sync\0").unwrap_or(1);
     let n = FILL_LOG.fetch_add(1, Ordering::Relaxed);
 
-    // Whatever the current mode, a pending fence from a pipelined frame must be waited out
-    // before the command buffer is reset and before queued bundle teardown.
-    unsafe {
-        if FENCE_PENDING.swap(false, Ordering::Relaxed) {
-            let r = (api.wait_for_fences)(api.device, 1, &api.fence, 1, 1_000_000_000);
-            (api.reset_fences)(api.device, 1, &api.fence);
-            if r != VK_SUCCESS {
-                broken(&format!("vkWaitForFences -> {r}"));
-                return 0;
-            }
-        }
+    if !wait_entry_fence() {
+        return 0;
     }
-    // Queued bundle teardown: everything the GPU could still touch has completed here, whether
-    // through the entry wait above (pipelined) or last frame's queue-wait-idle (v1). Before the
-    // BUNDLES lock below, because it takes that lock itself.
-    drain_destroyed();
 
     let sources = *EYE_SOURCES.lock().expect("eye sources mutex");
     let mut bundles = BUNDLES.lock().expect("bundles mutex");
@@ -1248,6 +1516,10 @@ pub fn fill_eyes(targets: &[(u32, usize)]) -> u32 {
             );
             filled += 1;
         }
+
+        // Stage 4: the encoder bundle copy rides the same submission (and thus the same fence
+        // that next tick's encoder step relies on).
+        record_encoder_copy(api);
 
         let r = (api.end_command_buffer)(api.command_buffer);
         if r != VK_SUCCESS {
