@@ -12,8 +12,12 @@ FPV stream, one commit each.
 - **Stage 2 device results (Beam Pro, 2026-07-30)**: 14 opaque-fd eye slots imported and
   registered (7 per eye); solid-color probe correct per eye (left red / right blue, screencap of
   display id 4626964009369245188); real stereo content with live head tracking; crash bar passed
-  (fill #5400+); **58-60 FPS with the pipelined-fence sync (now the default; the QueueWaitIdle
-  fallback `vk_sync 0` measured 52-53)**; 10 min soak: 20/20 alive checks, 60 FPS at thermal
+  (fill #5400+); **58-60 FPS with the pipelined-fence sync, 52-53 with `vkQueueWaitIdle`. Default
+  flipped to wait-idle 2026-07-31: the pipelined mode tears under fast head motion (the SDK
+  timewarp resamples the eye slot before our copy completes; no GPU-GPU sync), and `vk_sync 1`
+  opts back into 60 FPS with that tear. Real fix is sync v2 (SYNC_FD semaphore), blocked on
+  `VK_KHR_external_semaphore_fd` which Godot does not enable (device-probe-confirmed 2026-07-31;
+  proposal + issue drafts in `docs/`)**; 10 min soak: 20/20 alive checks, 60 FPS at thermal
   steady state, clean Exit-button teardown; **color A/B vs the GL build: cyan object mean
   (151,236,254) IDENTICAL, pink floor within 2/255** - the raw-copy path carries display-ready
   bytes exactly as designed, no sRGB double-transform. **Vulkan-vs-GL FPS parity, same method

@@ -9,9 +9,9 @@
 //! SDK receives, exactly as under GL. Per frame, a bridge-owned command buffer copies each eye
 //! SubViewport's `VkImage` into the acquired slot's `VkImage` (`vkCmdCopyImage`: raw texels, so
 //! Godot's display-ready sRGB-encoded bytes arrive unaltered), bracketed by
-//! `VK_QUEUE_FAMILY_EXTERNAL` acquire/release barriers. Sync defaults to a one-frame pipelined
-//! fence (`debug.xreal.vk_sync 0` falls back to a `vkQueueWaitIdle` before
-//! `SubmitCurrentFrame`, which cost 60->52 FPS on device); see `fill_eyes`. The design and its
+//! `VK_QUEUE_FAMILY_EXTERNAL` acquire/release barriers. Sync defaults to a `vkQueueWaitIdle`
+//! before `SubmitCurrentFrame` (tear-free, 52 FPS); `debug.xreal.vk_sync 1` pipelines a fence for
+//! 60 FPS but tears under head motion, pending sync v2 (see `fill_eyes`). The design and its
 //! alternatives (a fullscreen sampled pass as fill v2, a SYNC_FD fence as sync v2, the latter
 //! blocked on an extension Godot does not enable) are recorded in
 //! `docs/plans/vulkan-path-plan.md` and `docs/archive/codex-vulkan-stage2-design.md`.
@@ -1334,25 +1334,26 @@ pub fn wait_entry_fence() -> bool {
     true
 }
 
-/// Copy the published eye sources into the acquired slots, then wait the queue idle (sync v1).
-/// `targets` pairs each acquired slot's GL name with its eye index. Tick thread only, after
-/// Godot's frame submission. Returns the number of eyes filled.
+/// Copy the published eye sources into the acquired slots, then wait the queue idle (the default,
+/// tear-free) or pipeline a fence (`vk_sync=1`, faster but tears under head motion). `targets`
+/// pairs each acquired slot's GL name with its eye index. Tick thread only, after Godot's frame
+/// submission. Returns the number of eyes filled.
 pub fn fill_eyes(targets: &[(u32, usize)]) -> u32 {
     let Some(api) = vk() else { return 0 };
     if BROKEN.load(Ordering::Relaxed) {
         return 0;
     }
     let solid = android_prop_i32(b"debug.xreal.vk_solid\0").unwrap_or(0);
-    // Sync mode: 1 (default) pipelines by one frame: submit with a fence, and wait for the
-    // PREVIOUS frame's fence here at entry, which in steady state has long signaled, so the CPU
-    // never stalls on the GPU. The pipelined window is benign by construction: the compositor
-    // starts sampling a slot only after SubmitCurrentFrame, our copy into it was enqueued before
-    // that, and the compositor's next composite is a vsync away, while the not-yet-reusable
-    // command buffer is protected by exactly this entry wait. 0 is the correctness-first
-    // debug fallback: wait the queue idle after this frame's submit. Device-measured 2026-07-30:
-    // mode 1 = 58-60 FPS (the stage-1 baseline, 10 min soak clean, colors exact vs the GL build);
-    // mode 0 = 52-53 FPS (the CPU serializes on the whole GPU frame).
-    let sync_mode = android_prop_i32(b"debug.xreal.vk_sync\0").unwrap_or(1);
+    // Sync mode: 0 (default) waits the queue idle after this frame's submit, so the SDK compositor
+    // always samples a fully-copied slot. Tear-free, but the CPU serializes on the GPU frame:
+    // 52-53 FPS (device-measured 2026-07-30). 1 pipelines by one frame (submit with a fence, wait
+    // the PREVIOUS frame's fence at entry) for 58-60 FPS, but the compositor's timewarp resamples
+    // the slot continuously starting right after SubmitCurrentFrame, so under fast head motion it
+    // catches our copy mid-flight and the lower part of the view shears against the top (reported
+    // on device 2026-07-31). The real fix is sync v2 (a GPU fence the SDK's GL sample waits on, no
+    // CPU stall), blocked on VK_KHR_external_semaphore_fd which Godot does not enable; see the
+    // SYNC-V2 SWITCH-OVER note at the submit below. Until then 0 is the default.
+    let sync_mode = android_prop_i32(b"debug.xreal.vk_sync\0").unwrap_or(0);
     let n = FILL_LOG.fetch_add(1, Ordering::Relaxed);
 
     if !wait_entry_fence() {
@@ -1581,13 +1582,22 @@ pub fn fill_eyes(targets: &[(u32, usize)]) -> u32 {
             return 0;
         }
         if with_fence {
-            // Pipelined sync: the wait happens at the next tick's entry (see above). Note the
-            // SYNC_FD->EGL fence design (sync v2) is blocked on VK_KHR_external_semaphore_fd,
-            // which Godot's device does not enable; this pipelining is the stock-template escape.
+            // Pipelined (vk_sync=1): the wait happens at the next tick's entry (see above). Faster
+            // but tears under head motion, because the compositor's timewarp samples this slot
+            // before our copy completes.
             FENCE_PENDING.store(true, Ordering::Relaxed);
         } else {
-            // Sync v1: correctness first. The SDK samples on its own GLThread after
-            // SubmitCurrentFrame, so everything submitted above must have completed by then.
+            // Default: wait the queue idle so the SDK's timewarp only ever samples a fully-copied
+            // slot. Tear-free; costs about 8 FPS.
+            //
+            // SYNC-V2 SWITCH-OVER: replace this CPU wait-idle with a GPU fence once
+            // VK_KHR_external_semaphore_fd is available (Godot enables it, or a patched export
+            // template; docs/godot-external-semaphore-fd-proposal.md, verified unresolved on stock
+            // 4.7 by device probe 2026-07-31). Then: create an exportable binary VkSemaphore, pass
+            // it as p_signal_semaphores on the submit above, vkGetSemaphoreFdKHR it as a SYNC_FD,
+            // import into the private EGL context via EGL_ANDROID_native_fence_sync, and
+            // eglWaitSyncKHR there before SubmitCurrentFrame. The SDK's GL sample then waits on the
+            // copy with no CPU stall -> tear-free at 60 FPS, and vk_sync can default back to 1.
             let r = (api.queue_wait_idle)(api.queue);
             if r != VK_SUCCESS {
                 broken(&format!("vkQueueWaitIdle -> {r}"));
