@@ -1445,6 +1445,10 @@ pub fn run_frame_tick() {
     // on a null metrics callback ~1 s in).
     crate::signal_guard::reassert_update_metrics_on_render_thread();
 
+    // One-shot stage-0 Vulkan-path probe (AHardwareBuffer -> EGLImage -> GL bridge), a few seconds
+    // in, on this render/GL thread. See src/ahb_probe.rs; `debug.xreal.ahb_probe 0` skips it.
+    crate::ahb_probe::maybe_run(n);
+
     // Drive the per-frame HMD input update (→ DisplayManager::OnBeforeRender) BEFORE populating the
     // frame, so the render pose the compositor reprojects against is refreshed to the live head pose
     // instead of freezing at session start, which would world-anchor our render. It runs on the render

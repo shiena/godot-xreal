@@ -16,6 +16,7 @@
 
 use godot::prelude::*;
 
+mod ahb_probe;
 mod camera_feed;
 mod controller_probe;
 mod depth_mesh;
