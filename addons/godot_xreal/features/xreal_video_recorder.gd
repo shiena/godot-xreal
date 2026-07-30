@@ -85,11 +85,8 @@ var _vk_backend := false            # encoder backend 2 = Vulkan bridge (publish
 
 func _ready() -> void:
 	_system = XrealShared.make_system()  # null off-device -> inert
-	_vk_backend = (
-		_system != null
-		and _system.has_method(&"get_render_texture_encoder_backend")
-		and _system.get_render_texture_encoder_backend() == 2
-	)
+# (the encoder backend is sampled at start time, not here: the Vulkan bridge initializes after
+# component _ready, so an early query would read 0 and lock the component onto the GL push path)
 
 func is_active() -> bool:
 	return _active
@@ -123,6 +120,11 @@ func set_enabled(on: bool) -> void:
 		_fail("[xreal-record] HW encoder busy (FPV streaming?), so stop it first")
 		active_changed.emit(false)
 		return
+	# Sampled here, at start time, because the Vulkan bridge initializes after _ready.
+	_vk_backend = (
+		_system.has_method(&"get_render_texture_encoder_backend")
+		and _system.get_render_texture_encoder_backend() == 2
+	)
 	# This runs before _ensure_viewport(), because both SubViewports size themselves off record_width
 	# and record_height, so the preset has to land first or the capture would be sized differently
 	# from the encoder.

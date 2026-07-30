@@ -79,10 +79,8 @@ func _ready() -> void:
 	_system = XrealShared.make_system()
 	if _system == null:
 		return  # off-device -> inert (set_enabled just reports false)
-	_vk_backend = (
-		_system.has_method(&"get_render_texture_encoder_backend")
-		and _system.get_render_texture_encoder_backend() == 2
-	)
+# (the encoder backend is sampled at start time, not here: the Vulkan bridge initializes after
+# component _ready, so an early query would read 0 and lock the component onto the GL push path)
 	# Mic permission (RECORD_AUDIO) is requested lazily on the Stream toggle (see set_enabled),
 	# matching the camera: there is no startup dialog, so the app asks only when you actually start
 	# streaming. Below, LAN-discovery pairing with the StreamingReceiver PC app.
@@ -128,6 +126,11 @@ func set_enabled(on: bool) -> void:
 		_fail("[xreal-stream] HW encoder busy (recording?), so stop it first")
 		active_changed.emit(false)
 		return
+	# Sampled here, at start time, because the Vulkan bridge initializes after _ready.
+	_vk_backend = (
+		_system.has_method(&"get_render_texture_encoder_backend")
+		and _system.get_render_texture_encoder_backend() == 2
+	)
 	# NB: no RGB-camera gate here. We render our own head-POV AR into a SubViewport and hand that GL
 	# texture to the device-agnostic libmedia_codec encoder, so the camera is never touched unless it
 	# happens to be on, in which case we opportunistically stream the camera+AR blend (_use_blend).
