@@ -203,7 +203,7 @@ impl ICameraFeed for XrealCameraFeed {
         // renderer, the standard-CameraServer route off (that route needs Image objects), a live
         // RenderingDevice, and no latched structural failure.
         self.vk_enabled = !crate::gl::renderer_is_gl()
-            && crate::session::android_prop_i32(VK_CAMERA_PROP) == Some(1)
+            && crate::session::android_prop_i32(VK_CAMERA_PROP) != Some(0)
             && !self.feed_camera_server
             && RenderingServer::singleton()
                 .get_rendering_device()
@@ -223,7 +223,7 @@ impl ICameraFeed for XrealCameraFeed {
                     broken: AtomicBool::new(false),
                 }));
             }
-            godot_print!("[xreal] camera: vk_rd upload path enabled (debug.xreal.vulkan_camera=1)");
+            godot_print!("[xreal] camera: vk_rd upload path enabled (debug.xreal.vulkan_camera=0 to disable)");
         }
         match session.rgb_camera_start() {
             Some(handle) => {
@@ -801,9 +801,11 @@ struct DirectStages {
 /// than telemetry.
 const TIMING_PROP: &[u8] = b"debug.xreal.camera_timing\0";
 
-/// Stage-3b kill switch (vulkan-path-plan.md): `adb shell setprop debug.xreal.vulkan_camera 1`
-/// enables the RD upload path under the Vulkan renderer. Default OFF for the first landing;
-/// sampled at capture start like [`TIMING_PROP`], so a camera off/on cycle applies it.
+/// Stage-3b kill switch (vulkan-path-plan.md): `adb shell setprop debug.xreal.vulkan_camera 0`
+/// disables the RD upload path under the Vulkan renderer (default ON since the 2026-07-31
+/// device pass: 5 min soak clean, colors identical to the Image path, per-grab total 2004 us vs
+/// 2219 us and main-thread cost 871 us vs 2200 us). Sampled at capture start like
+/// [`TIMING_PROP`], so a camera off/on cycle applies it.
 const VK_CAMERA_PROP: &[u8] = b"debug.xreal.vulkan_camera\0";
 
 /// The Vulkan RD upload path's cross-thread state (stage 3b, see the design review in

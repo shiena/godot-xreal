@@ -199,6 +199,16 @@ Drop-based cleanup). (5) `feed_camera_server=true` keeps the whole Image path. (
 ladder (format-support query, Y-only stall probe, cross-plane generation-mismatch synthetic).
 Kill switch `debug.xreal.vulkan_camera`, default OFF for the first landing, sampled at capture
 start. Path label `vk_rd`.
+
+**Stage-3b device results (Beam Pro, 2026-07-31): PASS, default flipped ON.** `path=vk_rd` live
+at the camera's ~30 fps, RD textures + Texture2DRD wrappers created, colors identical to the
+Image path (camera-panel mean RGB matched exactly in an on-device A/B), Project FPS 57-59,
+5 min camera soak clean (no demotion, no upload errors). Measured per-grab means (n=120):
+vk_rd total 2004 us (acquire 513, snapshot 234, interleave 124, texture_update Y 794 /
+CbCr 333, queue_wait 29) vs Image path total 2219 us. The honest reading: under Vulkan the
+Image path never had the GL driver's per-texel tiling cost, so the win is NOT the old
+"multi-ms -> 525 us" - it is ~10% total and a ~60% cut of the main-thread share (871 us vs
+2200 us per grab at 30 Hz). `debug.xreal.vulkan_camera 0` reverts to the Image path.
 4. **Stage 4 - FPV stream. Design settled (2026-07-31, review below); build it.** Verify with
    `scripts/stream_server/fpv_server.py` AND the browser actually rendering live video (packet
    arrival alone does not pass), then Record -> mp4 -> gallery, then the GL regression pass.
