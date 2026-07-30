@@ -72,6 +72,55 @@ Rejected, with reasons:
   10 min clean at 60 FPS is enough to know the phone path is not the risk, and the thermal-soak
   budget is better spent once eye rendering is in.
 
+### Stage 2 second-opinion review (two designs compared, 2026-07-30)
+
+Both designs were written independently (ours first, then codex's, neither seeing the other; the
+full codex document is `docs/archive/codex-vulkan-stage2-design.md`). They agree on the skeleton:
+one RGBA8 AHB per `xr_create_texture` slot (7 x 1968x1134, ~62 MiB, reusing the SDK's own ring),
+EGLImage-backed GL names handed to the SDK unchanged, a private surfaceless ES3 EGL context on the
+render thread, Multipass only, direct SubViewport-into-AHB rendering out of reach in 4.7, UNORM
+end-to-end for color, a kill-switch prop, and the same bring-up ladder shape.
+
+**ADOPTED from codex - the architecture.** Our first cut drove the fill through the main
+`RenderingDevice.texture_copy`, and that is architecturally broken: the main RD *defers* the copy
+into Godot's frame command buffer (the main RD forbids `submit()`/`sync()`), so within one frame
+there is no way to order copy completion before `SubmitCurrentFrame`, and no way to interleave the
+foreign queue-family acquire/release barriers in submission order around a copy we do not submit.
+codex's structure fixes exactly this: a **post-draw render-thread hook** submits a
+**bridge-owned command buffer** to Godot's graphics queue (same-queue submission order puts
+Godot's eye rendering before the bridge work), with explicit `VK_QUEUE_FAMILY_FOREIGN_EXT`
+acquire/release around the fill, **v1 sync = `vkQueueWaitIdle`** before `SubmitCurrentFrame`,
+**v2 = exportable `SYNC_FD` semaphore -> `EGL_ANDROID_native_fence_sync` -> `eglWaitSyncKHR`**.
+Also adopted: bind/unbind the private EGL context around each SDK graphics operation instead of
+leaving it current (keeps "a context is current" from ever reading as "GL renderer" to bystander
+code); a separate `run_vulkan_render_thread_tick()` sharing backend-neutral helpers, so the GL
+tick keeps its `renderer_is_gl()` self-defence gate untouched; publish viewport RIDs (not u32 GL
+handles) from node.rs under Vulkan; full-bundle deferred destruction through the
+`xr_destroy_texture` queue; `debug.xreal.vulkan_glasses` default **off** for the first landing;
+the three-mode color A/B (UNORM passthrough / decode+encode / decode-only control); and the
+eleven-step bring-up ladder with the risk table.
+
+**AMENDED (ours kept) - the fill operation inside the bridge's command buffer.** codex's primary
+is a fullscreen sampled Vulkan pass (pipeline + embedded SPIR-V + descriptors); ours is
+`vkCmdCopyImage` from the viewport's VkImage (via `get_driver_resource(TEXTURE, rd_rid)`) into
+the AHB VkImage. Copy wins as **fill v1**: a fraction of the code, and raw-byte semantics carry
+Godot's display-ready sRGB-encoded bytes unaltered (a *blit* would sRGB-decode a typed source and
+land ~26% dark; a copy cannot). Cost: the source must be transitioned
+SHADER_READ_ONLY -> TRANSFER_SRC_OPTIMAL and restored exactly (Godot must never notice), and copy
+legality requires the probed viewport format to be RGBA8 UNORM/SRGB-typed. The fullscreen pass
+stays in the design as **fill v2**, implemented only if the format probe (16F/10-bit source) or
+validation kills v1 - it samples in SHADER_READ_ONLY and never touches Godot's layouts, and it is
+the only variant that can re-encode arbitrary sources.
+
+**REJECTED from ours, with reasons**: main-RD `texture_copy` as the production path (the ordering
+analysis above; codex reached the same verdict from the layout-tracker side); leaving the private
+EGL context permanently current; an empty `vkQueueSubmit` + exportable fence as v2 (codex's
+semaphore on the bridge submission itself is the same fence without the extra submission).
+
+Minor codex nits found while cross-checking: `VULKAN_IMAGE_NATIVE_TEXTURE_FORMAT` is not in the
+4.7 `DriverResource` enum (use `TEXTURE_DATA_FORMAT`), and `texture_get_rd_texture`'s `srgb`
+parameter is the ex-builder form in gdext 0.5.3.
+
 ## Next steps (resume here)
 
 1. **Stage 1 leftovers: DONE (2026-07-30)**: the `camera_feed` renderer-first gate, the
@@ -80,15 +129,15 @@ Rejected, with reasons:
    `xreal_video_recorder.gd` and the Stream / Record grey-out in
    `demo/main.gd::_apply_capabilities()`. Code-verified (clippy, tests, gdlint); the on-device
    spot-check rides along with the stage-2 soak.
-2. **Stage 2 - glasses rendering.** Consult a second opinion first, then build: a private EGL
-   context on the render thread (Godot no longer provides one), RGBA8 AHardwareBuffers per eye
-   (stage 0 proved the share), the AHB-backed `VkImage` reached through
-   `RenderingDevice.texture_create_from_extension` + `RenderingServer.texture_rd_create` (both
-   confirmed present in the 0.5.3 bindings, alongside `RenderingDevice.get_driver_resource` for
-   pulling the eye SubViewport's `VkImage`), or a simpler first cut of one `RenderingDevice`
-   `texture_copy` per eye. Keep the fake-`IUnityXRDisplay` GL submission unchanged. **Re-run the
+2. **Stage 2 - glasses rendering. Design settled (see the review above); build it**: bridge-owned
+   post-draw command buffer on Godot's queue, AHB bundle per `xr_create_texture` slot, fill v1 =
+   `vkCmdCopyImage` with exact source-layout restore (fill v2 = fullscreen pass if the probe or
+   validation kills v1), v1 sync = `vkQueueWaitIdle` (v2 = SYNC_FD semaphore -> EGL fence),
+   private EGL context bound/unbound around each SDK graphics op, `debug.xreal.vulkan_glasses`
+   default off. Keep the fake-`IUnityXRDisplay` GL submission unchanged. Bring-up ladder and
+   instruments: `docs/archive/codex-vulkan-stage2-design.md` section 9. **Re-run the
    RGBA8-vs-sRGB color A/B on device** (the old measurement was against gl_compatibility output)
-   and the crash bar of frame #1500+ / 25 s+.
+   and the crash bar of frame #1500+ / 25 s+, then the 60 min x 3 soak.
 3. **Stage 3 - camera rendering.** Confirm on device that the `Image` fallback works under Vulkan
    (expected, it is renderer-agnostic), then recover the ~525 us class with
    `RenderingDevice.texture_update` + `Texture2DRD`.
