@@ -710,7 +710,7 @@ static const char *const stub_docs[] = {
 "  <return type=\"int\" />\n"
 "  \n"
 "  <description>\n"
-"  Which backend feeds the HW encoder: [code]0[/code] = unsupported, [code]1[/code] = the GL renderer&#39;s direct texture-name push ([[code]Self::stream_push_frame[/code]]), [code]2[/code] = the Vulkan bridge (vulkan-path-plan.md stage 4), where components publish the source viewport each frame through [[code]Self::stream_publish_viewport[/code]] instead. Backend 2 requires the stage-2 bridge machinery ([code]debug.xreal.vulkan_glasses[/code] enabled and initialized).\n"
+"  Which backend feeds the HW encoder: [code]0[/code] = unsupported, [code]1[/code] = the GL renderer&#39;s direct texture-name push ([[code]Self::stream_push_frame[/code]]), [code]2[/code] = the Vulkan bridge (vulkan-path-plan.md stage 4), where components publish the source viewport each frame through [[code]Self::stream_publish_viewport[/code]] instead. Backend 2 is reported whenever the renderer is Vulkan with a live [code]RenderingDevice[/code], independent of the glasses kill switch (the encoder works in encoder-only mode too); the bridge itself initializes lazily at [code]stream_start[/code], and a hard init failure there turns the stream off through its error path.\n"
 "  </description>\n"
 "</method>\n"
 "\n"
