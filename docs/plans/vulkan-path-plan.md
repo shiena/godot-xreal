@@ -1,11 +1,13 @@
 # Vulkan rendering path — staged plan for a re-attempt
 
-Status: **stages 0-1 done; stage 2 (glasses rendering) = WORKING ON DEVICE, 2026-07-30** - stereo
-content on the glasses under Vulkan Mobile at 58-60 FPS, head-tracked, colors exact vs the GL
-build, 10 min soak clean. Remaining for the stage-2 sign-off: the 60 min x 3 thermal soak, then
-flip `debug.xreal.vulkan_glasses` default ON for the Vulkan preset. Stages: phone screen ->
-glasses rendering -> camera rendering -> FPV stream, one commit each, each design cross-checked
-against a second opinion.
+Status: **ALL FOUR STAGES WORKING ON DEVICE (2026-07-31)** - stereo glasses rendering at 58-60
+FPS (parity with GL: 59.4 vs 59.8), camera on the vk_rd path, FPV stream rendering live in the
+browser, mp4 recording to the gallery. Every stage's design was cross-checked against a codex
+second opinion (the review sections below + docs/archive/codex-vulkan-stage*-design.md).
+Remaining before flipping the Vulkan preset's defaults ON (`debug.xreal.vulkan_glasses` is still
+opt-in): the 60 min x 3 thermal sign-off soak, the libmedia_codec periodic-IDR follow-up (stage-4
+notes), and encoder-only mode. Stages: phone screen -> glasses rendering -> camera rendering ->
+FPV stream, one commit each.
 
 - **Stage 2 device results (Beam Pro, 2026-07-30)**: 14 opaque-fd eye slots imported and
   registered (7 per eye); solid-color probe correct per eye (left red / right blue, screencap of
@@ -209,9 +211,24 @@ CbCr 333, queue_wait 29) vs Image path total 2219 us. The honest reading: under 
 Image path never had the GL driver's per-texel tiling cost, so the win is NOT the old
 "multi-ms -> 525 us" - it is ~10% total and a ~60% cut of the main-thread share (871 us vs
 2200 us per grab at 30 Hz). `debug.xreal.vulkan_camera 0` reverts to the Image path.
-4. **Stage 4 - FPV stream. Design settled (2026-07-31, review below); build it.** Verify with
-   `scripts/stream_server/fpv_server.py` AND the browser actually rendering live video (packet
-   arrival alone does not pass), then Record -> mp4 -> gallery, then the GL regression pass.
+4. **Stage 4 - FPV stream: WORKING ON DEVICE (2026-07-31).** Device results, Beam Pro + One Pro:
+   the encoder starts on the Vulkan tick, the ping-pong bundles alternate (`vk encoder copy/fed`
+   logs, status=0 at ~60 feeds/s), and the **browser (fpv_server.py + mpegts.js) rendered the
+   live AR stream** (640x360, t advancing, mse=open); **Record -> mp4 -> gallery PASSED** (12 s
+   H.264 1280x720 + AAC, real AR content verified by frame extraction, async stop finalized
+   before publish). Two findings along the way:
+   - **Fixed**: the components sampled the encoder backend at `_ready`, before the bridge
+     initializes, and silently stayed on the GL push path (`da10e2f`).
+   - **Known limitation, NOT stage-4's doing: no periodic IDR from libmedia_codec 3.1.0.** The
+     encoder emits exactly one keyframe at start, so a viewer must be connected BEFORE the
+     stream starts; late joiners wait forever (fpv_server arms viewers on keyframes). The GL
+     build streams with the SAME behavior (device-verified back-to-back), so this is the
+     SDK-3.1.0 vendored lib's change (the "keyframe about once a second" note in fpv_server.py
+     dates from the pre-3.1.0 lib), not the Vulkan path. Follow-up: codex RE of
+     libmedia_codec's IDR/request-sync handling (no HWEncoder* keyframe export exists), or a
+     receiver-side workaround.
+   - Also not wired yet: encoder-only mode (Vulkan with the glasses kill switch OFF) - the tick
+     only runs with the bridge active; `get_render_texture_encoder_backend()` returns 0 there.
 
 ### Stage 4 second-opinion review (two designs compared, 2026-07-31)
 

@@ -427,8 +427,12 @@ pub fn vk_tick() {
         VkEncState::Running(enc) => {
             if let Some((gl_name, ts)) = crate::vk_bridge::encoder_take_ready() {
                 let status = unsafe { (enc.update_surface)(enc.handle, gl_name as usize, ts) };
-                if status != 0 {
-                    godot::global::godot_warn!("[xreal] HWEncoderUpdateSurface(vk) -> {status}");
+                use std::sync::atomic::Ordering;
+                let n = crate::vk_bridge::ENC_FED.fetch_add(1, Ordering::Relaxed);
+                if n < 3 || n.is_multiple_of(300) || status != 0 {
+                    godot::global::godot_print!(
+                        "[xreal] vk encoder fed #{n}: gl={gl_name} ts={ts} status={status}"
+                    );
                 }
                 // GL-side completion release before the bundle's next Vulkan reuse: external
                 // memory sharing supplies no GL->Vulkan execution ordering by itself.

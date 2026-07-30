@@ -989,6 +989,12 @@ struct EncBundle {
 /// timestamp, latest wins (main thread writes, the tick reads).
 static ENCODER_SRC: Mutex<Option<(EyeSource, u64)>> = Mutex::new(None);
 static ENCODER_BUNDLES: Mutex<Vec<EncBundle>> = Mutex::new(Vec::new());
+/// Ping-pong toggle: which bundle receives the NEXT copy. Alternates every recorded copy, so
+/// the copy target is never the bundle the encoder was just handed (find-first would reuse it).
+static ENCODER_NEXT: AtomicU32 = AtomicU32::new(0);
+/// Diagnostics: copies recorded / frames fed to the encoder (reported by the vk encoder log).
+static ENC_COPIES: AtomicU32 = AtomicU32::new(0);
+pub static ENC_FED: AtomicU32 = AtomicU32::new(0);
 
 /// Publish the stream viewport's Vulkan identity for this frame (main thread). Returns `false`
 /// when the source is unusable (wrong format class or no image).
@@ -1082,10 +1088,21 @@ unsafe fn record_encoder_copy(api: &VkApi) -> bool {
             bundles[1].gl_name
         );
     }
-    // Copy target: the non-ready bundle (the ready one is being sampled by the encoder).
-    let Some(target) = bundles.iter_mut().find(|b| b.ready_ts.is_none()) else {
-        return false; // both ready: encoder is not draining; skip this frame
-    };
+    // Copy target: the ping-pong toggle, NEVER the bundle the encoder was just handed (which
+    // its worker thread may still be sampling; the toggle is what gives it a full tick).
+    let idx = (ENCODER_NEXT.load(Ordering::Relaxed) & 1) as usize;
+    let target = &mut bundles[idx];
+    if target.ready_ts.is_some() {
+        return false; // the encoder has not drained this one yet; skip this frame
+    }
+    ENCODER_NEXT.fetch_add(1, Ordering::Relaxed);
+    let n = ENC_COPIES.fetch_add(1, Ordering::Relaxed);
+    if n < 3 || n.is_multiple_of(300) {
+        godot::global::godot_print!(
+            "[xreal] vk encoder copy #{n} -> bundle[{idx}] gl={} ts={ts}",
+            target.gl_name
+        );
+    }
     let old_layout = if target.first_use {
         VK_IMAGE_LAYOUT_UNDEFINED
     } else {

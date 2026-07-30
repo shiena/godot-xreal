@@ -558,6 +558,11 @@ def receive_video(sock: socket.socket, hub: Hub, timeline: Timeline) -> None:
             if not seen:
                 print(f"[rtp] video: first access unit ({len(nals)} NAL(s), keyframe={keyframe})", flush=True)
                 seen = True
+            # Diagnostic AU counter (temporary, vulkan stage-4 bring-up): one line per 30 AUs.
+            au_count = getattr(depack, "_au_count", 0) + 1
+            depack._au_count = au_count
+            if au_count % 30 == 0:
+                print(f"[rtp] video: AU #{au_count} (keyframe={keyframe})", flush=True)
             # The app pushes frames at the glasses' refresh rate rather than the configured 30 fps,
             # so neighbouring frames sometimes land in the same millisecond. FLV timestamps are
             # milliseconds, so nudge duplicates forward rather than handing players a non-monotonic
