@@ -130,6 +130,18 @@ pub fn start(
     with_alpha: bool,
     audio_rate: Option<i32>,
 ) -> bool {
+    // GL renderer only, until the stage-4 Vulkan bridge (vulkan-path-plan.md): the encoder's
+    // UpdateSurface samples a client GL texture name on Godot's render-thread EGL context, and
+    // under a Vulkan renderer that context does not exist and texture_get_native_handle returns a
+    // VkImage, not a GL name. Both the FPV stream and the mp4 recorder start through here, so this
+    // one gate flips both demo toggles back through their existing error paths.
+    if !crate::gl::renderer_is_gl() {
+        godot::global::godot_warn!(
+            "[xreal] FPV encoder unavailable under the Vulkan renderer (GL-only until the \
+             vulkan-path stage-4 bridge)"
+        );
+        return false;
+    }
     let mut guard = ENCODER.lock().expect("encoder mutex");
     if guard.is_some() {
         return true; // already streaming
