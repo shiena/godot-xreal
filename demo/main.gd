@@ -425,10 +425,10 @@ func _show_no_glasses_and_quit() -> void:
 	get_tree().quit()
 
 ## The active image-tracking set changed, so show its name on the phone-menu "Cycle Image" button.
-func _on_image_set_changed(set_name: String) -> void:
+func _on_image_set_changed(image_set_name: String) -> void:
 	var ps := get_node_or_null(^"PhoneScreen")
 	if ps and ps.has_method(&"set_button_label"):
-		ps.set_button_label("image_cycle", "Cycle: %s" % set_name)
+		ps.set_button_label("image_cycle", "Cycle: %s" % image_set_name)
 
 ## A feature component reported an error through its `error` signal, so show it on the debug
 ## Status label and log it, which keeps the failure visible at the load site instead of buried in
