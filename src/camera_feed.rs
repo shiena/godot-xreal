@@ -21,9 +21,13 @@
 //! ```
 
 use godot::classes::image::Format;
-use godot::classes::{CameraFeed, ICameraFeed, Image, ImageTexture, RenderingServer};
+use godot::classes::{
+    CameraFeed, ICameraFeed, Image, ImageTexture, RdTextureFormat, RdTextureView, RenderingServer,
+    Texture2D, Texture2Drd,
+};
 use godot::prelude::*;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 /// Per-stage grab cost (see `crate::native::GrabTimings`): microseconds accumulated over the frames
@@ -50,6 +54,9 @@ struct PollTiming {
     upload_cbcr_us: u64,
     /// The `cpu_luma_step` retain copy, zero unless it is enabled.
     cpu_luma_us: u64,
+    /// vk_rd path only: main-thread queue -> render-thread upload latency (not a CPU cost, so it
+    /// is excluded from the per-grab total).
+    queue_wait_us: u64,
 }
 
 /// Feed-image plumbing:
@@ -117,6 +124,20 @@ pub struct XrealCameraFeed {
     /// `CameraServer` feeds through the standard API.
     #[export]
     feed_camera_server: bool,
+    /// Stage-3b: whether this capture runs the Vulkan RD upload path (`path=vk_rd`). Sampled at
+    /// capture start from [`VK_CAMERA_PROP`]; requires the Vulkan renderer, `feed_camera_server`
+    /// off, a live `RenderingDevice`, and no latched failure.
+    vk_enabled: bool,
+    /// The cross-thread mailbox and RD texture registry for the vk_rd path; created on first use
+    /// and retained across camera off/on cycles (the RD textures with it).
+    vk_shared: Option<Arc<VkCamShared>>,
+    /// The `Texture2DRD` pair consumers sample, installed after the first successful upload.
+    vk_wrappers: Option<(Gd<Texture2Drd>, Gd<Texture2Drd>)>,
+    /// Publish records awaiting their upload completion (at most two: one in flight, one pending).
+    vk_publish: Vec<VkPendingPublish>,
+    vk_generation: u64,
+    /// Reused luma payload buffer for the vk_rd path (the chroma one shares `cbcr_buf`).
+    vk_y_scratch: Vec<u8>,
     /// Retain a CPU-readable copy of the **luma** plane each frame, for [`Self::get_y_data`], which is
     /// the path for OpenCV and friends, since the GPU-upload path deliberately keeps no CPU copy.
     ///
@@ -156,6 +177,12 @@ impl ICameraFeed for XrealCameraFeed {
             timing_report: false,
             y_tex: None,
             cbcr_tex: None,
+            vk_enabled: false,
+            vk_shared: None,
+            vk_wrappers: None,
+            vk_publish: Vec::new(),
+            vk_generation: 0,
+            vk_y_scratch: Vec::new(),
             feed_camera_server: false,
             cpu_luma_step: 0,
         }
@@ -172,6 +199,32 @@ impl ICameraFeed for XrealCameraFeed {
         }
         // Sampled per capture start, so a `setprop` plus a camera off and on cycle takes effect at once.
         self.timing_report = crate::session::android_prop_i32(TIMING_PROP).unwrap_or(0) != 0;
+        // Stage-3b path selection, also per capture start. The Vulkan RD path needs the Vulkan
+        // renderer, the standard-CameraServer route off (that route needs Image objects), a live
+        // RenderingDevice, and no latched structural failure.
+        self.vk_enabled = !crate::gl::renderer_is_gl()
+            && crate::session::android_prop_i32(VK_CAMERA_PROP) != Some(0)
+            && !self.feed_camera_server
+            && RenderingServer::singleton()
+                .get_rendering_device()
+                .is_some()
+            && !self
+                .vk_shared
+                .as_ref()
+                .is_some_and(|s| s.broken.load(Ordering::Relaxed));
+        if self.vk_enabled {
+            if self.vk_shared.is_none() {
+                self.vk_shared = Some(Arc::new(VkCamShared {
+                    pending: Mutex::new(None),
+                    done: Mutex::new(None),
+                    textures: Mutex::new(None),
+                    dropped: AtomicU32::new(0),
+                    upload_errors: AtomicU32::new(0),
+                    broken: AtomicBool::new(false),
+                }));
+            }
+            godot_print!("[xreal] camera: vk_rd upload path enabled (debug.xreal.vulkan_camera=0 to disable)");
+        }
         match session.rgb_camera_start() {
             Some(handle) => {
                 self.capture_handle = Some(handle);
@@ -221,15 +274,39 @@ impl XrealCameraFeed {
         self.polls += 1;
         let mut grab = crate::native::GrabTimings::default();
 
+        // Stage-3b: the Vulkan RD upload path (path=vk_rd). A structural failure latched by the
+        // render side demotes the feed to the Image path for the rest of the capture, dropping
+        // the wrappers so consumers follow the ImageTextures again instead of a frozen RD pair.
+        if self.vk_enabled {
+            let broken = self
+                .vk_shared
+                .as_ref()
+                .is_some_and(|s| s.broken.load(Ordering::Relaxed));
+            if broken {
+                self.vk_enabled = false;
+                self.vk_wrappers = None;
+                godot_warn!("[xreal] camera: vk_rd path failed; demoted to the Image path");
+            } else {
+                return self.poll_frame_vk(session);
+            }
+        }
+
         // Direct path: upload each plane straight out of the SDK's frame buffer, so the only pixel copy
         // left is the chroma interleave. It needs a current EGL context *on this thread*, which holds on
         // Android, where Godot's main loop is the GL thread (see `crate::gl`), plus textures to upload
         // into. Everything else takes the Image path below, which also creates those textures on the
         // first frame and which `feed_camera_server` needs anyway.
+        //
+        // The renderer check comes FIRST, before the context probe, so under Vulkan this never touches
+        // the GL/EGL loader at all. The context probe alone is not a renderer gate: once the
+        // vulkan-path stage-2 bridge gives the render thread a private EGL context, a context that
+        // happens to be current here would let this path treat `texture_get_native_handle`'s VkImage
+        // as a GL texture name. Under Vulkan the feed always takes the renderer-agnostic Image path.
         if self.y_tex.is_some()
             && self.cbcr_tex.is_some()
             && !self.feed_camera_server
             && !PBO_FAILED.load(Ordering::Relaxed)
+            && crate::gl::renderer_is_gl()
             && crate::gl::has_current_context() == Some(true)
         {
             return self.poll_frame_direct(session, &mut grab);
@@ -394,6 +471,150 @@ impl XrealCameraFeed {
         true
     }
 
+    /// The stage-3b Vulkan RD path (`path=vk_rd`). One-poll pipeline: step 1 publishes the
+    /// PREVIOUS grab whose `texture_update`s the render thread has completed (CPU snapshot,
+    /// counters and `frame_changed` land together with the textures, preserving the emit-last
+    /// invariant), then step 2 grabs the newest SDK frame into the pending mailbox slot and
+    /// dispatches the upload callable. Returns `true` only when a frame was *published*.
+    fn poll_frame_vk(&mut self, session: &session::XrealSession) -> bool {
+        let shared = Arc::clone(self.vk_shared.as_ref().expect("vk_enabled implies shared"));
+        let mut published = false;
+
+        // Step 1: publish a completed upload.
+        if let Some(done) = shared.done.lock().expect("vk cam done").take() {
+            // Reclaim the payload buffers for the next grab.
+            self.vk_y_scratch = done.y;
+            self.cbcr_buf = done.cbcr;
+            if let Some(pos) = self
+                .vk_publish
+                .iter()
+                .position(|p| p.generation == done.generation)
+            {
+                let publish = self.vk_publish.swap_remove(pos);
+                self.vk_publish.retain(|p| p.generation > done.generation);
+                if self.vk_wrappers.is_none() {
+                    if let Some((y_rd, cbcr_rd)) = *shared.textures.lock().expect("vk cam textures")
+                    {
+                        let mut y = Texture2Drd::new_gd();
+                        y.set_texture_rd_rid(y_rd);
+                        let mut c = Texture2Drd::new_gd();
+                        c.set_texture_rd_rid(cbcr_rd);
+                        self.vk_wrappers = Some((y, c));
+                        godot_print!("[xreal] vk camera: Texture2DRD wrappers installed");
+                    }
+                }
+                self.frames += 1;
+                if self.cpu_luma_step > 0 {
+                    self.y_cpu = publish.y_cpu;
+                    self.y_cpu_size = publish.y_cpu_size;
+                } else if !self.y_cpu.is_empty() {
+                    self.y_cpu = PackedByteArray::new();
+                    self.y_cpu_size = Vector2i::ZERO;
+                }
+                self.timing.queue_wait_us += done.queue_wait_us;
+                self.accumulate(
+                    &publish.grab,
+                    (publish.snapshot_us, 0, 0),
+                    (done.rd_y_us, done.rd_cbcr_us),
+                    publish.cpu_luma_us,
+                );
+                if self.frames <= 3 || self.frames.is_multiple_of(120) {
+                    let (yw, yh, cw, ch) = publish.sizes;
+                    self.report("vk_rd", yw, yh, cw, ch, publish.mean);
+                    let dropped = shared.dropped.load(Ordering::Relaxed);
+                    let errors = shared.upload_errors.load(Ordering::Relaxed);
+                    if dropped > 0 || errors > 0 {
+                        godot_print!(
+                            "[xreal] vk camera: dropped_pending={dropped} upload_errors={errors}"
+                        );
+                    }
+                }
+                self.emit_frame_changed();
+                published = true;
+            }
+        }
+
+        // Step 2: grab the newest frame into the pending slot. `None` from the closure route is
+        // the normal "no new frame since last poll" case.
+        let mut y_buf = std::mem::take(&mut self.vk_y_scratch);
+        let mut cbcr = std::mem::take(&mut self.cbcr_buf);
+        let luma_step = self.cpu_luma_step;
+        let mut y_cpu = PackedByteArray::new();
+        let mut y_cpu_size = Vector2i::ZERO;
+        let mut grab = crate::native::GrabTimings::default();
+        let mut snapshot_us = 0u64;
+        let mut interleave_us = 0u64;
+        let mut cpu_luma_us = 0u64;
+        let mut sizes = (0i32, 0i32, 0i32, 0i32);
+        let mut mean = 0u64;
+        let outcome = session.rgb_camera_with_frame(&mut self.last_timestamp, &mut grab, |p| {
+            let expected = (p.y_width as usize) * (p.y_height as usize);
+            let t = Instant::now();
+            y_buf.resize(expected, 0);
+            y_buf.copy_from_slice(&p.y[..expected]);
+            snapshot_us = t.elapsed().as_micros() as u64;
+            let t = Instant::now();
+            crate::native::interleave_cbcr_rgba(
+                p.u,
+                p.v,
+                p.chroma_width,
+                p.chroma_height,
+                &mut cbcr,
+            );
+            interleave_us = t.elapsed().as_micros() as u64;
+            if luma_step > 0 {
+                let t = Instant::now();
+                y_cpu_size = copy_luma(p.y, p.y_width, p.y_height, luma_step, &mut y_cpu);
+                cpu_luma_us = t.elapsed().as_micros() as u64;
+            }
+            sizes = (p.y_width, p.y_height, p.chroma_width, p.chroma_height);
+            mean = mean_luma(p.y);
+            Some(true)
+        });
+        if outcome.is_none() {
+            // No new frame: hand the buffers back and keep waiting.
+            self.vk_y_scratch = y_buf;
+            self.cbcr_buf = cbcr;
+            return published;
+        }
+        self.vk_generation += 1;
+        grab.interleave_us = interleave_us as u32;
+        let job = VkCamJob {
+            generation: self.vk_generation,
+            y: y_buf,
+            cbcr,
+            yw: sizes.0,
+            yh: sizes.1,
+            cw: sizes.2,
+            ch: sizes.3,
+            queued_at: Instant::now(),
+        };
+        if let Some(old) = shared.pending.lock().expect("vk cam pending").replace(job) {
+            // The render thread never took the previous job: latest wins, reclaim its buffers.
+            shared.dropped.fetch_add(1, Ordering::Relaxed);
+            self.vk_y_scratch = old.y;
+            self.cbcr_buf = old.cbcr;
+            self.vk_publish.retain(|p| p.generation != old.generation);
+        }
+        self.vk_publish.push(VkPendingPublish {
+            generation: self.vk_generation,
+            y_cpu,
+            y_cpu_size,
+            mean,
+            sizes,
+            grab,
+            snapshot_us,
+            cpu_luma_us,
+        });
+        let shared_for_render = Arc::clone(&shared);
+        let callable = Callable::from_fn("xreal_vk_cam_upload", move |_| {
+            vk_cam_render_upload(&shared_for_render);
+            Variant::nil()
+        });
+        RenderingServer::singleton().call_on_render_thread(&callable);
+        published
+    }
+
     /// Emit `CameraFeed`'s own `frame_changed` as the last thing in a successful grab, so a handler
     /// sees the textures and `get_y_data()` already updated for *this* frame. Reading the data from
     /// this signal rather than polling the getters is the recommended pattern: the "no new frame this
@@ -462,7 +683,7 @@ impl XrealCameraFeed {
             + acc.upload_cbcr_us
             + acc.cpu_luma_us;
         godot_print!(
-            "[xreal] camera timing/grab (us, n={}): acquire={} planes={} interleave={} dispose={} packed={} image={} feed={} upload_y={} upload_cbcr={} cpu_luma={}(step {}) | total={}",
+            "[xreal] camera timing/grab (us, n={}): acquire={} planes={} interleave={} dispose={} packed={} image={} feed={} upload_y={} upload_cbcr={} cpu_luma={}(step {}) | total={} queue_wait={}",
             acc.grabs,
             acc.acquire_us / n,
             acc.planes_us / n,
@@ -475,14 +696,23 @@ impl XrealCameraFeed {
             acc.upload_cbcr_us / n,
             acc.cpu_luma_us / n,
             self.cpu_luma_step,
-            total / n
+            total / n,
+            acc.queue_wait_us / n
         );
     }
 
     /// The luma (Y) plane as an `R8` texture; sample `.r` for Y. It is `null` until the first frame.
+    ///
+    /// The concrete class depends on the active path: an `ImageTexture` on the Image and GL-direct
+    /// paths, a `Texture2DRD` on the Vulkan `vk_rd` path. Both are `Texture2D`, which is all a
+    /// shader uniform needs, and the instance is stable for the life of the capture path, so
+    /// holding the reference across frames keeps working.
     #[func]
-    fn get_y_texture(&self) -> Option<Gd<ImageTexture>> {
-        self.y_tex.clone()
+    fn get_y_texture(&self) -> Option<Gd<Texture2D>> {
+        if let Some((y, _)) = &self.vk_wrappers {
+            return Some(y.clone().upcast());
+        }
+        self.y_tex.clone().map(Gd::upcast)
     }
 
     /// The retained CPU copy of the luma plane, a dense 8-bit greyscale image ready to wrap as an
@@ -506,10 +736,13 @@ impl XrealCameraFeed {
     }
 
     /// The chroma plane as an `RG8` texture, with `.r` as Cb (U) and `.g` as Cr (V). It is `null` until
-    /// the first frame.
+    /// the first frame. See [`Self::get_y_texture`] for the concrete class per path.
     #[func]
-    fn get_cbcr_texture(&self) -> Option<Gd<ImageTexture>> {
-        self.cbcr_tex.clone()
+    fn get_cbcr_texture(&self) -> Option<Gd<Texture2D>> {
+        if let Some((_, c)) = &self.vk_wrappers {
+            return Some(c.clone().upcast());
+        }
+        self.cbcr_tex.clone().map(Gd::upcast)
     }
 }
 
@@ -573,6 +806,150 @@ struct DirectStages {
 /// the per-stage grab breakdown every 120 frames. It is off by default, being a diagnostic rather
 /// than telemetry.
 const TIMING_PROP: &[u8] = b"debug.xreal.camera_timing\0";
+
+/// Stage-3b kill switch (vulkan-path-plan.md): `adb shell setprop debug.xreal.vulkan_camera 0`
+/// disables the RD upload path under the Vulkan renderer (default ON since the 2026-07-31
+/// device pass: 5 min soak clean, colors identical to the Image path, per-grab total 2004 us vs
+/// 2219 us and main-thread cost 871 us vs 2200 us). Sampled at capture start like
+/// [`TIMING_PROP`], so a camera off/on cycle applies it.
+const VK_CAMERA_PROP: &[u8] = b"debug.xreal.vulkan_camera\0";
+
+/// The Vulkan RD upload path's cross-thread state (stage 3b, see the design review in
+/// vulkan-path-plan.md): a two-slot latest-wins mailbox between the main thread (SDK grab) and
+/// the render thread (`RenderingDevice.texture_update`). `Vec<u8>` payloads deliberately, because
+/// gdext's `PackedByteArray` is not `Send`; the render side pays one extra copy into a packed
+/// array, which is part of the measured accounting (escalate to a bridge-owned staging ring only
+/// if that copy dominates).
+struct VkCamShared {
+    /// Main -> render: the newest un-taken job. Replacing a not-yet-taken job is the designed
+    /// drop point (`dropped` counts it); the slot a render callable already took can never be
+    /// replaced, because it is owned by the callable by then.
+    pending: Mutex<Option<VkCamJob>>,
+    /// Render -> main: the newest completed upload, published on the next main poll.
+    done: Mutex<Option<VkCamDone>>,
+    /// RD texture RIDs, created on the render thread by the first job. `Rid` is Send.
+    textures: Mutex<Option<(Rid, Rid)>>,
+    dropped: AtomicU32,
+    upload_errors: AtomicU32,
+    /// Latched on a structural failure (no RD, texture creation failed); the feed falls back to
+    /// the Image path at the next capture start.
+    broken: AtomicBool,
+}
+
+struct VkCamJob {
+    generation: u64,
+    y: Vec<u8>,
+    cbcr: Vec<u8>,
+    yw: i32,
+    yh: i32,
+    cw: i32,
+    ch: i32,
+    queued_at: Instant,
+}
+
+struct VkCamDone {
+    generation: u64,
+    queue_wait_us: u64,
+    rd_y_us: u64,
+    rd_cbcr_us: u64,
+    /// Reclaimed payload buffers, handed back for reuse by the next grab.
+    y: Vec<u8>,
+    cbcr: Vec<u8>,
+}
+
+/// Main-thread-side record awaiting its upload completion: everything `frame_changed` must
+/// publish atomically with the textures (the one-poll pipeline contract: a handler never sees
+/// new CPU luma with stale textures or vice versa).
+struct VkPendingPublish {
+    generation: u64,
+    y_cpu: PackedByteArray,
+    y_cpu_size: Vector2i,
+    mean: u64,
+    sizes: (i32, i32, i32, i32),
+    grab: crate::native::GrabTimings,
+    snapshot_us: u64,
+    cpu_luma_us: u64,
+}
+
+/// The render-thread half: take the pending job, lazily create the two RD textures, run both
+/// `texture_update`s, and post the completion. Runs inside `call_on_render_thread` (NOT the
+/// stage-2 frame-drawn callback, which is post-render and would add a guaranteed extra frame).
+fn vk_cam_render_upload(shared: &VkCamShared) {
+    use godot::classes::rendering_device::{DataFormat, TextureType, TextureUsageBits};
+    let Some(job) = shared.pending.lock().expect("vk cam pending").take() else {
+        return;
+    };
+    let queue_wait_us = job.queued_at.elapsed().as_micros() as u64;
+    let rs = RenderingServer::singleton();
+    let Some(mut rd) = rs.get_rendering_device() else {
+        shared.broken.store(true, Ordering::Relaxed);
+        return;
+    };
+    let (y_rd, cbcr_rd) = {
+        let mut textures = shared.textures.lock().expect("vk cam textures");
+        match *textures {
+            Some(pair) => pair,
+            None => {
+                let make = |rd: &mut Gd<godot::classes::RenderingDevice>,
+                            format: DataFormat,
+                            w: i32,
+                            h: i32|
+                 -> Rid {
+                    let mut fmt = RdTextureFormat::new_gd();
+                    fmt.set_texture_type(TextureType::TYPE_2D);
+                    fmt.set_format(format);
+                    fmt.set_width(w as u32);
+                    fmt.set_height(h as u32);
+                    fmt.set_usage_bits(
+                        TextureUsageBits::SAMPLING_BIT | TextureUsageBits::CAN_UPDATE_BIT,
+                    );
+                    rd.texture_create(&fmt, &RdTextureView::new_gd())
+                };
+                let y = make(&mut rd, DataFormat::R8_UNORM, job.yw, job.yh);
+                let c = make(&mut rd, DataFormat::R8G8B8A8_UNORM, job.cw, job.ch);
+                if !y.is_valid() || !c.is_valid() {
+                    godot_warn!(
+                        "[xreal] vk camera: RD texture creation failed (y={y:?} cbcr={c:?}); \
+                         falling back to the Image path"
+                    );
+                    shared.broken.store(true, Ordering::Relaxed);
+                    return;
+                }
+                godot_print!(
+                    "[xreal] vk camera: RD textures created y={}x{} cbcr={}x{}",
+                    job.yw,
+                    job.yh,
+                    job.cw,
+                    job.ch
+                );
+                *textures = Some((y, c));
+                (y, c)
+            }
+        }
+    };
+    // The unavoidable Vec -> PackedByteArray copies (see VkCamShared docs).
+    let t = Instant::now();
+    let y_packed = PackedByteArray::from(job.y.as_slice());
+    let e1 = rd.texture_update(y_rd, 0, &y_packed);
+    let rd_y_us = t.elapsed().as_micros() as u64;
+    let t = Instant::now();
+    let cbcr_packed = PackedByteArray::from(job.cbcr.as_slice());
+    let e2 = rd.texture_update(cbcr_rd, 0, &cbcr_packed);
+    let rd_cbcr_us = t.elapsed().as_micros() as u64;
+    if e1 != godot::global::Error::OK || e2 != godot::global::Error::OK {
+        shared.upload_errors.fetch_add(1, Ordering::Relaxed);
+        godot_warn!("[xreal] vk camera: texture_update failed (y={e1:?} cbcr={e2:?})");
+        return; // no completion: the frame is dropped, the feed keeps running
+    }
+    *shared.done.lock().expect("vk cam done") = Some(VkCamDone {
+        generation: job.generation,
+        queue_wait_us,
+        rd_y_us,
+        rd_cbcr_us,
+        y: job.y,
+        cbcr: job.cbcr,
+    });
+}
 
 /// Latched on the first GL upload failure; the feed then stays on the Image path for the process's
 /// life. The Image path is Godot's own and always works, so this is a safe permanent fallback.

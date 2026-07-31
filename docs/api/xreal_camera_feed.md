@@ -38,9 +38,9 @@ Also push each frame into the base `CameraFeed` through `set_ycbcr_images`, the 
 
 <a id="method-get_cbcr_texture"></a>
 
-### get_cbcr_texture() -> ImageTexture
+### get_cbcr_texture() -> Texture2D
 
-The chroma plane as an `RG8` texture, with `.r` as Cb (U) and `.g` as Cr (V). It is `null` until the first frame.
+The chroma plane as an `RG8` texture, with `.r` as Cb (U) and `.g` as Cr (V). It is `null` until the first frame. See [`get_y_texture()`](#method-get_y_texture) for the concrete class per path.
 
 <a id="method-get_y_data"></a>
 
@@ -58,9 +58,11 @@ Dimensions of [`get_y_data()`](#method-get_y_data) in pixels, or `(0, 0)` when i
 
 <a id="method-get_y_texture"></a>
 
-### get_y_texture() -> ImageTexture
+### get_y_texture() -> Texture2D
 
 The luma (Y) plane as an `R8` texture; sample `.r` for Y. It is `null` until the first frame.
+
+The concrete class depends on the active path: an `ImageTexture` on the Image and GL-direct paths, a `Texture2DRD` on the Vulkan `vk_rd` path. Both are `Texture2D`, which is all a shader uniform needs, and the instance is stable for the life of the capture path, so holding the reference across frames keeps working.
 
 <a id="method-poll_frame"></a>
 

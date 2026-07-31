@@ -73,11 +73,14 @@ var _pending_fov := {}              # ObserverView: latest observer-camera FOV p
 var _rgb_offset := Vector3.ZERO     # RGB camera offset from the head (Godot space), for blend parallax
 var _rgb_geom_done := false         # RGB blend geometry (FOV + offset) applied once, static per device
 var _epoch := 0                     # bumped on every start/stop; a frame captured for a prior session is dropped
+var _vk_backend := false            # encoder backend 2 = Vulkan bridge (publish RIDs, not GL names)
 
 func _ready() -> void:
 	_system = XrealShared.make_system()
 	if _system == null:
 		return  # off-device -> inert (set_enabled just reports false)
+# (the encoder backend is sampled at start time, not here: the Vulkan bridge initializes after
+# component _ready, so an early query would read 0 and lock the component onto the GL push path)
 	# Mic permission (RECORD_AUDIO) is requested lazily on the Stream toggle (see set_enabled),
 	# matching the camera: there is no startup dialog, so the app asks only when you actually start
 	# streaming. Below, LAN-discovery pairing with the StreamingReceiver PC app.
@@ -106,12 +109,28 @@ func set_enabled(on: bool) -> void:
 	if not _system or not _system.has_method(&"stream_start") or _pairing == null:
 		active_changed.emit(false)
 		return
+	# Refuse before pairing and the permission dialogs when the HW encoder cannot run on this
+	# renderer (Vulkan, until the vulkan-path stage-4 bridge). Rust keeps the hard gate inside
+	# stream_start; checking here skips the pointless side effects and reports the specific reason
+	# instead of a generic start failure.
+	if (
+		_system.has_method(&"is_render_texture_encoder_supported")
+		and not _system.is_render_texture_encoder_supported()
+	):
+		_fail("[xreal-stream] HW encoder needs the GL renderer; streaming is unavailable under Vulkan")
+		active_changed.emit(false)
+		return
 	# One process-global HW encoder, shared with xreal_video_recorder: stream_start while it runs
 	# would not open a second encoder but feed our frames into the running recording.
 	if _system.has_method(&"is_stream_active") and _system.is_stream_active():
 		_fail("[xreal-stream] HW encoder busy (recording?), so stop it first")
 		active_changed.emit(false)
 		return
+	# Sampled here, at start time, because the Vulkan bridge initializes after _ready.
+	_vk_backend = (
+		_system.has_method(&"get_render_texture_encoder_backend")
+		and _system.get_render_texture_encoder_backend() == 2
+	)
 	# NB: no RGB-camera gate here. We render our own head-POV AR into a SubViewport and hand that GL
 	# texture to the device-agnostic libmedia_codec encoder, so the camera is never touched unless it
 	# happens to be on, in which case we opportunistically stream the camera+AR blend (_use_blend).
@@ -306,6 +325,11 @@ func _process(_delta: float) -> void:
 		_comp_vp.render_target_update_mode = SubViewport.UPDATE_DISABLED  # idle the blend when camera is off
 	var viewport_rid := src_vp.get_viewport_rid()
 	var ts := Time.get_ticks_usec() * 1000  # nanoseconds
+	if _vk_backend:
+		# Vulkan bridge: publish the source viewport; the native side copies its VkImage at end
+		# of frame and encodes it one frame later (vulkan-path-plan.md stage 4).
+		_system.stream_publish_viewport(viewport_rid, ts)
+		return
 	var gen := _epoch  # a stop->restart bumps _epoch, so a frame captured for the old session is dropped
 	# ViewportTexture.get_rid() is a proxy RID, and in the Compatibility renderer its copied tex_id
 	# can stay 0, so resolve the viewport's real render-target color texture instead. Resolve the GL

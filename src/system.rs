@@ -769,6 +769,83 @@ impl XrealSystem {
         crate::video_encoder::is_active()
     }
 
+    /// Whether the render-texture HW encoder behind [`Self::stream_start`], which both FPV
+    /// streaming and mp4 recording use, can run on the current renderer:
+    /// [`Self::get_render_texture_encoder_backend`] != 0. Check it BEFORE pairing, permission
+    /// dialogs or other start side effects, and report the specific reason to the user;
+    /// `stream_start` keeps the hard refusal either way.
+    #[func]
+    fn is_render_texture_encoder_supported(&self) -> bool {
+        self.get_render_texture_encoder_backend() != 0
+    }
+
+    /// Which backend feeds the HW encoder: `0` = unsupported, `1` = the GL renderer's direct
+    /// texture-name push ([`Self::stream_push_frame`]), `2` = the Vulkan bridge
+    /// (vulkan-path-plan.md stage 4), where components publish the source viewport each frame
+    /// through [`Self::stream_publish_viewport`] instead. Backend 2 is reported whenever the
+    /// renderer is Vulkan with a live `RenderingDevice`, independent of the glasses kill switch
+    /// (the encoder works in encoder-only mode too); the bridge itself initializes lazily at
+    /// `stream_start`, and a hard init failure there turns the stream off through its error path.
+    #[func]
+    fn get_render_texture_encoder_backend(&self) -> i64 {
+        if crate::gl::renderer_is_gl() {
+            1
+        } else if godot::classes::RenderingServer::singleton()
+            .get_rendering_device()
+            .is_some()
+        {
+            2
+        } else {
+            0
+        }
+    }
+
+    /// Vulkan backend only: publish this frame's stream source, the composed SubViewport's
+    /// viewport RID, plus a nanosecond timestamp describing the frame. Call it once per frame
+    /// from `_process` while streaming or recording; the bridge copies the viewport's `VkImage`
+    /// into an encoder bundle at the end of the frame and encodes it one frame later. Returns
+    /// `0` accepted, `-1` while the encoder is idle, `-2` when the viewport cannot be resolved
+    /// to an RGBA8-class Vulkan image (or the renderer is not the Vulkan backend).
+    #[func]
+    fn stream_publish_viewport(&self, viewport_rid: Rid, timestamp_ns: i64) -> i64 {
+        use godot::classes::rendering_device::{DataFormat, DriverResource};
+        if crate::gl::renderer_is_gl() {
+            return -2;
+        }
+        if !crate::video_encoder::vk_wants_frames() && !crate::video_encoder::is_active() {
+            return -1;
+        }
+        let rs = godot::classes::RenderingServer::singleton();
+        let Some(mut rd) = rs.get_rendering_device() else {
+            return -2;
+        };
+        let tex_rid = rs.viewport_get_texture(viewport_rid);
+        let rd_rid = rs.texture_get_rd_texture(tex_rid);
+        if !rd_rid.is_valid() {
+            return -2;
+        }
+        let vk_image = rd.get_driver_resource(DriverResource::TEXTURE, rd_rid, 0);
+        let Some(fmt) = rd.texture_get_format(rd_rid) else {
+            return -2;
+        };
+        let format = fmt.get_format();
+        if format != DataFormat::R8G8B8A8_UNORM && format != DataFormat::R8G8B8A8_SRGB {
+            return -2;
+        }
+        let src = crate::vk_bridge::EyeSource {
+            vk_image,
+            width: fmt.get_width() as i32,
+            height: fmt.get_height() as i32,
+            srgb: format == DataFormat::R8G8B8A8_SRGB,
+            valid: vk_image != 0,
+        };
+        if crate::vk_bridge::publish_encoder_source(src, timestamp_ns as u64) {
+            0
+        } else {
+            -2
+        }
+    }
+
     /// Select the stereo rendering mode applied when the native session **bootstraps**, a startup
     /// selector: `0` is Multipass, both eyes, the default shipping path, and `2` is Multiview,
     /// single-pass-instanced. **Call it before the session starts**, for instance in an autoload

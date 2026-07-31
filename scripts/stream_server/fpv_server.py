@@ -558,6 +558,10 @@ def receive_video(sock: socket.socket, hub: Hub, timeline: Timeline) -> None:
             if not seen:
                 print(f"[rtp] video: first access unit ({len(nals)} NAL(s), keyframe={keyframe})", flush=True)
                 seen = True
+            elif keyframe:
+                # Every periodic IDR (the encoder's debug.xreal.idr_hack workaround makes these
+                # recur ~1/s; without it there is only the one at start).
+                print("[rtp] video: keyframe (periodic IDR)", flush=True)
             # The app pushes frames at the glasses' refresh rate rather than the configured 30 fps,
             # so neighbouring frames sometimes land in the same millisecond. FLV timestamps are
             # milliseconds, so nudge duplicates forward rather than handing players a non-monotonic

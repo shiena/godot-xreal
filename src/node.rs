@@ -10,6 +10,7 @@ use godot::classes::sub_viewport::UpdateMode;
 use godot::classes::{Camera3D, INode3D, Node3D, ProjectSettings, RenderingServer, SubViewport};
 use godot::prelude::*;
 
+use crate::gl;
 use crate::session;
 
 /// Per-eye render size (matches the XREAL swapchain buffers created via CreateTexture).
@@ -113,6 +114,19 @@ impl INode3D for XrealHeadTracker {
         // Drain the glasses hardware events (keys, wear sensor, brightness and the rest) that the native
         // callback queued on the SDK thread, and re-emit them as signals.
         self.poll_hardware_events();
+        // Stage-0 AHB bridge probe, fallback trigger: when no session ever goes live (glasses
+        // absent), the primary run_frame_tick trigger never fires, so schedule the one-shot probe
+        // on the render thread from here. Double-runs are impossible (run_once is latched).
+        // GL renderer only: the probe is a GL-build probe by design (under Vulkan, Godot owns no
+        // EGL context, so it could only report "no context"; the stage-2 private-context bridge is
+        // where a Vulkan-side equivalent would live).
+        if self.frames == 600 && gl::renderer_is_gl() {
+            let callable = Callable::from_fn("xreal_ahb_probe", |_| {
+                crate::ahb_probe::run_once();
+                Variant::nil()
+            });
+            RenderingServer::singleton().call_on_render_thread(&callable);
+        }
         let Some(session) = session::shared() else {
             self.tracking = false;
             return;
@@ -132,18 +146,46 @@ impl INode3D for XrealHeadTracker {
             }
         }
 
-        // Build the per-eye offscreen render rig once we are in the tree and so have a World3D.
-        self.ensure_stereo();
+        // The glasses display path: under the GL (Compatibility) renderer it feeds the SDK
+        // compositor client GL texture names out of Godot's own EGL context; under Vulkan the
+        // stage-2 bridge does the same through per-slot AHardwareBuffers and a private EGL
+        // context (vk_bridge.rs), gated by `debug.xreal.vulkan_glasses`. With neither, the
+        // glasses submission is skipped while everything below — head tracking, signals, the
+        // phone display — keeps working.
+        if gl::renderer_is_gl() {
+            // Build the per-eye offscreen render rig once we are in the tree and so have a World3D.
+            self.ensure_stereo();
 
-        // Drive the XREAL swapchain on the rendering thread, which the EGL context requires. The first
-        // call invokes GfxThreadStart, running CreateSwapchainEx, then the GL textures, then
-        // SetSwapChainBuffers. Later calls drive PopulateNextFrameDesc so the SDK's GLThread has a frame
-        // handle.
-        let callable = Callable::from_fn("xreal_render_tick", |_| {
-            crate::unity_plugin::run_render_thread_tick();
-            Variant::nil()
-        });
-        RenderingServer::singleton().call_on_render_thread(&callable);
+            // Drive the XREAL swapchain on the rendering thread, which the EGL context requires. The first
+            // call invokes GfxThreadStart, running CreateSwapchainEx, then the GL textures, then
+            // SetSwapChainBuffers. Later calls drive PopulateNextFrameDesc so the SDK's GLThread has a frame
+            // handle.
+            let callable = Callable::from_fn("xreal_render_tick", |_| {
+                crate::unity_plugin::run_render_thread_tick();
+                Variant::nil()
+            });
+            RenderingServer::singleton().call_on_render_thread(&callable);
+        } else {
+            // Vulkan: the tick runs when the glasses kill switch is on (eye rendering) OR the HW
+            // encoder has work (stage-4 encoder-only mode, glasses off - streaming/recording the
+            // AR view without the eye submission). Either way it needs the bridge machinery up.
+            let glasses = crate::vk_bridge::glasses_enabled();
+            let want_encoder = crate::video_encoder::is_active();
+            if (glasses || want_encoder) && crate::vk_bridge::ensure_init() {
+                if glasses {
+                    self.ensure_stereo();
+                }
+                // The Vulkan tick MUST run after Godot submitted this frame's rendering: the
+                // bridge orders its copies against the SubViewport rendering purely by same-queue
+                // submission order. The frame-drawn callback is exactly that point; it is
+                // one-shot, so re-request it every frame.
+                let callable = Callable::from_fn("xreal_vk_tick", |_| {
+                    crate::unity_plugin::run_vulkan_render_thread_tick();
+                    Variant::nil()
+                });
+                RenderingServer::singleton().request_frame_drawn_callback(&callable);
+            }
+        }
         // Primary path: drive the eye cameras from the **display** InputManager pose, the exact pose the
         // compositor reprojects the glasses layer against. It carries the full orientation, ROLL
         // included, which the compact session-manager NrPose lacks; see
@@ -443,15 +485,67 @@ impl XrealHeadTracker {
             }
         }
         let rs = RenderingServer::singleton();
-        // Use the actual render-target texture RID, from viewport_get_texture on the viewport RID, and
-        // not the ViewportTexture *resource* RID, whose native handle is 0.
-        let handle = |sv: &Gd<SubViewport>| -> u32 {
-            let tex_rid = rs.viewport_get_texture(sv.get_viewport_rid());
-            rs.texture_get_native_handle(tex_rid) as u32
+        if gl::renderer_is_gl() {
+            // Use the actual render-target texture RID, from viewport_get_texture on the viewport RID, and
+            // not the ViewportTexture *resource* RID, whose native handle is 0.
+            let handle = |sv: &Gd<SubViewport>| -> u32 {
+                let tex_rid = rs.viewport_get_texture(sv.get_viewport_rid());
+                rs.texture_get_native_handle(tex_rid) as u32
+            };
+            let left = handle(&rig.viewports[0]);
+            let right = handle(&rig.viewports[1]);
+            crate::unity_plugin::set_godot_eye_sources(left, right, EYE_W, EYE_H);
+        } else {
+            // Vulkan bridge: publish each eye SubViewport's VkImage (and its RD format) for the
+            // per-frame vkCmdCopyImage. Resolved every frame, because Godot may reallocate the
+            // render target, invalidating both the RID chain and the driver handle.
+            let left = Self::vk_eye_source(&rig.viewports[0]);
+            let right = Self::vk_eye_source(&rig.viewports[1]);
+            crate::vk_bridge::set_eye_sources(left, right);
+        }
+    }
+
+    /// Resolve one eye SubViewport's render-target texture down to its Vulkan identity for the
+    /// bridge: viewport RID -> render-target texture RID -> RD texture RID -> `VkImage` +
+    /// format. An unresolvable or non-RGBA8-class texture comes back `valid: false`, which the
+    /// fill turns into a black clear rather than a bad copy (RGBA8 class is required for the
+    /// raw-texel `vkCmdCopyImage`; a 16F/10-bit source would need the fill-v2 sampled pass).
+    fn vk_eye_source(sv: &Gd<SubViewport>) -> crate::vk_bridge::EyeSource {
+        use godot::classes::rendering_device::{DataFormat, DriverResource};
+        let rs = RenderingServer::singleton();
+        let zero = crate::vk_bridge::EyeSource::default();
+        let Some(mut rd) = rs.get_rendering_device() else {
+            return zero;
         };
-        let left = handle(&rig.viewports[0]);
-        let right = handle(&rig.viewports[1]);
-        crate::unity_plugin::set_godot_eye_sources(left, right, EYE_W, EYE_H);
+        let tex_rid = rs.viewport_get_texture(sv.get_viewport_rid());
+        let rd_rid = rs.texture_get_rd_texture(tex_rid);
+        if !rd_rid.is_valid() {
+            return zero;
+        }
+        let vk_image = rd.get_driver_resource(DriverResource::TEXTURE, rd_rid, 0);
+        let Some(fmt) = rd.texture_get_format(rd_rid) else {
+            return zero;
+        };
+        let format = fmt.get_format();
+        let srgb = format == DataFormat::R8G8B8A8_SRGB;
+        if !srgb && format != DataFormat::R8G8B8A8_UNORM {
+            static WARNED: std::sync::atomic::AtomicBool =
+                std::sync::atomic::AtomicBool::new(false);
+            if !WARNED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                godot_warn!(
+                    "[xreal] vk eye source format {format:?} is not RGBA8-class; the raw copy \
+                     cannot convert it (fill v2 needed) - eyes stay black"
+                );
+            }
+            return zero;
+        }
+        crate::vk_bridge::EyeSource {
+            vk_image,
+            width: fmt.get_width() as i32,
+            height: fmt.get_height() as i32,
+            srgb,
+            valid: vk_image != 0,
+        }
     }
 }
 

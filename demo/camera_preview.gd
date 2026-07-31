@@ -47,6 +47,9 @@ func _process(_delta: float) -> void:
 	if mat:
 		mat.set_shader_parameter(&"y_texture", yt)
 		mat.set_shader_parameter(&"cbcr_texture", ct)
+		# The RD renderers (Forward+/Mobile, i.e. Vulkan) skip the extra ALBEDO srgb_to_linear that
+		# Compatibility applies, so tell the YCbCr shader to linearize twice there; see the shader.
+		mat.set_shader_parameter(&"double_srgb", RenderingServer.get_rendering_device() != null)
 		_panel.visible = true
 
 func _exit_tree() -> void:

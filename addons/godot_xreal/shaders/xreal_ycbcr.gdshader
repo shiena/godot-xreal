@@ -10,6 +10,12 @@ render_mode unshaded, cull_disabled;
 
 uniform sampler2D y_texture : filter_linear;
 uniform sampler2D cbcr_texture : filter_linear;
+// Compatibility's scene.glsl applies an extra srgb_to_linear to ALBEDO ("Convert colors to
+// linear", ~line 2398), which the single srgb_to_linear below was calibrated against. Forward
+// Mobile (the RD/Vulkan renderers) does NOT, so the camera came out bright and desaturated there.
+// When true, linearize a second time to reproduce Compatibility. camera_preview.gd sets it from
+// RenderingServer.get_rendering_device() != null (non-null only on the RD renderers).
+uniform bool double_srgb = false;
 
 vec3 srgb_to_linear(vec3 c) {
 	return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(vec3(0.04045), c));
@@ -29,5 +35,9 @@ void fragment() {
 	// SDK output order is B/G/R (R and B swapped). Godot re-encodes sRGB at output, so pre-linearize
 	// with the SDK's GammaToLinearSpace to avoid double-encoding and blown highlights.
 	vec3 rgb = clamp(vec3(b, g, r), vec3(0.0), vec3(1.0));
-	ALBEDO = srgb_to_linear(rgb);
+	vec3 lin = srgb_to_linear(rgb);
+	if (double_srgb) {
+		lin = srgb_to_linear(lin);
+	}
+	ALBEDO = lin;
 }

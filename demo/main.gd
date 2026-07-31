@@ -527,16 +527,21 @@ func _check_switch_timeouts() -> void:
 ## Grey out (make inert) the phone-menu controls whose capability the device lacks, once the
 ## session is up and the capabilities are known. Each control maps to a native capability query:
 ## camera, plane, anchor, image, mesh. The camera-dependent capture buttons (Photo, Blend Photo)
-## follow the camera. Streaming and recording stay available on every device, since they cast and
-## record the AR view even without a camera, so nothing disables them.
+## follow the camera. Streaming and recording cast and record the AR view even without a camera,
+## so no *device* disables them; the *renderer* can, though: under Vulkan the HW encoder has no GL
+## texture to read (until the vulkan-path stage-4 bridge), so both follow the encoder capability.
 func _apply_capabilities(cam: bool, plane: bool, anchor: bool, image: bool, mesh: bool) -> void:
 	var ps := get_node_or_null(^"PhoneScreen")
 	if ps == null or not ps.has_method(&"set_disabled"):
 		return
+	var enc: bool = true
+	if _system and _system.has_method(&"is_render_texture_encoder_supported"):
+		enc = _system.is_render_texture_encoder_supported()
 	var avail := {
 		"camera": cam, "capture": cam, "blend": cam,
 		"plane": plane, "anchor": anchor, "place": anchor,
 		"image": image, "image_cycle": image, "mesh": mesh,
+		"stream": enc, "record": enc,
 	}
 	for control_name in avail:
 		ps.set_disabled(control_name, not bool(avail[control_name]))

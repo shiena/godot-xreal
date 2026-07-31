@@ -773,6 +773,22 @@ extern "C" fn xr_create_texture(
     // the engine to allocate, which is the GLES path.
     let gl_id = if desc.color != 0 {
         desc.color as u32
+    } else if !crate::gl::renderer_is_gl() {
+        // Vulkan bridge path (vulkan-path-plan.md stage 2): the engine-allocated slot becomes an
+        // AHB bundle whose EGLImage-backed GL name the SDK receives as usual. The private EGL
+        // context is current here, because the only route in is the Vulkan tick's
+        // ensure_gfx_thread_started(). Multiview arrays are GL-only; fail closed on them.
+        if layers >= 2 || !crate::vk_bridge::active() {
+            godot::global::godot_warn!(
+                "[xreal] CreateTexture under Vulkan refused (layers={layers}, bridge_active={})",
+                crate::vk_bridge::active()
+            );
+            return 1;
+        }
+        match crate::vk_bridge::create_eye_texture(width, height) {
+            Some(t) => t,
+            None => return 1,
+        }
     } else if layers >= 2 {
         match crate::gl::alloc_texture_array(width, height, layers, srgb) {
             Some(t) => t,
@@ -807,7 +823,9 @@ extern "C" fn xr_create_texture(
             flags: desc.flags,
             // color == 0 → we allocated the GL texture (alloc_texture / alloc_texture_array) and
             // own it; color != 0 → the SDK handed us its own swapchain texture, which it frees.
-            owned: desc.color == 0,
+            // Vulkan-bridge slots are owned by vk_bridge (a full AHB bundle, not just a GL name),
+            // so they stay owned=false here and xr_destroy_texture routes them to the bridge.
+            owned: desc.color == 0 && crate::gl::renderer_is_gl(),
         });
         textures.len()
     };
@@ -895,6 +913,11 @@ extern "C" fn xr_destroy_texture(_handle: *mut c_void, tex_id: u32) -> i32 {
                 .lock()
                 .expect("pending tex deletes mutex")
                 .push(removed.gl_id);
+        } else if crate::vk_bridge::owns(removed.gl_id) {
+            // A Vulkan-bridge slot: the whole AHB bundle (GL name, EGLImage, VkImage, memory,
+            // AHB) is torn down on the next Vulkan tick, which has the private EGL context
+            // current and runs after a queue wait.
+            crate::vk_bridge::queue_destroy(removed.gl_id);
         }
     }
     0
@@ -1378,6 +1401,22 @@ pub fn populate_registered_display_frame_desc_with_ptr(desc: *mut c_void) -> i32
 /// On subsequent calls: drives `PopulateNextFrameDesc` so the SDK's GLThread always has
 /// a fresh frame handle for `SubmitCurrentFrame`.
 pub fn run_render_thread_tick() {
+    // Self-defence gate, not the primary dispatch: node.rs, today's only caller, already skips this
+    // call under a Vulkan renderer, but this entry point is what reaches CreateTexture, the eye
+    // blits and the frame submit, so a future second caller bounces off here instead of handing the
+    // SDK a VkImage as a GL name. Deliberately at the entry point and NOT inside the gl.rs
+    // primitives, which the vulkan-path stage-2 bridge will drive from a private EGL context while
+    // Godot itself runs Vulkan.
+    if !crate::gl::renderer_is_gl() {
+        static WARNED: AtomicBool = AtomicBool::new(false);
+        if !WARNED.swap(true, Ordering::Relaxed) {
+            godot::global::godot_warn!(
+                "[xreal] run_render_thread_tick under a non-GL renderer: ignoring (caller bug; \
+                 the GL glasses path is dispatched in node.rs)"
+            );
+        }
+        return;
+    }
     // Drain textures queued by `xr_destroy_texture`, which may run off this thread during teardown,
     // where our EGL context is not current. We are on the render thread with the context current, so
     // `glDeleteTextures` is safe here. This is the deferred deletion the destroy path promises, and it
@@ -1392,6 +1431,52 @@ pub fn run_render_thread_tick() {
         crate::gl::delete_texture(gl_id);
     }
 
+    ensure_gfx_thread_started();
+    run_frame_tick_with(FillBackend::Gl);
+}
+
+/// The Vulkan twin of [`run_render_thread_tick`], dispatched from node.rs's frame-drawn callback
+/// (vulkan-path-plan.md stage 2). It runs the same SDK graphics flow with the private EGL context
+/// bound around the whole operation, and the eye fill goes through the Vulkan bridge instead of
+/// the GL blits: `GfxThreadStart`'s `CreateTexture` calls land in `vk_bridge::create_eye_texture`
+/// (which needs the context current for the EGLImage import), and the frame body copies the eye
+/// SubViewports' `VkImage`s into the acquired slots before `SubmitCurrentFrame`.
+///
+/// It must run *after* Godot submitted the frame's rendering (the frame-drawn callback), because
+/// the bridge orders its copy against Godot's eye rendering purely by same-queue submission
+/// order; see `vk_bridge.rs`.
+pub fn run_vulkan_render_thread_tick() {
+    // The bridge machinery must be up (glasses rendering OR encoder-only mode). node.rs only
+    // registers this callback once ensure_init() succeeded, so bridge_ready() holds here.
+    if !crate::vk_bridge::bridge_ready() {
+        return;
+    }
+    if !crate::egl_context::bind() {
+        return;
+    }
+    // Stage 4: the entry-fence wait proves LAST tick's copies (eyes AND the encoder bundle)
+    // complete, so the encoder step may hand its ready bundle to HWEncoderUpdateSurface before
+    // this tick records new work. Every native encoder lifecycle call happens inside vk_tick,
+    // here, with the private context bound.
+    crate::vk_bridge::wait_entry_fence();
+    crate::video_encoder::vk_tick();
+    if crate::vk_bridge::glasses_enabled() {
+        // Glasses rendering: the SDK compositor is driven and fill_eyes records both the eye
+        // copies and (piggybacked) the encoder copy in one submission.
+        ensure_gfx_thread_started();
+        run_frame_tick_with(FillBackend::Vulkan);
+    } else {
+        // Encoder-only mode: no eyes, no SDK compositor - just the encoder-bundle copy.
+        crate::vk_bridge::submit_encoder_only();
+    }
+    crate::egl_context::unbind();
+}
+
+/// First-tick `GfxThreadStart`, shared by the GL and Vulkan ticks. It triggers the SDK's
+/// `CreateSwapchainEx` flow, which calls back into `xr_create_texture` on this thread, so the
+/// caller must have its GL/EGL side ready: Godot's own context on the GL path, the private
+/// context bound on the Vulkan path.
+fn ensure_gfx_thread_started() {
     if !GFX_THREAD_STARTED.swap(true, Ordering::SeqCst) {
         if let Some(provider) = *GFX_THREAD_PROVIDER
             .lock()
@@ -1421,7 +1506,15 @@ pub fn run_render_thread_tick() {
         // job now is only to feed textures through the `IUnityXRDisplay` interface, so
         // `GfxThreadStart → CreateDisplayLayer → CreateBuffer` calls our `CreateTexture`.
     }
-    run_frame_tick();
+}
+
+/// Which backend fills the acquired eye textures in [`run_frame_tick_with`]: the GL blits out of
+/// Godot's own context, or the Vulkan bridge's `vkCmdCopyImage` out of the eye SubViewports'
+/// `VkImage`s.
+#[derive(Clone, Copy, PartialEq)]
+enum FillBackend {
+    Gl,
+    Vulkan,
 }
 
 /// Called each frame from `XrealHeadTracker::process` once the session is live.
@@ -1438,12 +1531,23 @@ pub fn run_render_thread_tick() {
 /// is never modified: that gate byte has to stay 0 to keep `SubmitCurrentFrame` on the safe
 /// `SetBufferViewport` plus `NativeRendering::SubmitFrame` path.
 pub fn run_frame_tick() {
+    run_frame_tick_with(FillBackend::Gl);
+}
+
+fn run_frame_tick_with(backend: FillBackend) {
     let n = FRAME_TICK_COUNT.fetch_add(1, Ordering::Relaxed);
 
     // Re-apply the UpdateMetrics `ret` on THIS (render/GL) thread once, so its I-cache picks up the
     // patch the main thread wrote (SubmitCurrentFrame → UpdateMetrics runs here and otherwise SIGBUSes
     // on a null metrics callback ~1 s in).
     crate::signal_guard::reassert_update_metrics_on_render_thread();
+
+    // One-shot stage-0 Vulkan-path probe (AHardwareBuffer -> EGLImage -> GL bridge), a few seconds
+    // in, on this render/GL thread. GL backend only: under Vulkan the bridge itself IS the
+    // production form of what the probe proves.
+    if backend == FillBackend::Gl {
+        crate::ahb_probe::maybe_run(n);
+    }
 
     // Drive the per-frame HMD input update (→ DisplayManager::OnBeforeRender) BEFORE populating the
     // frame, so the render pose the compositor reprojects against is refreshed to the live head pose
@@ -1568,11 +1672,20 @@ pub fn run_frame_tick() {
     let src_h = GODOT_SRC_H.load(Ordering::Relaxed);
     let have_size = src_w > 0 && src_h > 0;
     let mut filled = 0u32;
+    // Vulkan backend: the acquired slots this frame, filled in one bridge submission below.
+    let mut vk_targets: Vec<(u32, usize)> = Vec::new();
     for (eye, &tex_id) in tex_ids.iter().enumerate().take(pass_count.max(1) as usize) {
         if tex_id == 0 {
             continue;
         }
         if let Some((gl_tex, dw, dh, layers)) = xr_texture_for(tex_id) {
+            if backend == FillBackend::Vulkan {
+                // Multipass only on this backend (xr_create_texture refuses Multiview arrays
+                // under Vulkan), so gl_tex is a bridge-owned 2D slot.
+                let _ = (dw, dh);
+                vk_targets.push((gl_tex, eye.min(1)));
+                continue;
+            }
             if layers >= 2 {
                 // Multiview / single-pass-instanced: ONE array texture, both eyes in its layers
                 // (layer 0 = left, layer 1 = right). renderPassesCount is 1 here.
@@ -1600,6 +1713,12 @@ pub fn run_frame_tick() {
             }
             filled += 1;
         }
+    }
+    if backend == FillBackend::Vulkan && !vk_targets.is_empty() {
+        // One command buffer for both eyes: foreign acquire -> copy (or solid-color clear)
+        // -> foreign release, then the sync-v1 queue wait, so everything the compositor will
+        // sample has completed before SubmitCurrentFrame below.
+        filled = crate::vk_bridge::fill_eyes(&vk_targets);
     }
 
     // Present the frame. `SubmitCurrentFrame` runs `SetBufferViewport` + `NativeRendering::SubmitFrame`

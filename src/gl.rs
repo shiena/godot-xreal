@@ -249,6 +249,37 @@ pub fn has_current_context() -> Option<bool> {
     Some(!unsafe { f() }.is_null())
 }
 
+/// Is Godot running on the GL (Compatibility) renderer? Resolved once, from the actual runtime
+/// renderer, not the project setting, and logged with the decision it gates.
+///
+/// The GL glasses display path hands eye SubViewport textures to the SDK compositor as client GL
+/// texture names, which requires Godot itself to own an EGL context. Under the Vulkan renderers
+/// (Forward+ / Mobile) that context does not exist, so this GL path is skipped; the vk_bridge (an
+/// opaque-fd VkImage shared into a private EGL context; see `docs/plans/vulkan-path-plan.md`)
+/// renders the glasses instead when `debug.xreal.vulkan_glasses=1`, otherwise phone display and
+/// tracking only. Head tracking, the SDK session and the phone display stay renderer-independent.
+pub fn renderer_is_gl() -> bool {
+    use godot::classes::RenderingServer;
+    use godot::obj::Singleton;
+    static IS_GL: OnceLock<bool> = OnceLock::new();
+    *IS_GL.get_or_init(|| {
+        let rs = RenderingServer::singleton();
+        let method = rs.get_current_rendering_method().to_string();
+        let driver = rs.get_current_rendering_driver_name().to_string();
+        let is_gl = driver.starts_with("opengl");
+        godot::global::godot_print!(
+            "[xreal] renderer: method={method} driver={driver} -> glasses GL display path {}",
+            if is_gl {
+                "ENABLED"
+            } else {
+                "DISABLED (Vulkan: glasses render via the vk_bridge when \
+                 debug.xreal.vulkan_glasses=1, else phone display + tracking only)"
+            }
+        );
+        is_gl
+    })
+}
+
 /// Scratch framebuffers reused for every fill and blit, created lazily on the render thread so no
 /// FBO name is generated or deleted per frame. Index 0 is the draw and fill target, index 1 the
 /// blit source.
