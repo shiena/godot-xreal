@@ -38,6 +38,10 @@ var sys := XrealSystem.new()
 print(sys.is_available(), sys.get_plugin_version(), sys.get_device_type())
 ```
 
+The current app `Camera3D` remains the source for its transform, near/far clipping, render layers,
+environment, camera attributes and offsets. Runtime changes are mirrored to both eye cameras;
+XREAL's calibrated asymmetric projection and eye separation remain SDK-controlled.
+
 Then add only the feature sub-scenes you need (below). The repo's `demo/` scene wires every feature
 to a phone touch-controller UI as a complete example.
 

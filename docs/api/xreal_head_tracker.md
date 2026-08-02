@@ -8,7 +8,7 @@
 
 Scene node that drives its own transform from the native XREAL head pose each frame. Parent a `Camera3D` under it for a head-tracked view through the glasses.
 
-It runs 6DoF by default, world-locking both rotation and position, and the tracking mode is selectable. It also emits the glasses hot-plug and hardware-input signals: `key_event`, `key_state_changed`, `wearing_changed`, `brightness_changed` and the rest. `is_tracking()` reports whether a native pose was applied on the last frame, and `recenter()` resets the forward direction.
+It runs 6DoF by default, world-locking both rotation and position, and the tracking mode is selectable. It also emits the glasses hot-plug and hardware-input signals: `key_event`, `key_state_changed`, `wearing_changed`, `brightness_changed` and the rest. `is_tracking()` reports whether a native pose was applied on the last frame, and `recenter()` resets the forward direction. The current app `Camera3D` supplies its transform, clipping distances, FOV fallback, cull mask, environment, attributes and other render settings to both eye cameras at runtime; the SDK's calibrated per-eye projection and IPD still take precedence.
 
 ## Signals
 
