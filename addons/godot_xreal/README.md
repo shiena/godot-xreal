@@ -106,6 +106,14 @@ With the plugin enabled, `xreal/tracking_type` appears in *Project > Project Set
 (SDK default / 6DoF / 3DoF / 0DoF, applied at boot). It is read at runtime with the same
 default, so a project without it saved behaves identically.
 
+`xreal/render_scale` sets the fixed per-eye 3D scale. It also becomes the quality ceiling when
+`xreal/dynamic_render_scale` is enabled. Both settings are sampled when the stereo rig is created.
+Dynamic scaling needs no min/max/target tuning: it uses 0.5 as the internal floor, calibrates the
+target from the XREAL compositor when a reliable rate is available, lowers the scale after
+sustained frame pressure and restores it only after longer stable headroom. An explicit
+`debug.xreal.render_scale` Android property keeps the scale fixed for A/B measurements and disables
+the controller.
+
 ### Editor tooling
 
 The plugin adds two editor docks: **XREAL Vendor** (imports SDK `.aar`/`.so` packages) and
