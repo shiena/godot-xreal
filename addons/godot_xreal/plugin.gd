@@ -63,6 +63,16 @@ const PROJECT_SETTINGS: Array[Dictionary] = [
 		"default": -1,
 	},
 	{
+		# Per-eye internal 3D resolution. The compositor-facing texture remains 1968x1134, while
+		# Godot renders 3D at this scale and bilinearly upscales it. 0.75 renders 44% fewer pixels.
+		# `debug.xreal.render_scale=<50..100>` overrides it for device A/B measurements.
+		"name": "xreal/render_scale",
+		"type": TYPE_FLOAT,
+		"hint": PROPERTY_HINT_RANGE,
+		"hint_string": "0.5,1.0,0.05",
+		"default": 1.0,
+	},
+	{
 		# Which input sources InitUserDefinedSettings asks the SDK for. "SDK Default" (-1) leaves the
 		# `debug.xreal.input_source` property, and the native default of Controller, in charge.
 		#

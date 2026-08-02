@@ -7,6 +7,7 @@
 //! identity and logs a single warning.
 
 use godot::classes::sub_viewport::UpdateMode;
+use godot::classes::viewport::Scaling3DMode;
 use godot::classes::{Camera3D, INode3D, Node3D, ProjectSettings, RenderingServer, SubViewport};
 use godot::prelude::*;
 
@@ -22,6 +23,24 @@ const EYE_FOV: f32 = 27.4;
 /// Half the interpupillary distance in metres. Each eye camera is offset by plus or minus this
 /// along head-local X.
 const HALF_IPD: f32 = 0.0315;
+
+/// Resolve the per-eye 3D render scale. The SubViewport output stays at the XREAL swapchain size;
+/// only Godot's internal 3D buffer is reduced and bilinearly upscaled. The Android property is an
+/// integer percentage for quick device A/B runs and overrides the persisted project setting.
+fn eye_render_scale() -> f32 {
+    if let Some(percent) = session::android_prop_i32(b"debug.xreal.render_scale\0") {
+        return (percent as f32 / 100.0).clamp(0.5, 1.0);
+    }
+    let ps = ProjectSettings::singleton();
+    if ps.has_setting("xreal/render_scale") {
+        ps.get_setting("xreal/render_scale")
+            .try_to::<f64>()
+            .map(|scale| (scale as f32).clamp(0.5, 1.0))
+            .unwrap_or(1.0)
+    } else {
+        1.0
+    }
+}
 
 /// Two offscreen SubViewports, left and right, each with a Camera3D, rendering the main world from
 /// per-eye viewpoints. Their textures are blitted into the XREAL eye swapchain buffers.
@@ -417,9 +436,14 @@ impl XrealHeadTracker {
         let Some(world) = self.base().get_world_3d() else {
             return;
         };
+        let render_scale = eye_render_scale();
         let make_eye = || {
             let mut sv = SubViewport::new_alloc();
             sv.set_size(Vector2i::new(EYE_W, EYE_H));
+            if render_scale < 0.999 {
+                sv.set_scaling_3d_mode(Scaling3DMode::BILINEAR);
+                sv.set_scaling_3d_scale(render_scale);
+            }
             sv.set_update_mode(UpdateMode::ALWAYS);
             sv.set_world_3d(&world);
             let mut cam = Camera3D::new_alloc();
@@ -438,7 +462,12 @@ impl XrealHeadTracker {
             viewports: [svl, svr],
             cameras: [caml, camr],
         });
-        godot_print!("[xreal] stereo rig created ({EYE_W}x{EYE_H} per eye)");
+        godot_print!(
+            "[xreal] stereo rig created ({EYE_W}x{EYE_H} per eye, 3D scale={render_scale:.2}, \
+             internal={}x{})",
+            (EYE_W as f32 * render_scale).round() as i32,
+            (EYE_H as f32 * render_scale).round() as i32,
+        );
     }
 
     /// Aim the eye cameras from the head transform, offset by plus or minus the IPD, and publish their
