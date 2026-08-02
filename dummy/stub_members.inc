@@ -42,6 +42,7 @@ static const StubMethod _m_XrealHeadTracker[] = {
   {"is_tracking",1,"",0,0},
   {"recenter",0,"",0,0},
   {"debug_pose_text",4,"",0,0},
+  {"get_current_render_scale",3,"",0,0},
 };
 static const StubArg _sa_XrealHeadTracker_key_event[] = {{2,"","key"},{2,"","action"},};
 static const StubArg _sa_XrealHeadTracker_key_state_changed[] = {{2,"","key"},{2,"","state"},};
@@ -208,8 +209,8 @@ static const StubMembers stub_members[] = {
   {"XrealAR",0,0,_s_XrealAR,13,0,0},
   {"XrealCameraFeed",_m_XrealCameraFeed,5,0,0,0,0},
   {"XrealHandTracker",0,0,0,0,0,0},
-  {"XrealHeadTracker",_m_XrealHeadTracker,3,_s_XrealHeadTracker,10,_c_XrealHeadTracker,9},
+  {"XrealHeadTracker",_m_XrealHeadTracker,4,_s_XrealHeadTracker,10,_c_XrealHeadTracker,9},
   {"XrealSystem",_m_XrealSystem,71,0,0,_c_XrealSystem,26},
 };
 enum { STUB_MEMBERS_COUNT = sizeof(stub_members) / sizeof(stub_members[0]) };
-#define STUB_SN_POOL 551
+#define STUB_SN_POOL 555

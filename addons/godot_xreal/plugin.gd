@@ -65,12 +65,20 @@ const PROJECT_SETTINGS: Array[Dictionary] = [
 	{
 		# Per-eye internal 3D resolution. The compositor-facing texture remains 1968x1134, while
 		# Godot renders 3D at this scale and bilinearly upscales it. 0.75 renders 44% fewer pixels.
+		# This is also the quality ceiling when xreal/dynamic_render_scale is enabled.
 		# `debug.xreal.render_scale=<50..100>` overrides it for device A/B measurements.
 		"name": "xreal/render_scale",
 		"type": TYPE_FLOAT,
 		"hint": PROPERTY_HINT_RANGE,
 		"hint_string": "0.5,1.0,0.05",
 		"default": 1.0,
+	},
+	{
+		# Adapt the per-eye render scale to sustained frame pressure. This setting is sampled when
+		# the XREAL stereo rig is created; restart the scene after changing it.
+		"name": "xreal/dynamic_render_scale",
+		"type": TYPE_BOOL,
+		"default": false,
 	},
 	{
 		# The eye viewports already render the shared 3D world. Keep the host display 2D-only by

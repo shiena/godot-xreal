@@ -23,6 +23,16 @@ const EYE_H: i32 = 1134;
 const FALLBACK_EYE_VERTICAL_FOV: f32 = 27.4;
 const DEFAULT_NEAR: f32 = 0.05;
 const DEFAULT_FAR: f32 = 1000.0;
+const MIN_RENDER_SCALE: f32 = 0.5;
+const RENDER_SCALE_STEP: f32 = 0.05;
+const DEFAULT_TARGET_FPS: f64 = 60.0;
+const MIN_CALIBRATION_FPS: i32 = 48;
+const MAX_CALIBRATION_FPS: i32 = 120;
+const SCALE_DOWN_FPS_RATIO: f64 = 0.90;
+const SCALE_UP_FPS_RATIO: f64 = 0.97;
+const SCALE_DOWN_HOLD_SECONDS: f64 = 0.75;
+const SCALE_UP_HOLD_SECONDS: f64 = 4.0;
+const SCALE_CHANGE_COOLDOWN_SECONDS: f64 = 1.0;
 /// Half the interpupillary distance in metres. Each eye camera is offset by plus or minus this
 /// along head-local X.
 const HALF_IPD: f32 = 0.0315;
@@ -45,6 +55,99 @@ fn eye_render_scale() -> f32 {
     }
 }
 
+/// Whether adaptive eye resolution is enabled for this project. The setting is sampled when the
+/// stereo rig is created; changing it at runtime does not reconfigure an active session.
+fn dynamic_render_scale_enabled() -> bool {
+    let ps = ProjectSettings::singleton();
+    ps.has_setting("xreal/dynamic_render_scale")
+        && ps
+            .get_setting("xreal/dynamic_render_scale")
+            .try_to::<bool>()
+            .unwrap_or(false)
+}
+
+#[derive(Debug)]
+struct DynamicScaleController {
+    current_scale: f32,
+    max_scale: f32,
+    target_fps: f64,
+    target_calibrated: bool,
+    average_frame_seconds: Option<f64>,
+    slow_seconds: f64,
+    fast_seconds: f64,
+    cooldown_seconds: f64,
+}
+
+impl DynamicScaleController {
+    fn new(max_scale: f32) -> Self {
+        let max_scale = max_scale.clamp(MIN_RENDER_SCALE, 1.0);
+        Self {
+            current_scale: max_scale,
+            max_scale,
+            target_fps: DEFAULT_TARGET_FPS,
+            target_calibrated: false,
+            average_frame_seconds: None,
+            slow_seconds: 0.0,
+            fast_seconds: 0.0,
+            cooldown_seconds: 0.0,
+        }
+    }
+
+    fn observe(&mut self, delta: f64, present_fps: Option<i32>) -> Option<f32> {
+        if let Some(fps) = present_fps.filter(|fps| {
+            !self.target_calibrated && (MIN_CALIBRATION_FPS..=MAX_CALIBRATION_FPS).contains(fps)
+        }) {
+            self.target_fps = f64::from(fps);
+            self.target_calibrated = true;
+        }
+
+        if !(1.0 / 240.0..=0.5).contains(&delta) {
+            return None;
+        }
+        let alpha = 1.0 - (-delta / 0.5).exp();
+        let average = self
+            .average_frame_seconds
+            .map(|old| old + (delta - old) * alpha)
+            .unwrap_or(delta);
+        self.average_frame_seconds = Some(average);
+
+        self.cooldown_seconds = (self.cooldown_seconds - delta).max(0.0);
+        if self.cooldown_seconds > 0.0 {
+            self.slow_seconds = 0.0;
+            self.fast_seconds = 0.0;
+            return None;
+        }
+
+        let fps = 1.0 / average.max(1.0 / 1000.0);
+        if fps < self.target_fps * SCALE_DOWN_FPS_RATIO {
+            self.slow_seconds += delta;
+            self.fast_seconds = 0.0;
+        } else if fps >= self.target_fps * SCALE_UP_FPS_RATIO {
+            self.fast_seconds += delta;
+            self.slow_seconds = 0.0;
+        } else {
+            self.slow_seconds = 0.0;
+            self.fast_seconds = 0.0;
+        }
+
+        let next = if self.slow_seconds >= SCALE_DOWN_HOLD_SECONDS {
+            (self.current_scale - RENDER_SCALE_STEP).max(MIN_RENDER_SCALE)
+        } else if self.fast_seconds >= SCALE_UP_HOLD_SECONDS {
+            (self.current_scale + RENDER_SCALE_STEP).min(self.max_scale)
+        } else {
+            return None;
+        };
+        self.slow_seconds = 0.0;
+        self.fast_seconds = 0.0;
+        if (next - self.current_scale).abs() < 0.001 {
+            return None;
+        }
+        self.current_scale = (next * 20.0).round() / 20.0;
+        self.cooldown_seconds = SCALE_CHANGE_COOLDOWN_SECONDS;
+        Some(self.current_scale)
+    }
+}
+
 /// Two offscreen SubViewports, left and right, each with a Camera3D, rendering the main world from
 /// per-eye viewpoints. Their textures are blitted into the XREAL eye swapchain buffers.
 struct StereoRig {
@@ -53,6 +156,7 @@ struct StereoRig {
     source_width: i32,
     source_height: i32,
     render_scale: f32,
+    scale_blit_supported: bool,
     direct_scale_blit: bool,
 }
 
@@ -102,6 +206,8 @@ pub struct XrealHeadTracker {
     disable_host_viewport_3d: bool,
     /// Root viewport state before this tracker changed it, restored when the tracker leaves the tree.
     host_viewport_3d_was_disabled: Option<bool>,
+    /// Runtime controller created with the stereo rig when dynamic scaling is enabled.
+    dynamic_scale: Option<DynamicScaleController>,
 }
 
 #[godot_api]
@@ -122,6 +228,7 @@ impl INode3D for XrealHeadTracker {
             bypass_psensor: true,
             disable_host_viewport_3d: true,
             host_viewport_3d_was_disabled: None,
+            dynamic_scale: None,
         }
     }
 
@@ -157,7 +264,7 @@ impl INode3D for XrealHeadTracker {
         }
     }
 
-    fn process(&mut self, _delta: f64) {
+    fn process(&mut self, delta: f64) {
         self.frames = self.frames.wrapping_add(1);
         // Re-emit glasses hot-plug events before the session check, so connect and disconnect are
         // reported even while no session exists yet, for instance when the app started without the
@@ -333,6 +440,7 @@ impl INode3D for XrealHeadTracker {
         // Point the eye cameras from the now-updated head transform, then publish their offscreen
         // textures for the frame tick to blit into the XREAL eye buffers.
         self.update_stereo();
+        self.update_dynamic_render_scale(delta);
     }
 }
 
@@ -470,10 +578,10 @@ impl XrealHeadTracker {
             return;
         };
         let render_scale = eye_render_scale();
-        let scale_blit_requested = render_scale < 0.999
-            && session::android_prop_i32(b"debug.xreal.scale_blit\0").unwrap_or(1) != 0;
-        let direct_scale_blit = scale_blit_requested
-            && (gl::renderer_is_gl() || crate::vk_bridge::linear_scale_blit_supported());
+        let scale_blit_supported =
+            session::android_prop_i32(b"debug.xreal.scale_blit\0").unwrap_or(1) != 0
+                && (gl::renderer_is_gl() || crate::vk_bridge::linear_scale_blit_supported());
+        let direct_scale_blit = render_scale < 0.999 && scale_blit_supported;
         let source_width = if direct_scale_blit {
             (EYE_W as f32 * render_scale).round() as i32
         } else {
@@ -511,8 +619,12 @@ impl XrealHeadTracker {
             source_width,
             source_height,
             render_scale,
+            scale_blit_supported,
             direct_scale_blit,
         });
+        self.dynamic_scale = (dynamic_render_scale_enabled()
+            && session::android_prop_i32(b"debug.xreal.render_scale\0").is_none())
+        .then(|| DynamicScaleController::new(render_scale));
         // The two eye viewports already draw the shared World3D. Most XREAL apps use the host
         // display for 2D controls, so drawing that world on the root viewport adds a hidden third
         // scene pass. Preserve an opt-out for apps that intentionally show a 3D phone mirror.
@@ -524,12 +636,54 @@ impl XrealHeadTracker {
         }
         godot_print!(
             "[xreal] stereo rig created ({EYE_W}x{EYE_H} per eye, 3D scale={render_scale:.2}, \
-             internal={}x{}, scale_path={})",
+             internal={}x{}, scale_path={}, dynamic={})",
             (EYE_W as f32 * render_scale).round() as i32,
             (EYE_H as f32 * render_scale).round() as i32,
             if direct_scale_blit {
                 "bridge-linear"
             } else if render_scale < 0.999 {
+                "godot-bilinear"
+            } else {
+                "native"
+            },
+            self.dynamic_scale.is_some(),
+        );
+    }
+
+    fn update_dynamic_render_scale(&mut self, delta: f64) {
+        if self.dynamic_scale.is_none() || self.stereo.is_none() {
+            return;
+        }
+        let present_fps = self
+            .frames
+            .is_multiple_of(30)
+            .then(crate::metrics::present_fps)
+            .flatten();
+        let Some(next_scale) = self
+            .dynamic_scale
+            .as_mut()
+            .and_then(|controller| controller.observe(delta, present_fps))
+        else {
+            return;
+        };
+        let Some(rig) = self.stereo.as_mut() else {
+            return;
+        };
+        configure_stereo_scale(rig, next_scale);
+        let target_fps = self
+            .dynamic_scale
+            .as_ref()
+            .map(|controller| controller.target_fps)
+            .unwrap_or(DEFAULT_TARGET_FPS);
+        godot_print!(
+            "[xreal] dynamic render scale -> {:.2} (target {:.0} FPS, internal {}x{}, path={})",
+            rig.render_scale,
+            target_fps,
+            (EYE_W as f32 * rig.render_scale).round() as i32,
+            (EYE_H as f32 * rig.render_scale).round() as i32,
+            if rig.direct_scale_blit {
+                "bridge-linear"
+            } else if rig.render_scale < 0.999 {
                 "godot-bilinear"
             } else {
                 "native"
@@ -645,14 +799,9 @@ impl XrealHeadTracker {
                     "[xreal] direct scale blit source is sRGB-typed; falling back to Godot \
                      bilinear upscale to preserve raw display color"
                 );
-                for viewport in &mut rig.viewports {
-                    viewport.set_size(Vector2i::new(EYE_W, EYE_H));
-                    viewport.set_scaling_3d_mode(Scaling3DMode::BILINEAR);
-                    viewport.set_scaling_3d_scale(rig.render_scale);
-                }
-                rig.source_width = EYE_W;
-                rig.source_height = EYE_H;
-                rig.direct_scale_blit = false;
+                rig.scale_blit_supported = false;
+                let render_scale = rig.render_scale;
+                configure_stereo_scale(rig, render_scale);
                 crate::vk_bridge::set_eye_sources(
                     crate::vk_bridge::EyeSource::default(),
                     crate::vk_bridge::EyeSource::default(),
@@ -820,6 +969,43 @@ impl XrealHeadTracker {
     fn debug_pose_text(&self) -> GString {
         self.debug_pose.clone()
     }
+
+    /// Current per-eye render scale after any dynamic adjustment. Returns the configured ceiling
+    /// before the stereo rig is created.
+    #[func]
+    fn get_current_render_scale(&self) -> f64 {
+        self.stereo
+            .as_ref()
+            .map(|rig| f64::from(rig.render_scale))
+            .unwrap_or_else(|| f64::from(eye_render_scale()))
+    }
+}
+
+fn configure_stereo_scale(rig: &mut StereoRig, render_scale: f32) {
+    let render_scale = render_scale.clamp(MIN_RENDER_SCALE, 1.0);
+    let direct_scale_blit = render_scale < 0.999 && rig.scale_blit_supported;
+    let source_width = if direct_scale_blit {
+        (EYE_W as f32 * render_scale).round() as i32
+    } else {
+        EYE_W
+    };
+    let source_height = if direct_scale_blit {
+        (EYE_H as f32 * render_scale).round() as i32
+    } else {
+        EYE_H
+    };
+    for viewport in &mut rig.viewports {
+        let size = Vector2i::new(source_width, source_height);
+        if viewport.get_size() != size {
+            viewport.set_size(size);
+        }
+        viewport.set_scaling_3d_mode(Scaling3DMode::BILINEAR);
+        viewport.set_scaling_3d_scale(if direct_scale_blit { 1.0 } else { render_scale });
+    }
+    rig.source_width = source_width;
+    rig.source_height = source_height;
+    rig.render_scale = render_scale;
+    rig.direct_scale_blit = direct_scale_blit;
 }
 
 /// Copy the app-owned Camera3D state to an offscreen eye camera. Projection shape, current state and
@@ -905,5 +1091,39 @@ mod tests {
             "offset.y {}",
             offset.y
         );
+    }
+
+    #[test]
+    fn dynamic_scale_drops_quickly_and_recovers_slowly() {
+        let mut controller = DynamicScaleController::new(1.0);
+        let mut changed = None;
+        for _ in 0..60 {
+            changed = changed.or_else(|| controller.observe(1.0 / 30.0, Some(60)));
+        }
+        assert_eq!(changed, Some(0.95));
+
+        let mut recovered = None;
+        for _ in 0..480 {
+            recovered = recovered.or_else(|| controller.observe(1.0 / 60.0, Some(60)));
+        }
+        assert_eq!(recovered, Some(1.0));
+    }
+
+    #[test]
+    fn dynamic_scale_uses_a_valid_compositor_rate_as_its_target() {
+        let mut controller = DynamicScaleController::new(0.75);
+        controller.observe(1.0 / 52.0, Some(52));
+        assert!(controller.target_calibrated);
+        assert_eq!(controller.target_fps, 52.0);
+        assert_eq!(controller.max_scale, 0.75);
+    }
+
+    #[test]
+    fn dynamic_scale_never_goes_below_the_internal_floor() {
+        let mut controller = DynamicScaleController::new(0.5);
+        for _ in 0..300 {
+            assert_eq!(controller.observe(1.0 / 15.0, Some(60)), None);
+        }
+        assert_eq!(controller.current_scale, MIN_RENDER_SCALE);
     }
 }

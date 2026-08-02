@@ -30,6 +30,13 @@ Deltas found on device after this was written:
   missing command/capability, an sRGB-typed source, or `debug.xreal.scale_blit=0` retains the
   full-size SubViewport plus Godot bilinear scaling and `vkCmdCopyImage`. No additional Vulkan
   device extension is required.
+- `xreal/dynamic_render_scale` is an opt-in Project Setting sampled when the stereo rig is created.
+  It treats the persisted `xreal/render_scale` as the quality ceiling and 0.5 as an internal floor,
+  so projects do not need to choose separate min/max/target values. The controller calibrates its
+  target from valid XREAL compositor rates, steps down by 0.05 after 0.75 s below 90% of target, and
+  steps up only after 4 s above 97%, with a cooldown after every resize. An explicit
+  `debug.xreal.render_scale` override disables it so fixed-scale device comparisons remain
+  reproducible.
 
 ## TL;DR
 
