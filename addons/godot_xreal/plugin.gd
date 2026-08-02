@@ -73,6 +73,13 @@ const PROJECT_SETTINGS: Array[Dictionary] = [
 		"default": 1.0,
 	},
 	{
+		# The eye viewports already render the shared 3D world. Keep the host display 2D-only by
+		# default to avoid a hidden third scene pass; disable this for a 3D phone mirror.
+		"name": "xreal/disable_host_viewport_3d",
+		"type": TYPE_BOOL,
+		"default": true,
+	},
+	{
 		# Which input sources InitUserDefinedSettings asks the SDK for. "SDK Default" (-1) leaves the
 		# `debug.xreal.input_source` property, and the native default of Controller, in charge.
 		#

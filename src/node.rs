@@ -87,6 +87,10 @@ pub struct XrealHeadTracker {
     /// Keep the glasses display awake when not worn, bypassing the proximity sensor's auto-off. It is
     /// read once in `ready()` from the ProjectSetting `xreal/display_bypass_psensor`, default `true`.
     bypass_psensor: bool,
+    /// Whether the root viewport should stop drawing 3D after the stereo eye viewports start.
+    disable_host_viewport_3d: bool,
+    /// Root viewport state before this tracker changed it, restored when the tracker leaves the tree.
+    host_viewport_3d_was_disabled: Option<bool>,
 }
 
 #[godot_api]
@@ -104,6 +108,8 @@ impl INode3D for XrealHeadTracker {
             recenter_reference: Quaternion::default(),
             last_raw_rotation: Quaternion::default(),
             bypass_psensor: true,
+            disable_host_viewport_3d: true,
+            host_viewport_3d_was_disabled: None,
         }
     }
 
@@ -119,9 +125,24 @@ impl INode3D for XrealHeadTracker {
         } else {
             true
         };
+        self.disable_host_viewport_3d = if ps.has_setting("xreal/disable_host_viewport_3d") {
+            ps.get_setting("xreal/disable_host_viewport_3d")
+                .try_to::<bool>()
+                .unwrap_or(true)
+        } else {
+            true
+        };
         // Kick off initialization early. `shared()` logs its own outcome, and retries on later frames
         // when the Android Activity has not been published yet.
         let _ = session::shared();
+    }
+
+    fn exit_tree(&mut self) {
+        if let Some(was_disabled) = self.host_viewport_3d_was_disabled.take() {
+            if let Some(mut viewport) = self.base().get_viewport() {
+                viewport.set_disable_3d(was_disabled);
+            }
+        }
     }
 
     fn process(&mut self, _delta: f64) {
@@ -462,6 +483,15 @@ impl XrealHeadTracker {
             viewports: [svl, svr],
             cameras: [caml, camr],
         });
+        // The two eye viewports already draw the shared World3D. Most XREAL apps use the host
+        // display for 2D controls, so drawing that world on the root viewport adds a hidden third
+        // scene pass. Preserve an opt-out for apps that intentionally show a 3D phone mirror.
+        if self.disable_host_viewport_3d && self.host_viewport_3d_was_disabled.is_none() {
+            if let Some(mut viewport) = self.base().get_viewport() {
+                self.host_viewport_3d_was_disabled = Some(viewport.is_3d_disabled());
+                viewport.set_disable_3d(true);
+            }
+        }
         godot_print!(
             "[xreal] stereo rig created ({EYE_W}x{EYE_H} per eye, 3D scale={render_scale:.2}, \
              internal={}x{})",
