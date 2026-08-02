@@ -38,6 +38,10 @@ var sys := XrealSystem.new()
 print(sys.is_available(), sys.get_plugin_version(), sys.get_device_type())
 ```
 
+The current app `Camera3D` remains the source for its transform, near/far clipping, render layers,
+environment, camera attributes and offsets. Runtime changes are mirrored to both eye cameras;
+XREAL's calibrated asymmetric projection and eye separation remain SDK-controlled.
+
 Then add only the feature sub-scenes you need (below). The repo's `demo/` scene wires every feature
 to a phone touch-controller UI as a complete example.
 
@@ -118,8 +122,10 @@ alone is not enough; that is what `XrealShared.is_native_runtime()` does.
 ### Previewing the glasses view on desktop
 
 On device the phone's root viewport draws your 2D UI and the extension's eye viewports draw the 3D
-world. A PC run has no eye viewports, so the 3D half has nowhere to go, and a full-screen phone UI
-hides whatever the root viewport drew.
+world. `xreal/disable_host_viewport_3d` defaults to `true`, preventing that shared world from also
+being drawn as a hidden third pass on the phone. Turn it off only when the phone intentionally
+shows a 3D mirror. A PC run has no eye viewports, so the setting is not applied there; the 3D half
+otherwise has nowhere to go, and a full-screen phone UI hides whatever the root viewport drew.
 
 Add `addons/godot_xreal/xreal_desktop_preview.tscn` to your scene to get it back. It opens a second
 window onto the same 3D world, and it frees itself on device, so a shipped scene can keep it. Parent

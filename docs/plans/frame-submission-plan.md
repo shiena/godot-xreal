@@ -23,6 +23,13 @@ Deltas found on device after this was written:
 - `UpdateMetrics` inside `SubmitCurrentFrame` SIGBUSes on the null Unity metrics callback and is
   patched to `ret` (`src/signal_guard.rs`); render stats are read via the flat `NRMetrics*` C API
   instead (`docs/plans/render-metrics-gdscript-plan.md`).
+- At a reduced render scale the preferred transfer path keeps each eye SubViewport at its reduced
+  dimensions and performs the upscale directly into the fixed 1968x1134 compositor image. GLES
+  uses its existing linear framebuffer blit; Vulkan uses core `vkCmdBlitImage` only when the
+  physical device reports RGBA8 optimal-tiling BLIT_SRC, BLIT_DST and linear-filter support. A
+  missing command/capability, an sRGB-typed source, or `debug.xreal.scale_blit=0` retains the
+  full-size SubViewport plus Godot bilinear scaling and `vkCmdCopyImage`. No additional Vulkan
+  device extension is required.
 
 ## TL;DR
 

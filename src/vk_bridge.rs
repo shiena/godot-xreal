@@ -7,8 +7,8 @@
 //! the private EGL context (`egl_context.rs`) through `GL_EXT_memory_object_fd`
 //! (`glImportMemoryFdEXT` + `glTexStorageMem2DEXT`); the resulting GL texture name is what the
 //! SDK receives, exactly as under GL. Per frame, a bridge-owned command buffer copies each eye
-//! SubViewport's `VkImage` into the acquired slot's `VkImage` (`vkCmdCopyImage`: raw texels, so
-//! Godot's display-ready sRGB-encoded bytes arrive unaltered), bracketed by
+//! SubViewport's `VkImage` into the acquired slot's `VkImage` (`vkCmdCopyImage` at native scale,
+//! or `vkCmdBlitImage` when an UNORM low-resolution source can be linearly upscaled), bracketed by
 //! `VK_QUEUE_FAMILY_EXTERNAL` acquire/release barriers. Sync defaults to a `vkQueueWaitIdle`
 //! before `SubmitCurrentFrame` (tear-free, 52 FPS); `debug.xreal.vk_sync 1` pipelines a fence for
 //! 60 FPS but tears under head motion, pending sync v2 (see `fill_eyes`). The design and its
@@ -80,6 +80,17 @@ const VK_QUEUE_FAMILY_EXTERNAL: u32 = 0xFFFF_FFFE;
 
 const VK_FORMAT_R8G8B8A8_UNORM: u32 = 37;
 const VK_FORMAT_R8G8B8A8_SRGB: u32 = 43;
+const VK_FORMAT_FEATURE_BLIT_SRC_BIT: u32 = 0x0000_0400;
+const VK_FORMAT_FEATURE_BLIT_DST_BIT: u32 = 0x0000_0800;
+const VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT: u32 = 0x0000_1000;
+const VK_FILTER_LINEAR: u32 = 1;
+
+fn supports_linear_rgba8_blit(features: u32) -> bool {
+    let required = VK_FORMAT_FEATURE_BLIT_SRC_BIT
+        | VK_FORMAT_FEATURE_BLIT_DST_BIT
+        | VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT;
+    features & required == required
+}
 
 const VK_IMAGE_TYPE_2D: u32 = 1;
 const VK_SAMPLE_COUNT_1_BIT: u32 = 1;
@@ -248,6 +259,22 @@ struct VkImageCopy {
 }
 
 #[repr(C)]
+struct VkImageBlit {
+    src_subresource: VkImageSubresourceLayers,
+    src_offsets: [VkOffset3D; 2],
+    dst_subresource: VkImageSubresourceLayers,
+    dst_offsets: [VkOffset3D; 2],
+}
+
+#[repr(C)]
+#[derive(Default)]
+struct VkFormatProperties {
+    linear_tiling_features: u32,
+    optimal_tiling_features: u32,
+    buffer_features: u32,
+}
+
+#[repr(C)]
 struct VkFenceCreateInfo {
     s_type: u32,
     p_next: *const c_void,
@@ -294,6 +321,8 @@ struct VkSubmitInfo {
 
 type FnVkGetInstanceProcAddr = unsafe extern "C" fn(VkPtr, *const u8) -> *mut c_void;
 type FnVkGetDeviceProcAddr = unsafe extern "C" fn(VkPtr, *const u8) -> *mut c_void;
+type FnVkGetPhysicalDeviceFormatProperties =
+    unsafe extern "C" fn(VkPtr, u32, *mut VkFormatProperties);
 type FnVkCreateImage =
     unsafe extern "C" fn(VkPtr, *const VkImageCreateInfo, *const c_void, *mut VkHandle) -> i32;
 type FnVkDestroyImage = unsafe extern "C" fn(VkPtr, VkHandle, *const c_void);
@@ -330,6 +359,8 @@ type FnVkCmdPipelineBarrier = unsafe extern "C" fn(
 );
 type FnVkCmdCopyImage =
     unsafe extern "C" fn(VkPtr, VkHandle, u32, VkHandle, u32, u32, *const VkImageCopy);
+type FnVkCmdBlitImage =
+    unsafe extern "C" fn(VkPtr, VkHandle, u32, VkHandle, u32, u32, *const VkImageBlit, u32);
 type FnVkCmdClearColorImage = unsafe extern "C" fn(
     VkPtr,
     VkHandle,
@@ -366,6 +397,7 @@ struct VkApi {
     reset_command_buffer: FnVkResetCommandBuffer,
     cmd_pipeline_barrier: FnVkCmdPipelineBarrier,
     cmd_copy_image: FnVkCmdCopyImage,
+    cmd_blit_image: Option<FnVkCmdBlitImage>,
     cmd_clear_color_image: FnVkCmdClearColorImage,
     queue_submit: FnVkQueueSubmit,
     queue_wait_idle: FnVkQueueWaitIdle,
@@ -377,6 +409,8 @@ struct VkApi {
     command_buffer: VkPtr,
     /// Fence signaled by the fill submission; used by the pipelined sync mode (vk_sync=1).
     fence: VkHandle,
+    /// Whether optimal-tiled RGBA8 UNORM supports source/destination blit and linear filtering.
+    linear_blit_rgba8: bool,
     _lib: Library,
 }
 
@@ -542,6 +576,8 @@ static VK_INIT_LOGGED: AtomicBool = AtomicBool::new(false);
 static FENCE_PENDING: AtomicBool = AtomicBool::new(false);
 /// One-shot eye-source format log gate.
 static SRC_LOGGED: AtomicBool = AtomicBool::new(false);
+/// One-shot direct scale-blit log gate.
+static SCALE_BLIT_LOGGED: AtomicBool = AtomicBool::new(false);
 
 impl EyeSource {
     const ZERO: EyeSource = EyeSource {
@@ -592,6 +628,13 @@ pub fn bridge_ready() -> bool {
     !BROKEN.load(Ordering::Relaxed) && VK.get().is_some_and(|v| v.is_some())
 }
 
+/// Whether the initialized device can linearly blit optimal-tiled RGBA8 UNORM images. This is a
+/// physical-device format capability, not an extension feature. The node uses it before choosing
+/// a low-resolution eye viewport; unsupported devices retain Godot's built-in upscale path.
+pub fn linear_scale_blit_supported() -> bool {
+    vk().is_some_and(|api| api.linear_blit_rgba8)
+}
+
 /// Resolve Godot's Vulkan handles and the bridge's own command pool + fence. Idempotent; call
 /// from the main thread when the bridge is first needed, whether for glasses rendering or the
 /// encoder. Returns whether the bridge is usable; failures latch [`BROKEN`] and log the reason.
@@ -632,6 +675,11 @@ fn load_vk() -> Result<VkApi, String> {
         godot::builtin::Rid::Invalid,
         0,
     );
+    let physical_device = rd.get_driver_resource(
+        DriverResource::PHYSICAL_DEVICE,
+        godot::builtin::Rid::Invalid,
+        0,
+    );
     let queue = rd.get_driver_resource(
         DriverResource::COMMAND_QUEUE,
         godot::builtin::Rid::Invalid,
@@ -642,9 +690,10 @@ fn load_vk() -> Result<VkApi, String> {
         godot::builtin::Rid::Invalid,
         0,
     ) as u32;
-    if instance == 0 || device == 0 || queue == 0 {
+    if instance == 0 || physical_device == 0 || device == 0 || queue == 0 {
         return Err(format!(
-            "driver resources missing (instance={instance:#x} device={device:#x} queue={queue:#x})"
+            "driver resources missing (instance={instance:#x} physical={physical_device:#x} \
+             device={device:#x} queue={queue:#x})"
         ));
     }
 
@@ -660,6 +709,16 @@ fn load_vk() -> Result<VkApi, String> {
                 return Err("vkGetDeviceProcAddr unresolved".into());
             }
             std::mem::transmute::<*mut c_void, FnVkGetDeviceProcAddr>(p)
+        };
+        let get_format_properties: FnVkGetPhysicalDeviceFormatProperties = {
+            let p = gipa(
+                instance as VkPtr,
+                c"vkGetPhysicalDeviceFormatProperties".as_ptr().cast(),
+            );
+            if p.is_null() {
+                return Err("vkGetPhysicalDeviceFormatProperties unresolved".into());
+            }
+            std::mem::transmute::<*mut c_void, FnVkGetPhysicalDeviceFormatProperties>(p)
         };
         macro_rules! dev_fn {
             ($name:literal, $ty:ty) => {{
@@ -702,6 +761,10 @@ fn load_vk() -> Result<VkApi, String> {
         let cmd_pipeline_barrier: FnVkCmdPipelineBarrier =
             dev_fn!("vkCmdPipelineBarrier", FnVkCmdPipelineBarrier);
         let cmd_copy_image: FnVkCmdCopyImage = dev_fn!("vkCmdCopyImage", FnVkCmdCopyImage);
+        let cmd_blit_image: Option<FnVkCmdBlitImage> = {
+            let p = gdpa(device as VkPtr, c"vkCmdBlitImage".as_ptr().cast());
+            (!p.is_null()).then(|| std::mem::transmute::<*mut c_void, FnVkCmdBlitImage>(p))
+        };
         let cmd_clear_color_image: FnVkCmdClearColorImage =
             dev_fn!("vkCmdClearColorImage", FnVkCmdClearColorImage);
         let queue_submit: FnVkQueueSubmit = dev_fn!("vkQueueSubmit", FnVkQueueSubmit);
@@ -710,6 +773,15 @@ fn load_vk() -> Result<VkApi, String> {
         let destroy_fence: FnVkDestroyFence = dev_fn!("vkDestroyFence", FnVkDestroyFence);
         let wait_for_fences: FnVkWaitForFences = dev_fn!("vkWaitForFences", FnVkWaitForFences);
         let reset_fences: FnVkResetFences = dev_fn!("vkResetFences", FnVkResetFences);
+
+        let mut rgba8_properties = VkFormatProperties::default();
+        get_format_properties(
+            physical_device as VkPtr,
+            VK_FORMAT_R8G8B8A8_UNORM,
+            &mut rgba8_properties,
+        );
+        let linear_blit_rgba8 = cmd_blit_image.is_some()
+            && supports_linear_rgba8_blit(rgba8_properties.optimal_tiling_features);
 
         let pool_info = VkCommandPoolCreateInfo {
             s_type: VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
@@ -753,7 +825,9 @@ fn load_vk() -> Result<VkApi, String> {
         }
 
         godot::global::godot_print!(
-            "[xreal] vk_bridge: device={device:#x} queue={queue:#x} family={queue_family}"
+            "[xreal] vk_bridge: device={device:#x} queue={queue:#x} family={queue_family} \
+             linear_blit_rgba8={linear_blit_rgba8} format_features={:#x}",
+            rgba8_properties.optimal_tiling_features,
         );
         Ok(VkApi {
             device: device as VkPtr,
@@ -772,6 +846,7 @@ fn load_vk() -> Result<VkApi, String> {
             reset_command_buffer,
             cmd_pipeline_barrier,
             cmd_copy_image,
+            cmd_blit_image,
             cmd_clear_color_image,
             queue_submit,
             queue_wait_idle,
@@ -782,6 +857,7 @@ fn load_vk() -> Result<VkApi, String> {
             command_pool,
             command_buffer,
             fence,
+            linear_blit_rgba8,
             _lib: lib,
         })
     }
@@ -1298,12 +1374,13 @@ fn drain_destroyed() {
 pub fn set_eye_sources(left: EyeSource, right: EyeSource) {
     if !SRC_LOGGED.swap(true, Ordering::Relaxed) && left.valid {
         godot::global::godot_print!(
-            "[xreal] vk_bridge eye-src probe: {}x{} srgb={} vk_image={:#x} (copy path {})",
+            "[xreal] vk_bridge eye-src probe: {}x{} srgb={} vk_image={:#x} \
+             linear_blit_rgba8={}",
             left.width,
             left.height,
             left.srgb,
             left.vk_image,
-            "enabled: RGBA8 class"
+            linear_scale_blit_supported(),
         );
     }
     *EYE_SOURCES.lock().expect("eye sources mutex") = [left, right];
@@ -1387,10 +1464,12 @@ pub fn fill_eyes(targets: &[(u32, usize)]) -> u32 {
                 continue;
             };
             let src = sources[eye.min(1)];
-            let copy_ok = src.valid
-                && src.vk_image != 0
-                && src.width == bundle.width
-                && src.height == bundle.height;
+            let same_size = src.width == bundle.width && src.height == bundle.height;
+            // Linear blitting an sRGB-typed source into the UNORM bridge image would decode its
+            // color values, unlike the established raw-copy path. The node detects that source
+            // and rebuilds a full-size viewport; keep this guard here as the last safe fallback.
+            let blit_ok = !same_size && !src.srgb && api.linear_blit_rgba8;
+            let fill_ok = src.valid && src.vk_image != 0 && (same_size || blit_ok);
 
             // Acquire the slot from the foreign (GL/compositor) side. First use discards.
             let old_layout = if bundle.first_use {
@@ -1424,7 +1503,7 @@ pub fn fill_eyes(targets: &[(u32, usize)]) -> u32 {
                 &acquire,
             );
 
-            if solid > 0 || !copy_ok {
+            if solid > 0 || !fill_ok {
                 // Bring-up ladder steps 4/5 (and the no-source fallback): clear the slot to a
                 // per-eye color, animated when vk_solid=2, black when the source is just absent.
                 let t = if solid == 2 {
@@ -1476,26 +1555,68 @@ pub fn fill_eyes(targets: &[(u32, usize)]) -> u32 {
                     1,
                     &src_in,
                 );
-                let region = VkImageCopy {
-                    src_subresource: COLOR_LAYERS,
-                    src_offset: VkOffset3D { x: 0, y: 0, z: 0 },
-                    dst_subresource: COLOR_LAYERS,
-                    dst_offset: VkOffset3D { x: 0, y: 0, z: 0 },
-                    extent: VkExtent3D {
-                        width: bundle.width as u32,
-                        height: bundle.height as u32,
-                        depth: 1,
-                    },
-                };
-                (api.cmd_copy_image)(
-                    api.command_buffer,
-                    src.vk_image,
-                    VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                    bundle.vk_image,
-                    VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                    1,
-                    &region,
-                );
+                if same_size {
+                    let region = VkImageCopy {
+                        src_subresource: COLOR_LAYERS,
+                        src_offset: VkOffset3D { x: 0, y: 0, z: 0 },
+                        dst_subresource: COLOR_LAYERS,
+                        dst_offset: VkOffset3D { x: 0, y: 0, z: 0 },
+                        extent: VkExtent3D {
+                            width: bundle.width as u32,
+                            height: bundle.height as u32,
+                            depth: 1,
+                        },
+                    };
+                    (api.cmd_copy_image)(
+                        api.command_buffer,
+                        src.vk_image,
+                        VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                        bundle.vk_image,
+                        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                        1,
+                        &region,
+                    );
+                } else {
+                    if !SCALE_BLIT_LOGGED.swap(true, Ordering::Relaxed) {
+                        godot::global::godot_print!(
+                            "[xreal] vk_bridge: direct linear scale blit {}x{} -> {}x{}",
+                            src.width,
+                            src.height,
+                            bundle.width,
+                            bundle.height
+                        );
+                    }
+                    let region = VkImageBlit {
+                        src_subresource: COLOR_LAYERS,
+                        src_offsets: [
+                            VkOffset3D { x: 0, y: 0, z: 0 },
+                            VkOffset3D {
+                                x: src.width,
+                                y: src.height,
+                                z: 1,
+                            },
+                        ],
+                        dst_subresource: COLOR_LAYERS,
+                        dst_offsets: [
+                            VkOffset3D { x: 0, y: 0, z: 0 },
+                            VkOffset3D {
+                                x: bundle.width,
+                                y: bundle.height,
+                                z: 1,
+                            },
+                        ],
+                    };
+                    (api.cmd_blit_image.expect("blit_ok requires vkCmdBlitImage"))(
+                        api.command_buffer,
+                        src.vk_image,
+                        VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                        bundle.vk_image,
+                        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                        1,
+                        &region,
+                        VK_FILTER_LINEAR,
+                    );
+                }
                 let src_out = VkImageMemoryBarrier {
                     s_type: VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
                     p_next: std::ptr::null(),
@@ -1666,5 +1787,27 @@ pub fn submit_encoder_only() {
         // Same pipelined fence as the eye path: the next tick's wait_entry_fence proves this copy
         // complete before the encoder is handed the bundle.
         FENCE_PENDING.store(true, Ordering::Relaxed);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn linear_blit_requires_all_format_features() {
+        let all = VK_FORMAT_FEATURE_BLIT_SRC_BIT
+            | VK_FORMAT_FEATURE_BLIT_DST_BIT
+            | VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT;
+        assert!(supports_linear_rgba8_blit(all));
+        assert!(!supports_linear_rgba8_blit(
+            all & !VK_FORMAT_FEATURE_BLIT_SRC_BIT
+        ));
+        assert!(!supports_linear_rgba8_blit(
+            all & !VK_FORMAT_FEATURE_BLIT_DST_BIT
+        ));
+        assert!(!supports_linear_rgba8_blit(
+            all & !VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT
+        ));
     }
 }

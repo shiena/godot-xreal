@@ -7,6 +7,7 @@
 //! identity and logs a single warning.
 
 use godot::classes::sub_viewport::UpdateMode;
+use godot::classes::viewport::Scaling3DMode;
 use godot::classes::{Camera3D, INode3D, Node3D, ProjectSettings, RenderingServer, SubViewport};
 use godot::prelude::*;
 
@@ -16,18 +17,43 @@ use crate::session;
 /// Per-eye render size (matches the XREAL swapchain buffers created via CreateTexture).
 const EYE_W: i32 = 1968;
 const EYE_H: i32 = 1134;
-/// Vertical FOV in degrees, approximating the XREAL One Pro per-eye figure of about 46 degrees
-/// horizontal at a 1968x1134 aspect.
-const EYE_FOV: f32 = 27.4;
+/// Last-resort vertical FOV when neither an app Camera3D nor the SDK's calibrated per-eye
+/// projection is available. This is an approximation derived from One Pro calibration logs, not an
+/// official device default.
+const FALLBACK_EYE_VERTICAL_FOV: f32 = 27.4;
+const DEFAULT_NEAR: f32 = 0.05;
+const DEFAULT_FAR: f32 = 1000.0;
 /// Half the interpupillary distance in metres. Each eye camera is offset by plus or minus this
 /// along head-local X.
 const HALF_IPD: f32 = 0.0315;
+
+/// Resolve the per-eye 3D render scale. Supported backends render the SubViewport at the reduced
+/// size and upscale directly into the XREAL eye texture; the fallback keeps a full-size output and
+/// uses Godot's bilinear 3D scaling. The Android property overrides the persisted project setting.
+fn eye_render_scale() -> f32 {
+    if let Some(percent) = session::android_prop_i32(b"debug.xreal.render_scale\0") {
+        return (percent as f32 / 100.0).clamp(0.5, 1.0);
+    }
+    let ps = ProjectSettings::singleton();
+    if ps.has_setting("xreal/render_scale") {
+        ps.get_setting("xreal/render_scale")
+            .try_to::<f64>()
+            .map(|scale| (scale as f32).clamp(0.5, 1.0))
+            .unwrap_or(1.0)
+    } else {
+        1.0
+    }
+}
 
 /// Two offscreen SubViewports, left and right, each with a Camera3D, rendering the main world from
 /// per-eye viewpoints. Their textures are blitted into the XREAL eye swapchain buffers.
 struct StereoRig {
     viewports: [Gd<SubViewport>; 2],
     cameras: [Gd<Camera3D>; 2],
+    source_width: i32,
+    source_height: i32,
+    render_scale: f32,
+    direct_scale_blit: bool,
 }
 
 /// Scene node that drives its own transform from the native XREAL head pose each frame. Parent a
@@ -37,7 +63,9 @@ struct StereoRig {
 /// selectable. It also emits the glasses hot-plug and hardware-input signals: `key_event`,
 /// `key_state_changed`, `wearing_changed`, `brightness_changed` and the rest. `is_tracking()`
 /// reports whether a native pose was applied on the last frame, and `recenter()` resets the
-/// forward direction.
+/// forward direction. The current app `Camera3D` supplies its transform, clipping distances, FOV
+/// fallback, cull mask, environment, attributes and other render settings to both eye cameras at
+/// runtime; the SDK's calibrated per-eye projection and IPD still take precedence.
 #[derive(GodotClass)]
 #[class(base = Node3D)]
 pub struct XrealHeadTracker {
@@ -50,6 +78,8 @@ pub struct XrealHeadTracker {
     debug_pose: GString,
     /// Lazily-created per-eye offscreen render rig (stereo).
     stereo: Option<StereoRig>,
+    /// Whether the app Camera3D values inherited by the eye cameras were logged once.
+    camera_parameters_logged: bool,
     /// Whether the `display_started` signal has been emitted (once, on first tracking).
     display_signaled: bool,
     /// Last-seen glasses hot-plug event counts, from the JNI DisplayManager callbacks. A change
@@ -68,6 +98,10 @@ pub struct XrealHeadTracker {
     /// Keep the glasses display awake when not worn, bypassing the proximity sensor's auto-off. It is
     /// read once in `ready()` from the ProjectSetting `xreal/display_bypass_psensor`, default `true`.
     bypass_psensor: bool,
+    /// Whether the root viewport should stop drawing 3D after the stereo eye viewports start.
+    disable_host_viewport_3d: bool,
+    /// Root viewport state before this tracker changed it, restored when the tracker leaves the tree.
+    host_viewport_3d_was_disabled: Option<bool>,
 }
 
 #[godot_api]
@@ -79,12 +113,15 @@ impl INode3D for XrealHeadTracker {
             frames: 0,
             debug_pose: GString::new(),
             stereo: None,
+            camera_parameters_logged: false,
             display_signaled: false,
             last_connect_count: 0,
             last_disconnect_count: 0,
             recenter_reference: Quaternion::default(),
             last_raw_rotation: Quaternion::default(),
             bypass_psensor: true,
+            disable_host_viewport_3d: true,
+            host_viewport_3d_was_disabled: None,
         }
     }
 
@@ -100,9 +137,24 @@ impl INode3D for XrealHeadTracker {
         } else {
             true
         };
+        self.disable_host_viewport_3d = if ps.has_setting("xreal/disable_host_viewport_3d") {
+            ps.get_setting("xreal/disable_host_viewport_3d")
+                .try_to::<bool>()
+                .unwrap_or(true)
+        } else {
+            true
+        };
         // Kick off initialization early. `shared()` logs its own outcome, and retries on later frames
         // when the Android Activity has not been published yet.
         let _ = session::shared();
+    }
+
+    fn exit_tree(&mut self) {
+        if let Some(was_disabled) = self.host_viewport_3d_was_disabled.take() {
+            if let Some(mut viewport) = self.base().get_viewport() {
+                viewport.set_disable_3d(was_disabled);
+            }
+        }
     }
 
     fn process(&mut self, _delta: f64) {
@@ -417,15 +469,34 @@ impl XrealHeadTracker {
         let Some(world) = self.base().get_world_3d() else {
             return;
         };
+        let render_scale = eye_render_scale();
+        let scale_blit_requested = render_scale < 0.999
+            && session::android_prop_i32(b"debug.xreal.scale_blit\0").unwrap_or(1) != 0;
+        let direct_scale_blit = scale_blit_requested
+            && (gl::renderer_is_gl() || crate::vk_bridge::linear_scale_blit_supported());
+        let source_width = if direct_scale_blit {
+            (EYE_W as f32 * render_scale).round() as i32
+        } else {
+            EYE_W
+        };
+        let source_height = if direct_scale_blit {
+            (EYE_H as f32 * render_scale).round() as i32
+        } else {
+            EYE_H
+        };
         let make_eye = || {
             let mut sv = SubViewport::new_alloc();
-            sv.set_size(Vector2i::new(EYE_W, EYE_H));
+            sv.set_size(Vector2i::new(source_width, source_height));
+            if render_scale < 0.999 && !direct_scale_blit {
+                sv.set_scaling_3d_mode(Scaling3DMode::BILINEAR);
+                sv.set_scaling_3d_scale(render_scale);
+            }
             sv.set_update_mode(UpdateMode::ALWAYS);
             sv.set_world_3d(&world);
             let mut cam = Camera3D::new_alloc();
-            cam.set_fov(EYE_FOV);
-            cam.set_near(0.05);
-            cam.set_far(1000.0);
+            cam.set_fov(FALLBACK_EYE_VERTICAL_FOV);
+            cam.set_near(DEFAULT_NEAR);
+            cam.set_far(DEFAULT_FAR);
             cam.set_current(true);
             sv.add_child(&cam);
             (sv, cam)
@@ -437,14 +508,76 @@ impl XrealHeadTracker {
         self.stereo = Some(StereoRig {
             viewports: [svl, svr],
             cameras: [caml, camr],
+            source_width,
+            source_height,
+            render_scale,
+            direct_scale_blit,
         });
-        godot_print!("[xreal] stereo rig created ({EYE_W}x{EYE_H} per eye)");
+        // The two eye viewports already draw the shared World3D. Most XREAL apps use the host
+        // display for 2D controls, so drawing that world on the root viewport adds a hidden third
+        // scene pass. Preserve an opt-out for apps that intentionally show a 3D phone mirror.
+        if self.disable_host_viewport_3d && self.host_viewport_3d_was_disabled.is_none() {
+            if let Some(mut viewport) = self.base().get_viewport() {
+                self.host_viewport_3d_was_disabled = Some(viewport.is_3d_disabled());
+                viewport.set_disable_3d(true);
+            }
+        }
+        godot_print!(
+            "[xreal] stereo rig created ({EYE_W}x{EYE_H} per eye, 3D scale={render_scale:.2}, \
+             internal={}x{}, scale_path={})",
+            (EYE_W as f32 * render_scale).round() as i32,
+            (EYE_H as f32 * render_scale).round() as i32,
+            if direct_scale_blit {
+                "bridge-linear"
+            } else if render_scale < 0.999 {
+                "godot-bilinear"
+            } else {
+                "native"
+            },
+        );
     }
 
     /// Aim the eye cameras from the head transform, offset by plus or minus the IPD, and publish their
     /// GL textures.
     fn update_stereo(&mut self) {
         let head = self.base().get_global_transform();
+        // The app-facing Camera3D remains the source of scene-specific camera state even when the
+        // host viewport's 3D pass is disabled. Eye projection and IPD remain XREAL-owned, while
+        // clipping, render layers, post-processing resources and intentional camera offsets belong
+        // to the app and must follow runtime camera changes.
+        let source_camera = self
+            .base()
+            .get_viewport()
+            .and_then(|viewport| viewport.get_camera_3d());
+        let source_transform = source_camera
+            .as_ref()
+            .map(|camera| camera.get_global_transform())
+            .unwrap_or(head);
+        let source_near = source_camera
+            .as_ref()
+            .map(|camera| camera.get_near())
+            .unwrap_or(DEFAULT_NEAR);
+        let source_far = source_camera
+            .as_ref()
+            .map(|camera| camera.get_far())
+            .unwrap_or(DEFAULT_FAR);
+        let source_fov = source_camera
+            .as_ref()
+            .map(|camera| camera.get_fov())
+            .unwrap_or(FALLBACK_EYE_VERTICAL_FOV);
+        if !self.camera_parameters_logged {
+            if let Some(camera) = source_camera.as_ref() {
+                godot_print!(
+                    "[xreal] eye cameras inherit app camera: near={source_near:.3} \
+                     far={source_far:.1} fov={source_fov:.1} cull_mask={:#x} \
+                     environment={} attributes={}",
+                    camera.get_cull_mask(),
+                    camera.get_environment().is_some(),
+                    camera.get_attributes().is_some(),
+                );
+                self.camera_parameters_logged = true;
+            }
+        }
         let Some(rig) = self.stereo.as_mut() else {
             // Mono fallback: publish the window size so the frame tick blits the default framebuffer.
             if let Some(viewport) = self.base().get_viewport() {
@@ -454,11 +587,12 @@ impl XrealHeadTracker {
             return;
         };
         // Apply the SDK's exact per-eye projection and eye offset when available, which makes the AR
-        // pixel-accurate, and otherwise fall back to the symmetric IPD and the hardcoded FOV.
+        // pixel-accurate, and otherwise fall back to the symmetric IPD and the app camera's FOV.
         let proj = crate::unity_plugin::stereo_projection();
-        const NEAR: f32 = 0.05;
-        const FAR: f32 = 1000.0;
         for (i, cam) in rig.cameras.iter_mut().enumerate() {
+            if let Some(source) = source_camera.as_ref() {
+                sync_eye_camera_parameters(source, cam);
+            }
             let p = proj[i];
             let eye_x = if p.valid && p.px != 0.0 {
                 p.px
@@ -468,7 +602,7 @@ impl XrealHeadTracker {
                 HALF_IPD
             };
             cam.set_global_transform(
-                head * Transform3D::new(Basis::IDENTITY, Vector3::new(eye_x, 0.0, 0.0)),
+                source_transform * Transform3D::new(Basis::IDENTITY, Vector3::new(eye_x, 0.0, 0.0)),
             );
 
             if p.valid && (p.r - p.l) > 1e-4 && (p.t - p.b) > 1e-4 {
@@ -476,12 +610,12 @@ impl XrealHeadTracker {
                 // near, far) maps to near-plane extents of plus or minus size/2 vertically and plus or minus
                 // size*aspect/2 horizontally, shifted by offset, and a near-plane coordinate equals
                 // tangent*near.
-                let (size, offset) = frustum_size_offset(p.l, p.r, p.t, p.b, NEAR);
-                cam.set_frustum(size, offset, NEAR, FAR);
+                let (size, offset) = frustum_size_offset(p.l, p.r, p.t, p.b, source_near);
+                cam.set_frustum(size, offset, source_near, source_far);
             } else {
-                cam.set_fov(EYE_FOV);
-                cam.set_near(NEAR);
-                cam.set_far(FAR);
+                cam.set_fov(source_fov);
+                cam.set_near(source_near);
+                cam.set_far(source_far);
             }
         }
         let rs = RenderingServer::singleton();
@@ -494,13 +628,37 @@ impl XrealHeadTracker {
             };
             let left = handle(&rig.viewports[0]);
             let right = handle(&rig.viewports[1]);
-            crate::unity_plugin::set_godot_eye_sources(left, right, EYE_W, EYE_H);
+            crate::unity_plugin::set_godot_eye_sources(
+                left,
+                right,
+                rig.source_width,
+                rig.source_height,
+            );
         } else {
             // Vulkan bridge: publish each eye SubViewport's VkImage (and its RD format) for the
-            // per-frame vkCmdCopyImage. Resolved every frame, because Godot may reallocate the
-            // render target, invalidating both the RID chain and the driver handle.
+            // per-frame copy or direct scale blit. Resolved every frame, because Godot may
+            // reallocate the render target, invalidating both the RID chain and driver handle.
             let left = Self::vk_eye_source(&rig.viewports[0]);
             let right = Self::vk_eye_source(&rig.viewports[1]);
+            if rig.direct_scale_blit && (left.valid && left.srgb || right.valid && right.srgb) {
+                godot_warn!(
+                    "[xreal] direct scale blit source is sRGB-typed; falling back to Godot \
+                     bilinear upscale to preserve raw display color"
+                );
+                for viewport in &mut rig.viewports {
+                    viewport.set_size(Vector2i::new(EYE_W, EYE_H));
+                    viewport.set_scaling_3d_mode(Scaling3DMode::BILINEAR);
+                    viewport.set_scaling_3d_scale(rig.render_scale);
+                }
+                rig.source_width = EYE_W;
+                rig.source_height = EYE_H;
+                rig.direct_scale_blit = false;
+                crate::vk_bridge::set_eye_sources(
+                    crate::vk_bridge::EyeSource::default(),
+                    crate::vk_bridge::EyeSource::default(),
+                );
+                return;
+            }
             crate::vk_bridge::set_eye_sources(left, right);
         }
     }
@@ -661,6 +819,46 @@ impl XrealHeadTracker {
     #[func]
     fn debug_pose_text(&self) -> GString {
         self.debug_pose.clone()
+    }
+}
+
+/// Copy the app-owned Camera3D state to an offscreen eye camera. Projection shape, current state and
+/// eye transform are deliberately excluded: the XREAL frame descriptor owns those values. Each
+/// setter is guarded because unchanged Camera3D setters enqueue RenderingServer work.
+fn sync_eye_camera_parameters(source: &Gd<Camera3D>, eye: &mut Gd<Camera3D>) {
+    let cull_mask = source.get_cull_mask();
+    if eye.get_cull_mask() != cull_mask {
+        eye.set_cull_mask(cull_mask);
+    }
+
+    let environment = source.get_environment();
+    if eye.get_environment() != environment {
+        eye.set_environment(environment.as_ref());
+    }
+
+    let attributes = source.get_attributes();
+    if eye.get_attributes() != attributes {
+        eye.set_attributes(attributes.as_ref());
+    }
+
+    let keep_aspect = source.get_keep_aspect_mode();
+    if eye.get_keep_aspect_mode() != keep_aspect {
+        eye.set_keep_aspect_mode(keep_aspect);
+    }
+
+    let h_offset = source.get_h_offset();
+    if eye.get_h_offset() != h_offset {
+        eye.set_h_offset(h_offset);
+    }
+
+    let v_offset = source.get_v_offset();
+    if eye.get_v_offset() != v_offset {
+        eye.set_v_offset(v_offset);
+    }
+
+    let doppler = source.get_doppler_tracking();
+    if eye.get_doppler_tracking() != doppler {
+        eye.set_doppler_tracking(doppler);
     }
 }
 
