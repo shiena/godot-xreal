@@ -36,6 +36,7 @@ mod system;
 mod unity_plugin;
 mod video_encoder;
 mod vk_bridge;
+mod xr_interface;
 
 struct GodotXrealExtension;
 
@@ -45,6 +46,7 @@ unsafe impl ExtensionLibrary for GodotXrealExtension {}
 pub use camera_feed::XrealCameraFeed;
 pub use node::XrealHeadTracker;
 pub use system::XrealSystem;
+pub use xr_interface::XrealXrInterface;
 
 #[cfg(test)]
 mod api_docs;

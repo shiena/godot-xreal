@@ -114,6 +114,16 @@ sustained frame pressure and restores it only after longer stable headroom. An e
 `debug.xreal.render_scale` Android property keeps the scale fixed for A/B measurements and disables
 the controller.
 
+`xreal/xr_multiview_poc` (default off) is experimental: on the Mobile (Vulkan) renderer it renders
+both eyes in one scene pass through Godot's XR multiview instead of two viewports. Enabling it
+requires two XR settings. Set `xr/shaders/enabled=true` in *Project Settings* (an advanced
+setting), and set **XR Mode** to `OpenXR` in the Android export preset; without them the exporter
+strips the XR shaders and 3D stops rendering. Keep `xr/openxr/enabled=false`, as this repo's `project.godot`
+does explicitly: the OpenXR runtime itself stays off, the preset flag only preserves the shaders. The Compatibility renderer ignores the setting and keeps the regular
+two-viewport path. The Android property `debug.xreal.xr_multiview` (0/1) overrides the setting for
+same-APK A/B comparison. Dynamic render scale does not apply to this path; `xreal/render_scale` is
+sampled once at startup.
+
 ### Editor tooling
 
 The plugin adds two editor docks: **XREAL Vendor** (imports SDK `.aar`/`.so` packages) and

@@ -29,7 +29,7 @@ $root = Split-Path -Parent $PSScriptRoot
 $out = Join-Path $root 'dummy/stub_classes.inc'
 
 # Base classes the dummy knows how to register a placeholder for (all get one).
-$knownBases = @('Node', 'Node2D', 'Node3D', 'Control', 'CanvasLayer', 'RefCounted', 'Object', 'Resource', 'CameraFeed')
+$knownBases = @('Node', 'Node2D', 'Node3D', 'Control', 'CanvasLayer', 'RefCounted', 'Object', 'Resource', 'CameraFeed', 'XrInterfaceExtension')
 
 $classes = @()
 foreach ($file in Get-ChildItem (Join-Path $root 'src') -Filter '*.rs' -Recurse) {
