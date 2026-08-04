@@ -22,6 +22,7 @@ Registered by the GDExtension, and available as global types on device.
 | [XrealHandTracker](xreal_hand_tracker.md) | [`Node`](https://docs.godotengine.org/en/stable/classes/class_node.html) | Node that publishes XREAL hand tracking to Godot's `XRServer` as two `XRHandTracker`s, `/user/hand_tracker/left` and `/user/hand_tracker/right`. … |
 | [XrealHeadTracker](xreal_head_tracker.md) | [`Node3D`](https://docs.godotengine.org/en/stable/classes/class_node3d.html) | Scene node that drives its own transform from the native XREAL head pose each frame. … |
 | [XrealSystem](xreal_system.md) | [`RefCounted`](https://docs.godotengine.org/en/stable/classes/class_refcounted.html) | SDK information and control surface for the XREAL glasses. |
+| [XrealXrInterface](xreal_xr_interface.md) | [`XrInterfaceExtension`](https://docs.godotengine.org/en/stable/classes/class_xrinterfaceextension.html) | An opt-in `XRInterfaceExtension` that enters Godot's standard two-view render path. |
 
 ## Feature components
 

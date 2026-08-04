@@ -80,6 +80,12 @@ The proximity (wear) sensor reported the glasses were put on (`true`) or taken o
 
 Latest raw and converted pose sample for visual on-device debugging.
 
+<a id="method-get_current_render_scale"></a>
+
+### get_current_render_scale() -> float
+
+Current per-eye render scale after any dynamic adjustment. Returns the configured ceiling before the stereo rig is created.
+
 <a id="method-is_tracking"></a>
 
 ### is_tracking() -> bool
