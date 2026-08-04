@@ -2,7 +2,7 @@
 //!
 //! The Unity `com.xreal.xr` SDK is a thin C# layer over native `.so` libraries.
 //! Those native libraries export a flat, engine-agnostic C ABI (see
-//! `docs/reference/reverse-engineering.md`), so instead of porting the C# we `dlopen` the
+//! `docs/develop/reference/reverse-engineering.md`), so instead of porting the C# we `dlopen` the
 //! libraries directly and feed the head pose into Godot.
 //!
 //! [`node::XrealHeadTracker`] reads the native 6DoF head pose, rotation and position,
@@ -12,7 +12,7 @@
 //! the glasses. On top of head tracking the extension exposes the RGB camera, plane
 //! detection, spatial anchors, image tracking, depth meshing, hand tracking, photo and
 //! blended capture, and FPV streaming; see `node`, `system`, `unity_plugin` and
-//! `docs/plans/port-plan.md`.
+//! `docs/develop/plans/port-plan.md`.
 
 use godot::prelude::*;
 

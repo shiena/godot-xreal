@@ -9,7 +9,7 @@ See the repository root for build and RE details.
 
 1. Copy `addons/godot_xreal/` into your project.
 2. Provide the GDExtension binary and the vendored XREAL `.so` files (see the repo's
-   `docs/guides/build-and-release.md`). For local dev the repo ships a `godot_xreal.gdextension`
+   developer docs, indexed at `docs/develop/README.md`). For local dev the repo ships a `godot_xreal.gdextension`
    at the project root pointing at `res://target/...`.
 3. Enable **Godot XREAL** in *Project > Project Settings > Plugins*. This step is optional: the
    runtime classes load with the GDExtension either way, and the plugin adds the editor docks and

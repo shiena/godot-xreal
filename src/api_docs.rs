@@ -1,6 +1,6 @@
 //! Web-facing class reference generator (test-driven codegen; runs on the host, not on device).
 //!
-//! Renders one Markdown page per public class into `docs/api/`, out of the *same* Godot
+//! Renders one Markdown page per public class into `docs/user/api/`, out of the *same* Godot
 //! class-reference XML on both sides of the addon:
 //!
 //!  - the native classes come from gdext's `register-docs` XML, built from the `///` comments and
@@ -105,7 +105,7 @@ struct ClassDoc {
     /// Display name: the registered global class name, or, for a feature script without a `class_name`,
     /// the PascalCase of its file stem. The page carries a note saying so.
     name: String,
-    /// Output file stem under `docs/api/`.
+    /// Output file stem under `docs/user/api/`.
     slug: String,
     inherits: String,
     group: Group,
@@ -1143,7 +1143,7 @@ fn build_index(classes: &[ClassDoc]) -> Index {
     ix
 }
 
-/// All of `docs/api/`: one page per class plus the index, keyed by file name.
+/// All of `docs/user/api/`: one page per class plus the index, keyed by file name.
 fn generate(root: &Path, xml_dir: &Path) -> BTreeMap<String, String> {
     let mut classes: Vec<ClassDoc> = cleaned_classes()
         .into_iter()
@@ -1170,7 +1170,7 @@ fn generate(root: &Path, xml_dir: &Path) -> BTreeMap<String, String> {
         let page = render_class(c, &ix);
         assert!(
             pages.insert(format!("{}.md", c.slug), page).is_none(),
-            "two classes map to docs/api/{}.md",
+            "two classes map to docs/user/api/{}.md",
             c.slug
         );
     }
@@ -1189,7 +1189,7 @@ fn api_docs() {
          scripts/gen_api_docs.{ps1,sh} produce it",
     ));
     let root = manifest_dir();
-    let out_dir = root.join("docs/api");
+    let out_dir = root.join("docs/user/api");
     let pages = generate(&root, &xml_dir);
 
     let existing: BTreeSet<String> = std::fs::read_dir(&out_dir)
@@ -1206,7 +1206,7 @@ fn api_docs() {
 
     match mode.as_str() {
         "write" => {
-            std::fs::create_dir_all(&out_dir).expect("create docs/api");
+            std::fs::create_dir_all(&out_dir).expect("create docs/user/api");
             for (name, body) in &pages {
                 std::fs::write(out_dir.join(name), body).expect("write class reference page");
             }
@@ -1214,7 +1214,7 @@ fn api_docs() {
                 std::fs::remove_file(out_dir.join(name)).expect("remove stale page");
             }
             eprintln!(
-                "[api_docs] wrote {} pages to docs/api ({} stale removed)",
+                "[api_docs] wrote {} pages to docs/user/api ({} stale removed)",
                 pages.len(),
                 stale.len()
             );
@@ -1225,9 +1225,9 @@ fn api_docs() {
                 .filter(|(name, body)| {
                     std::fs::read_to_string(out_dir.join(name)).unwrap_or_default() != **body
                 })
-                .map(|(name, _)| format!("docs/api/{name}"))
+                .map(|(name, _)| format!("docs/user/api/{name}"))
                 .collect();
-            drift.extend(stale.iter().map(|n| format!("docs/api/{n} (stale)")));
+            drift.extend(stale.iter().map(|n| format!("docs/user/api/{n} (stale)")));
             assert!(
                 drift.is_empty(),
                 "the class reference is out of sync with the doc comments: run \

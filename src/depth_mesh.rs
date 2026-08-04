@@ -1,6 +1,6 @@
 //! Depth mesh (spatial meshing) through internal `libXREALXRPlugin.so` functions called by
 //! `LIB_BASE + offset`, the same mechanism [`crate::hand_tracking`] uses, since dlsym cannot reach
-//! these non-exported symbols. See `docs/plans/ar-features-plan.md` section 4 for the codex RE.
+//! these non-exported symbols. See `docs/develop/plans/ar-features-plan.md` section 4 for the codex RE.
 //!
 //! Unity surfaces meshing through the engine `XRMeshSubsystem` and a native provider whose
 //! `GetMeshInfos` and `AcquireMesh` take engine-supplied allocators. The raw geometry, though, lives

@@ -21,7 +21,7 @@
 #
 # Nothing is downloaded: you supply a local copy of the package. nractivitylife*.aar is
 # DELIBERATELY EXCLUDED: its NRXRActivity/NRXRApp launcher is Unity-specific (instantiates
-# com.unity3d.player.UnityPlayer) and must not ship in a Godot app. See docs/guides/android-setup.md.
+# com.unity3d.player.UnityPlayer) and must not ship in a Godot app. See docs/develop/guides/android-setup.md.
 #
 # Usage:
 #   ./scripts/vendor_xreal_libs.sh <package-root-or-com.xreal.xr.tar.gz>
@@ -106,7 +106,7 @@ for lib in "${core_libs[@]}"; do
 done
 
 # libmedia_codec.so lives under the Camera Features plugin path; it is the FPV HW encoder, see
-# docs/plans/fpv-streaming-plan.md. Copy it into jniLibs too, where godot_xreal.gdextension
+# docs/develop/plans/fpv-streaming-plan.md. Copy it into jniLibs too, where godot_xreal.gdextension
 # lists it.
 media_codec_src="$pkg/Runtime/Scripts/Android/Camera Features/Plugins/Android/arm64/libmedia_codec.so"
 if [ -f "$media_codec_src" ]; then
@@ -148,7 +148,7 @@ fi
 
 # --- 3) Host build tool -> addons/godot_xreal/tools/ (NOT shipped in the APK): trackableImageTools
 #        generates the image-tracking reference-image DB blob from PNGs at build time (see
-#        docs/plans/ar-features-plan.md). Only a MacOS binary exists in the POSIX package layout; on
+#        docs/develop/plans/ar-features-plan.md). Only a MacOS binary exists in the POSIX package layout; on
 #        Linux there is no prebuilt tool (build the blob on a Mac/Windows host, or skip image tracking).
 tools_dir="$repo_root/addons/godot_xreal/tools"
 mkdir -p "$tools_dir"

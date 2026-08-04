@@ -1,7 +1,7 @@
 //! Stage-0 probe for the Vulkan rendering path: can this device share a self-allocated
 //! `AHardwareBuffer` between a renderer and the GL compositor path?
 //!
-//! The planned Vulkan bridge (see `docs/plans/vulkan-path-plan.md`) is: allocate an RGBA8
+//! The planned Vulkan bridge (see `docs/develop/plans/vulkan-path-plan.md`) is: allocate an RGBA8
 //! AHardwareBuffer per eye, bind it as the Vulkan render target, import the same AHB as an
 //! EGLImage-backed `GL_TEXTURE_2D`, and hand that GL name to the SDK compositor exactly as today.
 //! Everything hinges on the gralloc allocating RGBA8 with
@@ -299,7 +299,7 @@ pub fn run_once() {
         ),
         Err(e) => godot::global::godot_print!(
             "[xreal] ahb_probe VERDICT: NO-GO - {e}; the Vulkan plan's stage-0 gate failed, \
-             see docs/plans/vulkan-path-plan.md"
+             see docs/develop/plans/vulkan-path-plan.md"
         ),
     }
 }

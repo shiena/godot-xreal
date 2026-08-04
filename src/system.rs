@@ -172,7 +172,7 @@ impl XrealSystem {
 
     /// Discover + create + start the NRController subsystem (`libnr_loader.so`) and keep it alive for
     /// `poll_controller`. Returns a one-line diagnostic (count / id / connected & handheld type).
-    /// The phone-as-3D-pointer source (docs/plans/input-plan.md Phase C).
+    /// The phone-as-3D-pointer source (docs/develop/plans/input-plan.md Phase C).
     #[func]
     fn start_controller(&self) -> GString {
         crate::controller_probe::start().as_str().into()
@@ -290,7 +290,7 @@ impl XrealSystem {
             && !self.is_camera_supported()
     }
 
-    // --- Device and camera geometry in Unity space; see docs/plans/coordinate-systems-notes.md. The
+    // --- Device and camera geometry in Unity space; see docs/develop/plans/coordinate-systems-notes.md. The
     // poses are in Unity's left-handed system, so convert on the Godot side. They are useful for
     // aligning the AR to the RGB camera view, its FOV and offset, in the blend. ---
 
@@ -354,7 +354,7 @@ impl XrealSystem {
             .unwrap_or_default()
     }
 
-    // --- Plane detection (see docs/plans/ar-features-plan.md). Needs a live 6DoF session. ---
+    // --- Plane detection (see docs/develop/plans/ar-features-plan.md). Needs a live 6DoF session. ---
 
     /// `PlaneDetectionMode` flag for [`Self::set_plane_detection_mode`] / [`Self::poll_planes`]:
     /// detection off.
@@ -436,7 +436,7 @@ impl XrealSystem {
         out
     }
 
-    // --- Spatial anchors (see docs/plans/ar-features-plan.md). Needs a live 6DoF session + the
+    // --- Spatial anchors (see docs/develop/plans/ar-features-plan.md). Needs a live 6DoF session + the
     //     vendored nr_spatial_anchor.aar backend. ---
 
     /// Anchor-quality level from [`Self::estimate_anchor_quality`]: insufficient, so do not save here.
@@ -562,7 +562,7 @@ impl XrealSystem {
             .unwrap_or(-1)
     }
 
-    // --- Image tracking (see docs/plans/ar-features-plan.md). Needs a live 6DoF session + the
+    // --- Image tracking (see docs/develop/plans/ar-features-plan.md). Needs a live 6DoF session + the
     //     vendored nr_image_tracking.aar backend + assets/nr_plugins.json + a DB blob. ---
 
     /// Whether the connected glasses support image tracking. Gated by
@@ -641,7 +641,7 @@ impl XrealSystem {
         d
     }
 
-    // --- Depth mesh (see docs/plans/ar-features-plan.md §4). Internal libXREALXRPlugin.so functions by
+    // --- Depth mesh (see docs/develop/plans/ar-features-plan.md §4). Internal libXREALXRPlugin.so functions by
     //     LIB_BASE+offset (like hand tracking), NOT flat exports. Air 2 Ultra only. ---
 
     /// `NRMeshingVertexSemanticLabel` for the `labels` of [`Self::poll_mesh_blocks`]: whatever the
@@ -709,7 +709,7 @@ impl XrealSystem {
         arr
     }
 
-    // --- First-person-view streaming (libmedia_codec HW encoder; see docs/plans/fpv-streaming-plan.md).
+    // --- First-person-view streaming (libmedia_codec HW encoder; see docs/develop/plans/fpv-streaming-plan.md).
     //     Streams a rendered view (any device) as H.264 to a local mp4 / RTMP / RTP URL. ---
 
     /// Start streaming the FPV to `output`, which is an `rtp://ip:port` or `rtmp://…` URL, or a local
@@ -853,7 +853,7 @@ impl XrealSystem {
     /// `_ready`, before the XR rig enters the tree, because it is read once at
     /// `InitUserDefinedSettings`. It is equivalent to the ProjectSetting `xreal/stereo_mode` or to
     /// `adb shell setprop debug.xreal.stereo_mode <n>`. Multiview buys nothing on this
-    /// two-SubViewport rig (see docs/archive/multiview-investigation.md), so Multipass stays the
+    /// two-SubViewport rig (see docs/develop/archive/multiview-investigation.md), so Multipass stays the
     /// recommended default.
     #[func]
     fn set_stereo_mode(&self, mode: i64) {
@@ -912,7 +912,7 @@ impl XrealSystem {
     /// only, so on any other headset that is pure latency.
     /// `addons/godot_xreal/features/xreal_hands.tscn` sets this to `3` from its `_ready()`, so scenes
     /// that include the hands feature get it automatically and everyone else starts faster. See
-    /// `docs/archive/codex-input-start-analysis.md`.
+    /// `docs/develop/archive/codex-input-start-analysis.md`.
     #[func]
     fn set_input_source(&self, source: i64) {
         session::set_input_source_override(source as i32);

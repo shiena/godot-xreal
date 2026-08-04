@@ -284,7 +284,7 @@ public final class XrealBridge {
 	 * Multi-resume: enable auto-enter Picture-in-Picture on the phone-side (display 0) Activity so that
 	 * backgrounding the app enters PiP (a small tile on the phone) instead of stopping it. In PiP the
 	 * Activity is paused-but-visible, so Godot's GL thread and its Surface stay alive and the XREAL
-	 * glasses keep rendering instead of freezing (see docs/plans/background-render-plan.md). This calls
+	 * glasses keep rendering instead of freezing (see docs/develop/plans/background-render-plan.md). This calls
 	 * the Android API directly (independent of Godot's own PiP gate); it needs
 	 * android:supportsPictureInPicture on the launcher Activity (already in the manifest). No-op below
 	 * API 31 (setAutoEnterEnabled) or when called for a non-display-0 Activity (the glasses companion).

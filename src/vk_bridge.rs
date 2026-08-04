@@ -14,7 +14,7 @@
 //! 60 FPS but tears under head motion, pending sync v2 (see `fill_eyes`). The design and its
 //! alternatives (a fullscreen sampled pass as fill v2, a SYNC_FD fence as sync v2, the latter
 //! blocked on an extension Godot does not enable) are recorded in
-//! `docs/plans/vulkan-path-plan.md` and `docs/archive/codex-vulkan-stage2-design.md`.
+//! `docs/develop/plans/vulkan-path-plan.md` and `docs/develop/archive/codex-vulkan-stage2-design.md`.
 //!
 //! Why OPAQUE_FD and not the plan's original AHardwareBuffer: the AHB import needs
 //! `VK_ANDROID_external_memory_android_hardware_buffer`, which Godot 4.7 never enables on its

@@ -21,7 +21,7 @@
 //! than an accumulator keyed to a rendering or session handle. A handle we create and start
 //! ourselves therefore reads the live runtime's real compositor counters for the frames the app
 //! submits, with no need to recover the SDK's `NativeMetrics` at `DisplayManager+0x70`. See
-//! docs/plans/render-metrics-gdscript-plan.md, "RE addendum 2026-07-16". The loader trampolines
+//! docs/develop/plans/render-metrics-gdscript-plan.md, "RE addendum 2026-07-16". The loader trampolines
 //! return `1` before the NR runtime is up, so calling `start()` early is safe and simply retries.
 //!
 //! ABI: every function returns `NRResult`, an `i32` where `0` is success. Counts are `i32`, with

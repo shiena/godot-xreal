@@ -11,7 +11,7 @@ extends VBoxContainer
 ##   trackableImageTools            -> addons/godot_xreal/tools/   (host image-DB build tool)
 ##
 ## This vendors XREAL's proprietary libs only. The addon's own libgodot_xreal.so comes from the
-## Rust build (cargo-ndk) or a prebuilt release; see docs/guides/build-and-release.md. Every
+## Rust build (cargo-ndk) or a prebuilt release; see docs/develop/guides/build-and-release.md. Every
 ## destination is gitignored, because the files are SDK-derived and not redistributable.
 ## nractivitylife*.aar is deliberately skipped, since its launcher is Unity-only. Keep the package
 ## version pinned to the one the Rust internal-call offsets were RE'd against, covering hand

@@ -2,7 +2,7 @@
 //!
 //! **Hardware-gated to the XREAL Air 2 Ultra**, which has the outward SLAM cameras and the
 //! perception feature. The One Pro returns `IsHandTrackingSupported() == false` and produces no
-//! data. See `docs/plans/hand-tracking-plan.md`.
+//! data. See `docs/develop/plans/hand-tracking-plan.md`.
 //!
 //! ## Data path: approach 2, the SDK's own exported wrappers
 //!
@@ -174,7 +174,7 @@ pub fn update_frame() -> bool {
 // 0x97174`). The perception instance is `*(InputManager + 0x48)`, and InputManager comes from
 // `TSingleton::GetInstance` (0x47a10). We must NOT poke `+0x290`, `+0x204` or `+0x24c`: those are
 // the STOP path, and `+0x290` is a one-shot latch that makes UpdateHandPose return false once set.
-// See docs/plans/hand-tracking-plan.md, "Enable path RE 2026-07-16". Guard on perception, session
+// See docs/develop/plans/hand-tracking-plan.md, "Enable path RE 2026-07-16". Guard on perception, session
 // and config readiness, and retry until they are up.
 
 const OFF_GET_INPUT_MANAGER: usize = 0x47a10; // TSingleton<InputManager>::GetInstance()

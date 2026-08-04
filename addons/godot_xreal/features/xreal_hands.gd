@@ -40,7 +40,7 @@ func _make_hand(color: Color) -> Array:
 func _ready() -> void:
 	# Hand tracking needs the SDK's Hands input bit, which is OFF by default because asking for it
 	# costs ~878 ms of cold start: NativePerception::SetHandTrackingEnabled runs synchronously during
-	# input start (see docs/plans/startup-latency.md). Dropping this scene in cannot turn it on for
+	# input start (see docs/develop/plans/startup-latency.md). Dropping this scene in cannot turn it on for
 	# you, because the session bootstraps from the XR rig's first _process and the choice has to be
 	# made before that, so say so loudly instead of failing silently.
 	if XrealShared.is_native_runtime():

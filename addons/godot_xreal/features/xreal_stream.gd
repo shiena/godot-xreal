@@ -13,7 +13,7 @@ extends Node
 ## if RTP does not arrive right after the handshake, so we stream_start immediately on `paired`.
 ##
 ## The encoder reads the GL texture on the render thread, so the per-frame push runs inside a
-## RenderingServer.call_on_render_thread callback. See docs/plans/fpv-streaming-plan.md.
+## RenderingServer.call_on_render_thread callback. See docs/develop/plans/fpv-streaming-plan.md.
 ##
 ## Both the head rig and the live camera feed are discovered per frame, through
 ## XrealShared.find_head_tracker() and find_camera_feed(), so toggling the camera mid-stream simply
@@ -38,7 +38,7 @@ signal active_changed(active: bool)
 ## glasses: when true the stream pairs without the useAudio handshake, streams the virtual-only AR
 ## with alpha (useAlpha=true) so the PC composites it over its webcam, and applies the observer FOV
 ## the receiver pushes. It runs end to end, but the composite is NOT spatially aligned, because the
-## protocol carries no observer-camera pose. See docs/plans/observer-view-notes.md.
+## protocol carries no observer-camera pose. See docs/develop/plans/observer-view-notes.md.
 @export var observer_mode := false
 ## Capture size and bitrate preset (SDK VideoCapture's Resolution Level). `CUSTOM` uses the
 ## explicit stream_width, stream_height and stream_bitrate below; every other value overrides them

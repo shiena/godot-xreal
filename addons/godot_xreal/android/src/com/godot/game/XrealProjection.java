@@ -15,7 +15,7 @@ import android.util.Log;
  * Why this exists: {@code addInternalAudio:true} in the encoder config does not mean "expect
  * pushed PCM". Reverse engineering libmedia_codec.so showed it builds an
  * {@code AudioPlaybackCaptureConfiguration} from a MediaProjection and opens its own AudioRecord;
- * see docs/archive/codex-audio-mix-analysis.md. Without a projection that capture cannot start, so
+ * see docs/develop/archive/codex-audio-mix-analysis.md. Without a projection that capture cannot start, so
  * the encoder's own mixer has nothing to add to the microphone blocks.
  *
  * Consent is a two-step Android dance, and the order matters on API 34+: the projection may only be

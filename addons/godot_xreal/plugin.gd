@@ -102,7 +102,7 @@ const PROJECT_SETTINGS: Array[Dictionary] = [
 		# Pick a value with Hands only if you actually use hand tracking. The Hands bit makes the SDK
 		# call NativePerception::SetHandTrackingEnabled synchronously during input start, measured at
 		# ~878 ms of cold start on an X4000 with a One Pro, and hand tracking is Air 2 Ultra only, so on
-		# any other headset that is pure startup latency. See docs/plans/startup-latency.md.
+		# any other headset that is pure startup latency. See docs/develop/plans/startup-latency.md.
 		"name": "xreal/input_source",
 		"type": TYPE_INT,
 		"hint": PROPERTY_HINT_ENUM,
@@ -137,7 +137,7 @@ const PROJECT_SETTINGS: Array[Dictionary] = [
 		# one keyframe at start, so a viewer that joins or reloads mid-stream never gets a decodable
 		# starting point; this asks the codec for a sync frame about once a second so late joiners
 		# work. ON by default. It reaches the codec through a reverse-engineered object layout, so an
-		# SDK update may need it re-checked (see docs/archive/codex-idr-analysis.md); turn it off to
+		# SDK update may need it re-checked (see docs/develop/archive/codex-idr-analysis.md); turn it off to
 		# fall back to the single-IDR behaviour. `debug.xreal.idr_hack` overrides this at runtime.
 		"name": "xreal/idr_workaround",
 		"type": TYPE_BOOL,

@@ -237,14 +237,14 @@ pub struct XrealNative {
     /// unless something calls this each frame. See [`FnSetFocusPlane`].
     set_focus_plane: Option<FnSetFocusPlane>,
 
-    // Plane detection (libXREALXRPlugin.so, flat C ABI; see docs/plans/ar-features-plan.md). Needs 6DoF.
+    // Plane detection (libXREALXRPlugin.so, flat C ABI; see docs/develop/plans/ar-features-plan.md). Needs 6DoF.
     get_plane_detection_mode: Option<FnGetPlaneDetectionMode>,
     set_plane_detection_mode: Option<FnSetPlaneDetectionMode>,
     get_plane_detection_changes: Option<FnGetPlaneDetectionChanges>,
     get_plane_boundary_vertex_count: Option<FnGetPlaneBoundaryVertexCount>,
     get_plane_boundary_vertex_data: Option<FnGetPlaneBoundaryVertexData>,
 
-    // Spatial anchors (libXREALXRPlugin.so, flat C ABI; see docs/plans/ar-features-plan.md). Needs
+    // Spatial anchors (libXREALXRPlugin.so, flat C ABI; see docs/develop/plans/ar-features-plan.md). Needs
     // 6DoF + the vendored nr_spatial_anchor.aar backend.
     set_anchor_mapping_dir: Option<FnSetAnchorMappingFileDirectory>,
     set_anchor_enabled: Option<FnSetTrackableAnchorEnabled>,
@@ -256,7 +256,7 @@ pub struct XrealNative {
     remap_anchor: Option<FnRemapTrackableAnchor>,
     estimate_anchor_quality: Option<FnEstimateTrackableAnchorQuality>,
 
-    // Image tracking (libXREALXRPlugin.so, flat C ABI; see docs/plans/ar-features-plan.md). Needs
+    // Image tracking (libXREALXRPlugin.so, flat C ABI; see docs/develop/plans/ar-features-plan.md). Needs
     // 6DoF + the vendored nr_image_tracking.aar backend + assets/nr_plugins.json + a DB blob.
     init_image_db: Option<FnInitImageTrackingDatabase>,
     set_image_db: Option<FnSetImageTrackingDatabase>,
@@ -264,7 +264,7 @@ pub struct XrealNative {
     get_reference_image_count: Option<FnGetReferenceImageCount>,
     release_image_db: Option<FnReleaseImageTrackingDatabase>,
 
-    // RGB camera (libXREALXRPlugin.so, flat C ABI; see docs/plans/camera-feed-plan.md). Poll path.
+    // RGB camera (libXREALXRPlugin.so, flat C ABI; see docs/develop/plans/camera-feed-plan.md). Poll path.
     rgb_start_capture: Option<FnStartRgbCameraCapture>,
     rgb_stop_capture: Option<FnStopRgbCameraCapture>,
     rgb_try_acquire_latest: Option<FnTryAcquireLatestImage>,
@@ -292,7 +292,7 @@ pub struct XrealNative {
     get_plugin_version: Option<FnGetPluginVersion>,
     get_device_type: Option<FnGetDeviceType>,
 
-    // Device / camera geometry (libXREALXRPlugin.so, Unity space; docs/plans/coordinate-systems-notes.md).
+    // Device / camera geometry (libXREALXRPlugin.so, Unity space; docs/develop/plans/coordinate-systems-notes.md).
     get_device_pose_from_head: Option<FnGetDevicePoseFromHead>,
     get_device_resolution: Option<FnGetDeviceResolution>,
     get_camera_intrinsic: Option<FnGetCameraIntrinsic>,
@@ -311,7 +311,7 @@ pub struct XrealNative {
     //
     // The static is at compile-time offset 0xdb400 in libXREALXRPlugin.so.
     // We recover the runtime base by subtracting CreateFrame's compile-time offset
-    // (0x53bd8) from its runtime address. See docs/reference/reverse-engineering.md.
+    // (0x53bd8) from its runtime address. See docs/develop/reference/reverse-engineering.md.
     display_manager_desc_ptr: Option<*mut c_void>,
 }
 
@@ -491,7 +491,7 @@ pub fn interleave_cbcr_rgba(u: &[u8], v: &[u8], width: i32, height: i32, out: &m
 /// client-side work around them. `XrealCameraFeed` reports it when `debug.xreal.camera_timing` is
 /// set.
 ///
-/// This settled the open question in `docs/archive/codex-camera-acquire-analysis.md`: the
+/// This settled the open question in `docs/develop/archive/codex-camera-acquire-analysis.md`: the
 /// disassembly said the SDK getters were hash lookups and pointer arithmetic, and the measurement
 /// agreed, with `acquire` at about 4 us and `planes` at 0. Every microsecond of the old 3.5 ms per
 /// frame was on our side. It is kept because it is how any future regression here gets found.
@@ -653,7 +653,7 @@ impl XrealNative {
                 .as_ref()
                 .and_then(|l| l.get(b"IsHMDFeatureSupported\0").ok().map(|s| *s));
 
-            // Plane detection exports (libXREALXRPlugin.so). See docs/plans/ar-features-plan.md.
+            // Plane detection exports (libXREALXRPlugin.so). See docs/develop/plans/ar-features-plan.md.
             let set_focus_plane: Option<FnSetFocusPlane> = plugin_lib
                 .as_ref()
                 .and_then(|l| l.get(b"SetFocusPlane\0").ok().map(|s| *s));
@@ -674,7 +674,7 @@ impl XrealNative {
                 .as_ref()
                 .and_then(|l| l.get(b"GetPlaneBoundaryVertexData\0").ok().map(|s| *s));
 
-            // Spatial-anchor exports (libXREALXRPlugin.so). See docs/plans/ar-features-plan.md.
+            // Spatial-anchor exports (libXREALXRPlugin.so). See docs/develop/plans/ar-features-plan.md.
             let set_anchor_mapping_dir: Option<FnSetAnchorMappingFileDirectory> = plugin_lib
                 .as_ref()
                 .and_then(|l| l.get(b"SetAnchorMappingFileDirectory\0").ok().map(|s| *s));
@@ -703,7 +703,7 @@ impl XrealNative {
                 .as_ref()
                 .and_then(|l| l.get(b"EstimateTrackableAnchorQuality\0").ok().map(|s| *s));
 
-            // Image-tracking exports (libXREALXRPlugin.so). See docs/plans/ar-features-plan.md.
+            // Image-tracking exports (libXREALXRPlugin.so). See docs/develop/plans/ar-features-plan.md.
             let init_image_db: Option<FnInitImageTrackingDatabase> = plugin_lib
                 .as_ref()
                 .and_then(|l| l.get(b"InitImageTrackingDatabase\0").ok().map(|s| *s));
@@ -720,7 +720,7 @@ impl XrealNative {
                 .as_ref()
                 .and_then(|l| l.get(b"ReleaseImageTrackingDatabase\0").ok().map(|s| *s));
 
-            // RGB camera exports (libXREALXRPlugin.so). See docs/plans/camera-feed-plan.md.
+            // RGB camera exports (libXREALXRPlugin.so). See docs/develop/plans/camera-feed-plan.md.
             let rgb_start_capture: Option<FnStartRgbCameraCapture> = plugin_lib
                 .as_ref()
                 .and_then(|l| l.get(b"StartRGBCameraDataCapture\0").ok().map(|s| *s));
@@ -787,7 +787,7 @@ impl XrealNative {
                 .as_ref()
                 .and_then(|l| l.get(b"GetDeviceType\0").ok().map(|s| *s));
 
-            // Device / camera geometry (Unity space; docs/plans/coordinate-systems-notes.md).
+            // Device / camera geometry (Unity space; docs/develop/plans/coordinate-systems-notes.md).
             let get_device_pose_from_head: Option<FnGetDevicePoseFromHead> = plugin_lib
                 .as_ref()
                 .and_then(|l| l.get(b"GetDevicePoseFromHead\0").ok().map(|s| *s));
@@ -993,7 +993,7 @@ impl XrealNative {
     /// 16-float block it writes, which is the pose the compositor reprojects with. It returns `None`
     /// when the export is absent or the query fails. The caller decodes the 16-float layout, a
     /// device-pinned 4x4 row-major transform; see the RE map in
-    /// `docs/archive/multiview-investigation.md`.
+    /// `docs/develop/archive/multiview-investigation.md`.
     pub fn head_pose_display(&self, time_ns: u64) -> Option<[f32; 16]> {
         let f = self.xp_get_head_pose?;
         let mut raw = [0.0_f32; 16];
@@ -1022,7 +1022,7 @@ impl XrealNative {
         }
     }
 
-    // --- Plane detection (libXREALXRPlugin.so; see docs/plans/ar-features-plan.md). Needs a 6DoF session. ---
+    // --- Plane detection (libXREALXRPlugin.so; see docs/develop/plans/ar-features-plan.md). Needs a 6DoF session. ---
 
     /// Whether the connected glasses support an [`crate::ffi::hmd_feature`] (`IsHMDFeatureSupported`).
     /// `None` if the export is absent. The device-accurate camera/6DoF gate (the Air 2 Ultra has no
@@ -1031,7 +1031,7 @@ impl XrealNative {
         self.is_hmd_feature_supported.map(|f| unsafe { f(feature) })
     }
 
-    // --- Device / camera geometry (Unity space; docs/plans/coordinate-systems-notes.md). `component`
+    // --- Device / camera geometry (Unity space; docs/develop/plans/coordinate-systems-notes.md). `component`
     // is a `crate::ffi::component` id (RGB_CAMERA = 2). All return `None` if the export is absent or the
     // SDK returns false (e.g. the device lacks that component, or the session isn't ready). ---
 
@@ -1184,7 +1184,7 @@ impl XrealNative {
         verts
     }
 
-    // --- Spatial anchors (libXREALXRPlugin.so; see docs/plans/ar-features-plan.md). Needs 6DoF +
+    // --- Spatial anchors (libXREALXRPlugin.so; see docs/develop/plans/ar-features-plan.md). Needs 6DoF +
     //     the nr_spatial_anchor.aar backend. ---
 
     /// Enable/disable the anchor subsystem. Returns whether the export was present (call before use).
@@ -1306,7 +1306,7 @@ impl XrealNative {
         ok.then_some(quality)
     }
 
-    // --- Image tracking (libXREALXRPlugin.so; see docs/plans/ar-features-plan.md). Needs 6DoF +
+    // --- Image tracking (libXREALXRPlugin.so; see docs/develop/plans/ar-features-plan.md). Needs 6DoF +
     //     the nr_image_tracking.aar backend + assets/nr_plugins.json + a DB blob. ---
 
     /// Build a tracking database from a blob (from `trackableImageTools`) + its per-image metadata.
@@ -1482,7 +1482,7 @@ impl XrealNative {
     /// only one caller in the process may use it, and a publish landing between its load and store is
     /// lost. The timestamp is already an out-parameter of the acquire we do anyway, and the extra cost
     /// over the flag is one hash-map insert and erase. See
-    /// `docs/archive/codex-camera-acquire-analysis.md`.
+    /// `docs/develop/archive/codex-camera-acquire-analysis.md`.
     pub fn rgb_camera_grab_yuv(
         &self,
         last_timestamp: &mut u64,

@@ -145,7 +145,7 @@ func set_enabled(on: bool) -> bool:
 ##
 ## The geometry is verbatim what the scene holds, which is the RUNTIME's space, not a canonical
 ## Godot one: this port negates Y on top of the canonical Unity-to-Godot conversion to cancel the
-## eye SubViewports rendering inverted (docs/plans/coordinate-systems-notes.md). Winding is right for
+## eye SubViewports rendering inverted (docs/develop/plans/coordinate-systems-notes.md). Winding is right for
 ## that space. A reader that wants canonical Godot has to negate Y and reverse each triangle with it,
 ## which is what the "XREAL Mesh Snapshot" dock does.
 func save_snapshot() -> String:

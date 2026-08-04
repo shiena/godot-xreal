@@ -40,7 +40,7 @@ Thumbs.db
 /addons/godot_xreal/jniLibs/
 
 # XREAL addon vendored binaries (AARs), vendored locally
-# (see docs/plans/android-export-plugin-migration.md), like the jniLibs .so above.
+# (see docs/develop/plans/android-export-plugin-migration.md), like the jniLibs .so above.
 /addons/godot_xreal/android/*.aar
 
 # XREAL NR perception manifest: SDK-derived, and it may change across SDK versions, so it is vendored

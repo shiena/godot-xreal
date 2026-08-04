@@ -1,7 +1,7 @@
 extends Node
 ## Pairs the FPV stream with XREAL's "StreamingReceiver" PC app through its LAN-discovery protocol,
 ## reverse-engineered from the SDK sample (Samples~/Camera Features/FirstPersonStreammingCast) and
-## validated against the real receiver. See docs/plans/fpv-streaming-plan.md.
+## validated against the real receiver. See docs/develop/plans/fpv-streaming-plan.md.
 ##
 ## Handshake (all little-endian):
 ##   1. DISCOVERY : UDP-broadcast the ASCII "FIND-SERVER" to 255.255.255.255:6001, and the receiver
@@ -23,7 +23,7 @@ signal failed(reason: String)
 signal lost()
 ## ObserverView: the receiver pushed an `UpdateCameraParam`, the observer camera FOV as
 ## `{left,right,top,bottom}` tangents, a webcam-derived off-centre frustum. See
-## docs/plans/observer-view-notes.md.
+## docs/develop/plans/observer-view-notes.md.
 signal camera_param(fov: Dictionary)
 
 const DISCOVERY_ADDR := "255.255.255.255"

@@ -21,8 +21,8 @@ build compiles the XrealBridge Java sources, so they need no vendoring step.
 > No terminal? The addon ships an in-editor equivalent. The **`XREAL Import`** dock
 > (`addons/godot_xreal/editor/vendor_import_dock.gd`) runs the same vendoring from a file dialog:
 > pick `com.xreal.xr(.tgz|.tar.gz)` (or an extracted `package/` folder) and it extracts with the
-> system `tar` and copies the same `.so`, `.aar`, and tool into place. See
-> `docs/guides/android-setup.md` §3.
+> system `tar` and copies the same `.so`, `.aar`, and tool into place. The developer docs
+> (indexed at `docs/develop/README.md`) cover the background.
 
 `build_dummy_libs.ps1` / `build_dummy_libs.sh` builds the desktop stub libraries into `dummy/`.
 These GDExtension stubs register empty Node-derived placeholder classes, so a desktop editor
@@ -41,7 +41,7 @@ support `-Check` / `--check` to verify that the committed output is in sync:
 - `gen_docs.ps1` / `gen_docs.sh` → `dummy/stub_docs.inc` + `dummy/stub_members.inc`, the **editor F1
   help** for the native classes (from the `///` comments through gdext's `register-docs`). Rust
   only, so CI can run it.
-- `gen_api_docs.ps1` / `gen_api_docs.sh` → `docs/api/*.md`, the **web class reference** covering both
+- `gen_api_docs.ps1` / `gen_api_docs.sh` → `docs/user/api/*.md`, the **web class reference** covering both
   the native classes and the GDScript feature components (whose `##` comments arrive through
   `godot --doctool --gdscript-docs`). This one needs a Godot 4.7 binary, so it runs locally and the
   pages are committed. The binary is a variable, resolved command line → environment → `godot` on

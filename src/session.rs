@@ -67,7 +67,7 @@ pub fn set_input_source_override(source: i32) {
 /// `InputManager::InputStart @ 0x78794` calls `NativePerception::SetHandTrackingEnabled(true) @
 /// 0x97174` synchronously, and that single call is the entire gap between the SDK reporting input
 /// device 2 and device 3, 878 ms of the 1.39 s input start. The reference Unity app ships
-/// `inputSource=0`. See `docs/archive/codex-input-start-analysis.md`.
+/// `inputSource=0`. See `docs/develop/archive/codex-input-start-analysis.md`.
 ///
 /// Hand tracking is Air 2 Ultra only, so on every other headset that 878 ms bought nothing at all.
 /// Opt back in with the `xreal/input_source` project setting, mirroring Unity, which exposes Input
@@ -136,7 +136,7 @@ pub fn android_prop_i32(key: &[u8]) -> Option<i32> {
 ///
 /// The default stays Multipass only because Multiview buys **zero** GPU here: our rig draws two
 /// Godot SubViewports every frame in both modes, and the single-pass-instanced win needs the
-/// *engine* to draw both eyes in one pass. See `docs/archive/multiview-investigation.md`.
+/// *engine* to draw both eyes in one pass. See `docs/develop/archive/multiview-investigation.md`.
 fn stereo_rendering_mode() -> i32 {
     // 1) The explicit override from the GDScript API, which carries the `xreal/stereo_mode`
     // ProjectSetting.
@@ -167,7 +167,7 @@ fn stereo_rendering_mode() -> i32 {
 /// pure IMU with no position, and `2` is MODE_0DOF. It defaults to MODE_6DOF. NOTE: the eye-camera
 /// rotation comes from the XR-plugin DISP pose (`node.rs`), not from the compact session-manager
 /// `NrPose`, which is horizon-stabilized in every mode
-/// (`docs/archive/roll-tracking-investigation.md`).
+/// (`docs/develop/archive/roll-tracking-investigation.md`).
 fn tracking_mode() -> i32 {
     const DEFAULT: i32 = TrackingType::Mode6Dof as i32;
 
@@ -349,7 +349,7 @@ impl XrealSession {
             // `debug.xreal.stereo_mode 2` opting into Multiview. 0 is Multipass, per-eye 2D textures, and 2
             // is Multiview, or Single-Pass-Instanced, one 2-layer immutable array texture, which is the
             // reference app's StereoRendering: 2. See that function and
-            // docs/archive/multiview-investigation.md.
+            // docs/develop/archive/multiview-investigation.md.
             stereo_rendering_mode: stereo_mode,
             tracking_type: tracking_mode,
             support_mono_mode: 0,
@@ -532,7 +532,7 @@ impl XrealSession {
         native.head_pose_display(time_ns)
     }
 
-    /// Whether the RGB-camera C ABI resolved (see `docs/plans/camera-feed-plan.md`).
+    /// Whether the RGB-camera C ABI resolved (see `docs/develop/plans/camera-feed-plan.md`).
     pub fn rgb_camera_available(&self) -> bool {
         self.native
             .lock()
@@ -667,7 +667,7 @@ impl XrealSession {
     }
 
     /// A `ffi::component` device's extrinsic relative to Head, as a Unity `Pose` of
-    /// `[pos x,y,z, quat x,y,z,w]` in Unity space; see docs/plans/coordinate-systems-notes.md.
+    /// `[pos x,y,z, quat x,y,z,w]` in Unity space; see docs/develop/plans/coordinate-systems-notes.md.
     pub fn device_pose_from_head(&self, component: i32) -> Option<[f32; 7]> {
         self.native
             .lock()
@@ -745,7 +745,7 @@ impl XrealSession {
             .plane_boundary(id)
     }
 
-    // --- Spatial anchors; see docs/plans/ar-features-plan.md. They need a live 6DoF session and
+    // --- Spatial anchors; see docs/develop/plans/ar-features-plan.md. They need a live 6DoF session and
     //     the nr_spatial_anchor.aar backend. ---
 
     /// Enable or disable the anchor subsystem; call it before use. It returns whether the export was
@@ -828,7 +828,7 @@ impl XrealSession {
             .estimate_anchor_quality(id, pose)
     }
 
-    // --- Image tracking; see docs/plans/ar-features-plan.md. It needs a live 6DoF session, the
+    // --- Image tracking; see docs/develop/plans/ar-features-plan.md. It needs a live 6DoF session, the
     //     nr_image_tracking.aar backend, assets/nr_plugins.json and a DB blob. ---
 
     /// Build a tracking database from a blob plus per-image metadata, returning the DB handle.
