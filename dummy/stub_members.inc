@@ -211,6 +211,7 @@ static const StubMembers stub_members[] = {
   {"XrealHandTracker",0,0,0,0,0,0},
   {"XrealHeadTracker",_m_XrealHeadTracker,4,_s_XrealHeadTracker,10,_c_XrealHeadTracker,9},
   {"XrealSystem",_m_XrealSystem,71,0,0,_c_XrealSystem,26},
+  {"XrealXrInterface",0,0,0,0,0,0},
 };
 enum { STUB_MEMBERS_COUNT = sizeof(stub_members) / sizeof(stub_members[0]) };
 #define STUB_SN_POOL 555

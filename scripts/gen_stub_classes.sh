@@ -22,7 +22,7 @@ root="$(cd "$(dirname "$0")/.." && pwd)"
 out="$root/dummy/stub_classes.inc"
 
 # Base classes the dummy knows how to register a placeholder for (all get one).
-known_bases="Node Node2D Node3D Control CanvasLayer RefCounted Object Resource CameraFeed"
+known_bases="Node Node2D Node3D Control CanvasLayer RefCounted Object Resource CameraFeed XrInterfaceExtension"
 
 pairs_file="$(mktemp)"
 entries_file="$(mktemp)"

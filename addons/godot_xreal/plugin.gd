@@ -81,6 +81,14 @@ const PROJECT_SETTINGS: Array[Dictionary] = [
 		"default": false,
 	},
 	{
+		# Experimental Vulkan path: render the root XR viewport once with two views through an
+		# XRInterfaceExtension, then copy its two array layers into the existing XREAL eye targets.
+		# GLES keeps using the established two-SubViewport path.
+		"name": "xreal/xr_multiview_poc",
+		"type": TYPE_BOOL,
+		"default": false,
+	},
+	{
 		# The eye viewports already render the shared 3D world. Keep the host display 2D-only by
 		# default to avoid a hidden third scene pass; disable this for a 3D phone mirror.
 		"name": "xreal/disable_host_viewport_3d",

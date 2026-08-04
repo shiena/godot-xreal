@@ -212,6 +212,13 @@ const COLOR_RANGE: VkImageSubresourceRange = VkImageSubresourceRange {
     layer_count: 1,
 };
 
+fn color_range(array_layer: u32) -> VkImageSubresourceRange {
+    VkImageSubresourceRange {
+        base_array_layer: array_layer,
+        ..COLOR_RANGE
+    }
+}
+
 #[repr(C)]
 struct VkImageMemoryBarrier {
     s_type: u32,
@@ -241,6 +248,13 @@ const COLOR_LAYERS: VkImageSubresourceLayers = VkImageSubresourceLayers {
     base_array_layer: 0,
     layer_count: 1,
 };
+
+fn color_layers(array_layer: u32) -> VkImageSubresourceLayers {
+    VkImageSubresourceLayers {
+        base_array_layer: array_layer,
+        ..COLOR_LAYERS
+    }
+}
 
 #[repr(C)]
 struct VkOffset3D {
@@ -554,6 +568,8 @@ pub struct EyeSource {
     pub vk_image: u64,
     pub width: i32,
     pub height: i32,
+    /// Array layer containing this eye. Legacy per-eye SubViewports always use layer zero.
+    pub array_layer: u32,
     /// The RD data format is the sRGB-typed RGBA8 twin. Copy-compatible either way; logged only.
     pub srgb: bool,
     pub valid: bool,
@@ -584,6 +600,7 @@ impl EyeSource {
         vk_image: 0,
         width: 0,
         height: 0,
+        array_layer: 0,
         srgb: false,
         valid: false,
     };
@@ -1224,6 +1241,8 @@ unsafe fn record_encoder_copy(api: &VkApi) -> bool {
         1,
         &acquire,
     );
+    let source_range = color_range(src.array_layer);
+    let source_layers = color_layers(src.array_layer);
     let src_in = VkImageMemoryBarrier {
         s_type: VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
         p_next: std::ptr::null(),
@@ -1234,7 +1253,7 @@ unsafe fn record_encoder_copy(api: &VkApi) -> bool {
         src_queue_family_index: u32::MAX,
         dst_queue_family_index: u32::MAX,
         image: src.vk_image,
-        subresource_range: COLOR_RANGE,
+        subresource_range: source_range,
     };
     (api.cmd_pipeline_barrier)(
         api.command_buffer,
@@ -1249,7 +1268,7 @@ unsafe fn record_encoder_copy(api: &VkApi) -> bool {
         &src_in,
     );
     let region = VkImageCopy {
-        src_subresource: COLOR_LAYERS,
+        src_subresource: source_layers,
         src_offset: VkOffset3D { x: 0, y: 0, z: 0 },
         dst_subresource: COLOR_LAYERS,
         dst_offset: VkOffset3D { x: 0, y: 0, z: 0 },
@@ -1278,7 +1297,7 @@ unsafe fn record_encoder_copy(api: &VkApi) -> bool {
         src_queue_family_index: u32::MAX,
         dst_queue_family_index: u32::MAX,
         image: src.vk_image,
-        subresource_range: COLOR_RANGE,
+        subresource_range: source_range,
     };
     (api.cmd_pipeline_barrier)(
         api.command_buffer,
@@ -1374,10 +1393,13 @@ fn drain_destroyed() {
 pub fn set_eye_sources(left: EyeSource, right: EyeSource) {
     if !SRC_LOGGED.swap(true, Ordering::Relaxed) && left.valid {
         godot::global::godot_print!(
-            "[xreal] vk_bridge eye-src probe: {}x{} srgb={} vk_image={:#x} \
-             linear_blit_rgba8={}",
+            "[xreal] vk_bridge eye-src probe: {}x{} layers={}/{} same_image={} srgb={} vk_image={:#x} \
+              linear_blit_rgba8={}",
             left.width,
             left.height,
+            left.array_layer,
+            right.array_layer,
+            left.vk_image == right.vk_image,
             left.srgb,
             left.vk_image,
             linear_scale_blit_supported(),
@@ -1531,6 +1553,8 @@ pub fn fill_eyes(targets: &[(u32, usize)]) -> u32 {
                 // layout EXACTLY so Godot's internal tracker never notices. The source ends its
                 // Godot frame sampled (SHADER_READ_ONLY_OPTIMAL); if validation or the ladder
                 // proves otherwise on device, this pair is the first place to fix.
+                let source_range = color_range(src.array_layer);
+                let source_layers = color_layers(src.array_layer);
                 let src_in = VkImageMemoryBarrier {
                     s_type: VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
                     p_next: std::ptr::null(),
@@ -1541,7 +1565,7 @@ pub fn fill_eyes(targets: &[(u32, usize)]) -> u32 {
                     src_queue_family_index: u32::MAX, // VK_QUEUE_FAMILY_IGNORED
                     dst_queue_family_index: u32::MAX,
                     image: src.vk_image,
-                    subresource_range: COLOR_RANGE,
+                    subresource_range: source_range,
                 };
                 (api.cmd_pipeline_barrier)(
                     api.command_buffer,
@@ -1557,7 +1581,7 @@ pub fn fill_eyes(targets: &[(u32, usize)]) -> u32 {
                 );
                 if same_size {
                     let region = VkImageCopy {
-                        src_subresource: COLOR_LAYERS,
+                        src_subresource: source_layers,
                         src_offset: VkOffset3D { x: 0, y: 0, z: 0 },
                         dst_subresource: COLOR_LAYERS,
                         dst_offset: VkOffset3D { x: 0, y: 0, z: 0 },
@@ -1587,7 +1611,7 @@ pub fn fill_eyes(targets: &[(u32, usize)]) -> u32 {
                         );
                     }
                     let region = VkImageBlit {
-                        src_subresource: COLOR_LAYERS,
+                        src_subresource: source_layers,
                         src_offsets: [
                             VkOffset3D { x: 0, y: 0, z: 0 },
                             VkOffset3D {
@@ -1627,7 +1651,7 @@ pub fn fill_eyes(targets: &[(u32, usize)]) -> u32 {
                     src_queue_family_index: u32::MAX,
                     dst_queue_family_index: u32::MAX,
                     image: src.vk_image,
-                    subresource_range: COLOR_RANGE,
+                    subresource_range: source_range,
                 };
                 (api.cmd_pipeline_barrier)(
                     api.command_buffer,

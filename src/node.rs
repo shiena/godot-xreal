@@ -15,12 +15,12 @@ use crate::gl;
 use crate::session;
 
 /// Per-eye render size (matches the XREAL swapchain buffers created via CreateTexture).
-const EYE_W: i32 = 1968;
-const EYE_H: i32 = 1134;
+pub(crate) const EYE_W: i32 = 1968;
+pub(crate) const EYE_H: i32 = 1134;
 /// Last-resort vertical FOV when neither an app Camera3D nor the SDK's calibrated per-eye
 /// projection is available. This is an approximation derived from One Pro calibration logs, not an
 /// official device default.
-const FALLBACK_EYE_VERTICAL_FOV: f32 = 27.4;
+pub(crate) const FALLBACK_EYE_VERTICAL_FOV: f32 = 27.4;
 const DEFAULT_NEAR: f32 = 0.05;
 const DEFAULT_FAR: f32 = 1000.0;
 const MIN_RENDER_SCALE: f32 = 0.5;
@@ -35,12 +35,12 @@ const SCALE_UP_HOLD_SECONDS: f64 = 4.0;
 const SCALE_CHANGE_COOLDOWN_SECONDS: f64 = 1.0;
 /// Half the interpupillary distance in metres. Each eye camera is offset by plus or minus this
 /// along head-local X.
-const HALF_IPD: f32 = 0.0315;
+pub(crate) const HALF_IPD: f32 = 0.0315;
 
 /// Resolve the per-eye 3D render scale. Supported backends render the SubViewport at the reduced
 /// size and upscale directly into the XREAL eye texture; the fallback keeps a full-size output and
 /// uses Godot's bilinear 3D scaling. The Android property overrides the persisted project setting.
-fn eye_render_scale() -> f32 {
+pub(crate) fn eye_render_scale() -> f32 {
     if let Some(percent) = session::android_prop_i32(b"debug.xreal.render_scale\0") {
         return (percent as f32 / 100.0).clamp(0.5, 1.0);
     }
@@ -53,6 +53,19 @@ fn eye_render_scale() -> f32 {
     } else {
         1.0
     }
+}
+
+/// Whether this project opts into the Vulkan-only Godot XR multiview proof of concept.
+fn xr_multiview_poc_enabled() -> bool {
+    if let Some(enabled) = session::android_prop_i32(b"debug.xreal.xr_multiview\0") {
+        return enabled != 0;
+    }
+    let ps = ProjectSettings::singleton();
+    ps.has_setting("xreal/xr_multiview_poc")
+        && ps
+            .get_setting("xreal/xr_multiview_poc")
+            .try_to::<bool>()
+            .unwrap_or(false)
 }
 
 /// Whether adaptive eye resolution is enabled for this project. The setting is sampled when the
@@ -160,6 +173,19 @@ struct StereoRig {
     direct_scale_blit: bool,
 }
 
+/// One offscreen XR viewport that renders the shared world into a two-layer multiview target.
+struct XrMultiviewRig {
+    viewport: Gd<SubViewport>,
+    camera: Gd<Camera3D>,
+    render_scale: f32,
+    /// Whether the bridge's linear blit upscales the reduced target directly. `false` renders
+    /// full-size with Godot's bilinear 3D scaling doing the reduction, like the multipass rig.
+    direct_scale_blit: bool,
+    /// One-shot latch for the post-bridge-init upgrade to the reduced target (see
+    /// maybe_upgrade_multiview_scale); also set by the sRGB fallback so a revert sticks.
+    scale_upgrade_done: bool,
+}
+
 /// Scene node that drives its own transform from the native XREAL head pose each frame. Parent a
 /// `Camera3D` under it for a head-tracked view through the glasses.
 ///
@@ -208,6 +234,10 @@ pub struct XrealHeadTracker {
     host_viewport_3d_was_disabled: Option<bool>,
     /// Runtime controller created with the stereo rig when dynamic scaling is enabled.
     dynamic_scale: Option<DynamicScaleController>,
+    /// Opt-in Godot-native two-view XR interface. Its renderer produces one layered source image.
+    xr_interface: Option<Gd<crate::xr_interface::XrealXrInterface>>,
+    /// Offscreen XR viewport. The root viewport remains available for the phone's 2D controls.
+    xr_multiview_rig: Option<XrMultiviewRig>,
 }
 
 #[godot_api]
@@ -229,6 +259,8 @@ impl INode3D for XrealHeadTracker {
             disable_host_viewport_3d: true,
             host_viewport_3d_was_disabled: None,
             dynamic_scale: None,
+            xr_interface: None,
+            xr_multiview_rig: None,
         }
     }
 
@@ -254,9 +286,17 @@ impl INode3D for XrealHeadTracker {
         // Kick off initialization early. `shared()` logs its own outcome, and retries on later frames
         // when the Android Activity has not been published yet.
         let _ = session::shared();
+        self.try_enable_xr_multiview();
     }
 
     fn exit_tree(&mut self) {
+        if let Some(mut rig) = self.xr_multiview_rig.take() {
+            rig.viewport.set_use_xr(false);
+            rig.viewport.queue_free();
+        }
+        if let Some(interface) = self.xr_interface.take() {
+            crate::xr_interface::deactivate(interface);
+        }
         if let Some(was_disabled) = self.host_viewport_3d_was_disabled.take() {
             if let Some(mut viewport) = self.base().get_viewport() {
                 viewport.set_disable_3d(was_disabled);
@@ -311,6 +351,7 @@ impl INode3D for XrealHeadTracker {
         // context (vk_bridge.rs), gated by `debug.xreal.vulkan_glasses`. With neither, the
         // glasses submission is skipped while everything below — head tracking, signals, the
         // phone display — keeps working.
+        let xr_multiview = self.xr_interface.is_some();
         if gl::renderer_is_gl() {
             // Build the per-eye offscreen render rig once we are in the tree and so have a World3D.
             self.ensure_stereo();
@@ -331,8 +372,12 @@ impl INode3D for XrealHeadTracker {
             let glasses = crate::vk_bridge::glasses_enabled();
             let want_encoder = crate::video_encoder::is_active();
             if (glasses || want_encoder) && crate::vk_bridge::ensure_init() {
-                if glasses {
+                if glasses && !xr_multiview {
                     self.ensure_stereo();
+                }
+                if xr_multiview {
+                    // The bridge is initialized here, so the scale-blit capability is known.
+                    self.maybe_upgrade_multiview_scale();
                 }
                 // The Vulkan tick MUST run after Godot submitted this frame's rendering: the
                 // bridge orders its copies against the SubViewport rendering purely by same-queue
@@ -439,12 +484,202 @@ impl INode3D for XrealHeadTracker {
 
         // Point the eye cameras from the now-updated head transform, then publish their offscreen
         // textures for the frame tick to blit into the XREAL eye buffers.
-        self.update_stereo();
-        self.update_dynamic_render_scale(delta);
+        if xr_multiview {
+            self.update_xr_view_state();
+        } else {
+            self.update_stereo();
+            self.update_dynamic_render_scale(delta);
+        }
     }
 }
 
 impl XrealHeadTracker {
+    fn try_enable_xr_multiview(&mut self) {
+        if !xr_multiview_poc_enabled() {
+            return;
+        }
+        if gl::renderer_is_gl() {
+            godot_warn!(
+                "[xreal] xreal/xr_multiview_poc requires Vulkan; using the existing GLES Multipass path"
+            );
+            return;
+        }
+        let Some(mut host_viewport) = self.base().get_viewport() else {
+            godot_warn!("[xreal] XR multiview PoC could not find the root viewport");
+            return;
+        };
+        let Some(world) = self.base().get_world_3d() else {
+            godot_warn!("[xreal] XR multiview PoC could not find the shared World3D");
+            return;
+        };
+        // Same scale policy as ensure_stereo: render the target reduced and let the bridge's
+        // linear blit upscale it when supported, otherwise render full-size and let Godot's
+        // bilinear 3D scaling do the reduction.
+        let render_scale = eye_render_scale();
+        let scale_blit_supported =
+            session::android_prop_i32(b"debug.xreal.scale_blit\0").unwrap_or(1) != 0
+                && crate::vk_bridge::linear_scale_blit_supported();
+        let direct_scale_blit = render_scale < 0.999 && scale_blit_supported;
+        let target_size = if direct_scale_blit {
+            Vector2i::new(
+                (EYE_W as f32 * render_scale).round() as i32,
+                (EYE_H as f32 * render_scale).round() as i32,
+            )
+        } else {
+            Vector2i::new(EYE_W, EYE_H)
+        };
+        let Some(interface) =
+            crate::xr_interface::activate(Vector2::new(target_size.x as f32, target_size.y as f32))
+        else {
+            godot_warn!("[xreal] XR multiview PoC interface initialization failed");
+            return;
+        };
+
+        let mut xr_viewport = SubViewport::new_alloc();
+        xr_viewport.set_name("XrealMultiviewViewport");
+        xr_viewport.set_world_3d(&world);
+        xr_viewport.set_size(target_size);
+        if render_scale < 0.999 && !direct_scale_blit {
+            xr_viewport.set_scaling_3d_mode(Scaling3DMode::BILINEAR);
+            xr_viewport.set_scaling_3d_scale(render_scale);
+        }
+        xr_viewport.set_update_mode(UpdateMode::ALWAYS);
+        xr_viewport.set_use_xr(true);
+
+        let mut xr_camera = Camera3D::new_alloc();
+        xr_camera.set_name("XrealMultiviewCamera");
+        xr_camera.set_near(DEFAULT_NEAR);
+        xr_camera.set_far(DEFAULT_FAR);
+        xr_camera.set_current(true);
+        xr_viewport.add_child(&xr_camera);
+        self.base_mut().add_child(&xr_viewport);
+
+        self.host_viewport_3d_was_disabled = Some(host_viewport.is_3d_disabled());
+        if self.disable_host_viewport_3d {
+            host_viewport.set_disable_3d(true);
+        }
+        self.xr_interface = Some(interface);
+        self.xr_multiview_rig = Some(XrMultiviewRig {
+            viewport: xr_viewport,
+            camera: xr_camera,
+            render_scale,
+            direct_scale_blit,
+            scale_upgrade_done: false,
+        });
+        if dynamic_render_scale_enabled() {
+            godot_warn!(
+                "[xreal] dynamic render scale is not active in the XR multiview PoC; xreal/render_scale is sampled at initialization"
+            );
+        }
+        godot_print!(
+            "[xreal] XR multiview PoC active: one offscreen XR SubViewport, root viewport \
+             reserved for phone UI (3D scale={render_scale:.2}, scale_path={})",
+            if direct_scale_blit {
+                "bridge-linear"
+            } else if render_scale < 0.999 {
+                "godot-bilinear"
+            } else {
+                "native"
+            },
+        );
+    }
+
+    /// One-shot upgrade of the multiview scale path, run once the Vulkan bridge is initialized.
+    /// The PoC activates in ready(), before the bridge exists, so it cannot know then whether the
+    /// linear scale blit is supported and conservatively starts full-size with Godot bilinear
+    /// scaling. Once the bridge is up and the blit is supported, switch to the reduced target and
+    /// let the bridge upscale directly, matching the multipass rig's preferred path. Should the
+    /// reduced target then turn out sRGB-typed, the latch in update_xr_view_state reverts it, and
+    /// scale_upgrade_done keeps the revert from re-upgrading.
+    fn maybe_upgrade_multiview_scale(&mut self) {
+        let target = {
+            let Some(rig) = self.xr_multiview_rig.as_mut() else {
+                return;
+            };
+            if rig.scale_upgrade_done || rig.direct_scale_blit || rig.render_scale >= 0.999 {
+                return;
+            }
+            rig.scale_upgrade_done = true;
+            if session::android_prop_i32(b"debug.xreal.scale_blit\0").unwrap_or(1) == 0
+                || !crate::vk_bridge::linear_scale_blit_supported()
+            {
+                return;
+            }
+            let target = Vector2i::new(
+                (EYE_W as f32 * rig.render_scale).round() as i32,
+                (EYE_H as f32 * rig.render_scale).round() as i32,
+            );
+            rig.viewport.set_scaling_3d_scale(1.0);
+            rig.viewport.set_size(target);
+            rig.direct_scale_blit = true;
+            target
+        };
+        if let Some(interface) = self.xr_interface.as_mut() {
+            interface
+                .bind_mut()
+                .set_render_target_size(Vector2::new(target.x as f32, target.y as f32));
+        }
+        godot_print!(
+            "[xreal] multiview scale path upgraded to bridge-linear ({}x{})",
+            target.x,
+            target.y,
+        );
+    }
+
+    fn update_xr_view_state(&mut self) {
+        // The render thread latched "the reduced target is sRGB-typed": re-target the interface
+        // at the full eye size and let Godot's bilinear scaling do the reduction, the multiview
+        // equivalent of update_stereo's sRGB guard. One-shot: at full size the latch stays clear.
+        if crate::xr_interface::take_srgb_scale_blocked() {
+            godot_warn!(
+                "[xreal] multiview scale blit source is sRGB-typed; falling back to Godot \
+                 bilinear upscale to preserve raw display color"
+            );
+            if let Some(interface) = self.xr_interface.as_mut() {
+                interface
+                    .bind_mut()
+                    .set_render_target_size(Vector2::new(EYE_W as f32, EYE_H as f32));
+            }
+            if let Some(rig) = self.xr_multiview_rig.as_mut() {
+                rig.viewport.set_size(Vector2i::new(EYE_W, EYE_H));
+                if rig.render_scale < 0.999 {
+                    rig.viewport.set_scaling_3d_mode(Scaling3DMode::BILINEAR);
+                    rig.viewport.set_scaling_3d_scale(rig.render_scale);
+                }
+                rig.direct_scale_blit = false;
+                rig.scale_upgrade_done = true;
+            }
+        }
+        let head = self.base().get_global_transform();
+        let source_camera = self
+            .base()
+            .get_viewport()
+            .and_then(|viewport| viewport.get_camera_3d());
+        let transform = source_camera
+            .as_ref()
+            .map(|camera| camera.get_global_transform())
+            .unwrap_or(head);
+        let fov = source_camera
+            .as_ref()
+            .map(|camera| camera.get_fov())
+            .unwrap_or(FALLBACK_EYE_VERTICAL_FOV);
+        if let (Some(source), Some(rig)) = (source_camera.as_ref(), self.xr_multiview_rig.as_mut())
+        {
+            sync_eye_camera_parameters(source, &mut rig.camera);
+            // The XR camera's clipping planes are what Godot hands to get_projection_for_view as
+            // z_near/z_far, so follow the app camera the way the multipass eye cameras do.
+            let near = source.get_near();
+            if rig.camera.get_near() != near {
+                rig.camera.set_near(near);
+            }
+            let far = source.get_far();
+            if rig.camera.get_far() != far {
+                rig.camera.set_far(far);
+            }
+        }
+        crate::xr_interface::publish_view_state(transform, fov);
+    }
+
     /// Interpret libXREALXRPlugin.so's 16-float display head-pose block as a Godot rotation.
     ///
     /// DEVICE-CONFIRMED layout, from an on-device raw log: the 16 floats are a **4x4 row-major
@@ -850,6 +1085,7 @@ impl XrealHeadTracker {
             vk_image,
             width: fmt.get_width() as i32,
             height: fmt.get_height() as i32,
+            array_layer: 0,
             srgb,
             valid: vk_image != 0,
         }

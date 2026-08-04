@@ -7,4 +7,5 @@ static StubClass stub_classes[] = {
 	{ "XrealHandTracker", "Node", 0, 0, 0 },
 	{ "XrealHeadTracker", "Node3D", 0, 0, 0 },
 	{ "XrealSystem", "RefCounted", 0, 0, 0 },
+	{ "XrealXrInterface", "XrInterfaceExtension", 0, 0, 0 },
 };

@@ -855,5 +855,13 @@ static const char *const stub_docs[] = {
 "<members></members>\n"
 "</class>\n"
 ,
+"<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+"<class name=\"XrealXrInterface\" inherits=\"XrInterfaceExtension\" xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xsi:noNamespaceSchemaLocation=\"../class.xsd\">\n"
+"<brief_description>An opt-in [code]XRInterfaceExtension[/code] that enters Godot&#39;s standard two-view render path.</brief_description>\n"
+"<description>The addon registers and activates it internally when the ProjectSetting [code]xreal/xr_multiview_poc[/code], or the Android property [code]debug.xreal.xr_multiview[/code], enables the Vulkan-only multiview path; scenes never instantiate it directly. It needs [code]xr/shaders/enabled=true[/code] and an export preset whose XR Mode is [code]OpenXR[/code] (with [code]xr/openxr/enabled=false[/code] the OpenXR runtime stays off). The established two-SubViewport Multipass path remains the default.</description>\n"
+"\n"
+"<members></members>\n"
+"</class>\n"
+,
 };
 enum { STUB_DOC_COUNT = sizeof(stub_docs) / sizeof(stub_docs[0]) };

@@ -836,6 +836,7 @@ impl XrealSystem {
             vk_image,
             width: fmt.get_width() as i32,
             height: fmt.get_height() as i32,
+            array_layer: 0,
             srgb: format == DataFormat::R8G8B8A8_SRGB,
             valid: vk_image != 0,
         };
