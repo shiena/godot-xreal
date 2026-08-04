@@ -12,7 +12,7 @@ Pipeline:
     app --RTP 5557 (AAC,   RFC 3016 LATM )--> depacketize -+-> FLV tags -> WebSocket -> mpegts.js
 
 Both wire formats were confirmed on device by decoding them; see scripts/stream_server/README.md
-and docs/archive/codex-rtp-receive-analysis.md.
+and docs/develop/archive/codex-rtp-receive-analysis.md.
 
 Pairing is mandatory: the app broadcasts FIND-SERVER and streams only to whoever answers, so this
 runs pair_server.run() in a thread rather than making you start a second process.

@@ -3,7 +3,7 @@
 //! The encoder is a MediaCodec-backed H.264 encoder and muxer: configure it with a JSON string
 //! carrying the resolution, bitrate and fps, a `codecType` of 0 for a local mp4, 1 for RTMP or 2
 //! for RTP, and the output path or `rtp://` or `rtmp://` URL, then hand it a GL texture id per frame
-//! through `HWEncoderUpdateSurface`. See `docs/plans/fpv-streaming-plan.md`.
+//! through `HWEncoderUpdateSurface`. See `docs/develop/plans/fpv-streaming-plan.md`.
 //!
 //! `HWEncoderUpdateSurface(handle, gl_texture_id, timestamp)` reads the GL texture on the **current
 //! EGL context**, so `submit_frame` MUST be called on Godot's render thread, through
@@ -43,7 +43,7 @@ struct Encoder {
     idr_hack: bool,
 }
 
-// --- Periodic-IDR workaround (docs/archive/codex-idr-analysis.md) -----------------------------
+// --- Periodic-IDR workaround (docs/develop/archive/codex-idr-analysis.md) -----------------------------
 //
 // The vendored libmedia_codec.so 3.1.0 configures the H.264 encoder with
 // `intra-refresh-period=10`, which replaces periodic IDR key frames with cyclic intra refresh, so
@@ -182,7 +182,7 @@ const AUDIO_SAMPLE_RATE: i32 = 48_000;
 /// MediaProjection. `with_alpha` sets `useAlpha`, and the encoder then packs the frame's RGB and
 /// alpha top-and-bottom for the ObserverView MRC composite; the input texture has to carry a real
 /// alpha channel, meaning a transparent-background viewport. See
-/// docs/plans/observer-view-notes.md.
+/// docs/develop/plans/observer-view-notes.md.
 #[allow(clippy::too_many_arguments)]
 fn config_json(
     output: &str,
@@ -246,7 +246,7 @@ struct EncoderConfig {
 /// Resolve the periodic-IDR workaround setting, MAIN THREAD ONLY (it reads `ProjectSettings`).
 /// Priority: the `debug.xreal.idr_hack` system property overrides at runtime (0/1); otherwise the
 /// `xreal/idr_workaround` ProjectSetting; otherwise ON by default. See
-/// docs/archive/codex-idr-analysis.md.
+/// docs/develop/archive/codex-idr-analysis.md.
 fn resolve_idr_hack() -> bool {
     if let Some(v) = crate::session::android_prop_i32(b"debug.xreal.idr_hack\0") {
         return v == 1;
@@ -405,7 +405,7 @@ unsafe fn start_native(config: &EncoderConfig) -> Option<Encoder> {
         // This must come right after the config, as the SDK does: without it HWEncoderStart dereferenced
         // a null field and hit a SIGSEGV. The projection is not decoration. With `addInternalAudio` the
         // encoder builds an AudioPlaybackCaptureConfiguration from it and opens its own AudioRecord for
-        // app sound, then adds those blocks to the microphone's (docs/archive/codex-audio-mix-
+        // app sound, then adds those blocks to the microphone's (docs/develop/archive/codex-audio-mix-
         // analysis.md). Null is still correct when app audio was not asked for, or consent was declined:
         // the capture simply does not start.
         let projection = if with_internal {
@@ -495,7 +495,7 @@ pub fn stop() {
 // with the private EGL context bound: the encoder's worker context shares against SOME context
 // it observes during its lifecycle (which call latches it is unknown, so all of them get the
 // same one), and the bundle GL names only exist in the private context's share group. See
-// docs/archive/codex-vulkan-stage4-design.md.
+// docs/develop/archive/codex-vulkan-stage4-design.md.
 // ---------------------------------------------------------------------------------------------
 
 enum VkEncState {

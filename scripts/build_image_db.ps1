@@ -6,7 +6,7 @@
 
     Reads the manifest (default demo/image_tracking/reference.json), writes an image-list config
     (`<guid:N>|<image path>|<width_metres>` per image), runs the CLI, and produces the `blob` named
-    in the manifest next to it. See docs/plans/ar-features-plan.md for the pipeline.
+    in the manifest next to it. See docs/develop/plans/ar-features-plan.md for the pipeline.
 
 .PARAMETER Manifest
     Path (repo-relative or absolute) to the reference.json manifest.

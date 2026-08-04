@@ -4,7 +4,7 @@ extends VBoxContainer
 ## XREALImageLibraryBuildProcessor. It manages a manifest of reference images, each an image with a
 ## physical width and a generated guid, then runs the vendored trackableImageTools CLI to compile
 ## the .bin that the runtime loads through XrealSystem.init_image_database. See
-## docs/plans/ar-features-plan.md section 3.
+## docs/develop/plans/ar-features-plan.md section 3.
 ##
 ## The images (.jpg and .png) and the built .bin are gitignored, being SDK-derived or generated,
 ## while the manifest (reference.json) is committed. trackableImageTools has to be vendored first,

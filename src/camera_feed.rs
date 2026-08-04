@@ -4,7 +4,7 @@
 //! the XREAL RGB capture, `deactivate_feed` stops it, and `poll_frame()`, which a driver such as
 //! the addon's `xreal_camera.gd` calls each frame, publishes the latest frame as **Y and CbCr
 //! textures** for a YCbCr-to-RGB shader, with no CPU colour conversion. See
-//! `docs/plans/camera-feed-plan.md`.
+//! `docs/develop/plans/camera-feed-plan.md`.
 //!
 //! **Consumers read the custom getters, NOT the standard `CameraServer` texture route.** The class
 //! docs on [`XrealCameraFeed`] tell the full story; this trips up readers who know `CameraFeed`.
@@ -36,7 +36,7 @@ use std::time::Instant;
 /// Collecting this costs about 8 `Instant::now()` calls per grabbed frame, well under a microsecond
 /// against a grab of roughly 525 us, so it always runs and only the report line is gated (see
 /// [`TIMING_PROP`]). It is what found every win in the optimisation pass recorded in
-/// `docs/plans/camera-feed-plan.md`, so it is kept rather than deleted.
+/// `docs/develop/plans/camera-feed-plan.md`, so it is kept rather than deleted.
 #[derive(Default)]
 struct PollTiming {
     grabs: u32,
@@ -152,7 +152,7 @@ pub struct XrealCameraFeed {
     /// the CV code then has to process.
     ///
     /// Read the result from the `frame_changed` signal rather than polling the getters; see
-    /// [`Self::get_y_data`] and `docs/plans/camera-feed-plan.md`.
+    /// [`Self::get_y_data`] and `docs/develop/plans/camera-feed-plan.md`.
     ///
     /// Luma only: the chroma is not retained. Colour CV would need the other two planes and a
     /// `cvtColor`, and note that the plane order is **YV12**, not I420. Its 1-3 ms would dominate this

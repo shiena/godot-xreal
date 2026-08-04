@@ -1,5 +1,5 @@
 #!/usr/bin/env pwsh
-# Regenerate the Markdown class reference in docs/api/, one page per class the addon exposes to
+# Regenerate the Markdown class reference in docs/user/api/, one page per class the addon exposes to
 # GDScript, from the doc comments as the single source of truth:
 #   src/*.rs                     `///` comments -> gdext `register-docs` XML (src/api_docs.rs reads it)
 #   addons/godot_xreal/**/*.gd   `##`  comments -> Godot's own doctool, run below
@@ -12,7 +12,7 @@
 #
 # Windows twin of gen_api_docs.sh (mac/Linux; no pwsh there). Do not cross-call.
 #
-#   pwsh scripts/gen_api_docs.ps1                      # (re)write docs/api/
+#   pwsh scripts/gen_api_docs.ps1                      # (re)write docs/user/api/
 #   pwsh scripts/gen_api_docs.ps1 -Check               # verify the committed pages are in sync
 #
 # The Godot binary is a build variable, resolved in SCons order: an explicit command-line value

@@ -3,7 +3,7 @@
 //! Signatures here are **confirmed by reverse engineering** the binaries (C++ mangled
 //! names + AArch64 disassembly of the C wrappers in `libXREALNativeSessionManager.so`),
 //! cross-checked against the Unity SDK's C# `[DllImport]` declarations. See
-//! `docs/reference/reverse-engineering.md` for the derivation. Items still flagged `RE` need
+//! `docs/develop/reference/reverse-engineering.md` for the derivation. Items still flagged `RE` need
 //! on-device confirmation.
 
 use std::ffi::{c_char, c_void};
@@ -90,7 +90,7 @@ pub struct UserDefinedSettings {
 
 // ---- Resolved function-pointer types -------------------------------------------------
 //
-// RE basis (see docs/reference/reverse-engineering.md):
+// RE basis (see docs/develop/reference/reverse-engineering.md):
 //   - mangled `XREALNativeSessionManager::GetHeadPoseAtTime(unsigned long, float*)`
 //   - mangled `XREALNativeSessionManager::GetHMDTimeNanos(unsigned long*)`  <- out-param!
 //   - C wrappers tail-call the methods, so the C export return == the method return
@@ -115,7 +115,7 @@ pub type FnGetHeadPoseAtTime = unsafe extern "C" fn(u64, *mut NrPose) -> i32;
 /// reprojects the glasses layer with, so driving the eye cameras from it should yield a
 /// head-locked peek window. It returns 1 on success. The device-pinned layout of the 16 floats is
 /// a **4x4 row-major transform**, with the rotation in the upper-left 3x3 and the position in
-/// floats 12, 13 and 14; see the RE map in `docs/archive/multiview-investigation.md`.
+/// floats 12, 13 and 14; see the RE map in `docs/develop/archive/multiview-investigation.md`.
 pub type FnGetHeadPoseDisplay = unsafe extern "C" fn(u64, *mut [f32; 16]) -> i32;
 
 /// `void XREALLoadAPI(void)` wires the session-manager perception delegate and has to run
@@ -173,7 +173,7 @@ pub type FnQueryInt = unsafe extern "C" fn() -> i32;
 /// directly to try to kick perception without the full XR-subsystem host.
 pub type FnSwitchTrackingType = unsafe extern "C" fn(i32) -> bool;
 
-// --- RGB camera (libXREALXRPlugin.so, flat C ABI; see docs/plans/camera-feed-plan.md) ---
+// --- RGB camera (libXREALXRPlugin.so, flat C ABI; see docs/develop/plans/camera-feed-plan.md) ---
 
 /// `NRSize2i`, Unity's `Vector2Int`: plane or frame dimensions for the RGB camera.
 #[repr(C)]
@@ -201,7 +201,7 @@ pub type FnTryGetRgbCameraDataPlane =
 /// [`FnTryAcquireLatestImage`].
 pub type FnDisposeRgbCameraDataHandle = unsafe extern "C" fn(i32);
 
-// --- Plane detection (libXREALXRPlugin.so, flat C ABI; see docs/plans/ar-features-plan.md) ---
+// --- Plane detection (libXREALXRPlugin.so, flat C ABI; see docs/develop/plans/ar-features-plan.md) ---
 //
 // Source: `XREALPlaneSubsystem.cs` `[DllImport]` + demangled `InputManager::*` internals. Needs a
 // 6DoF session. Poses are in **Unity space** (left-handed) and need the same conversion the head/hand
@@ -282,7 +282,7 @@ impl Default for ArSubsystemChanges {
 /// Field offsets within this SDK build's `BoundedPlane` element (**device-confirmed write offsets**,
 /// element_size = **104**; note `center` precedes `pose` here, unlike stock AR Foundation):
 /// `[trackableId:16][subsumedById:16][center:8][pose:28][size:8][alignment:4][trackingState:4]…`
-/// `alignment` is `100` (horizontal) / `200` (vertical). See `docs/plans/ar-features-plan.md`.
+/// `alignment` is `100` (horizontal) / `200` (vertical). See `docs/develop/plans/ar-features-plan.md`.
 pub mod bounded_plane {
     pub const TRACKABLE_ID: usize = 0x00;
     pub const CENTER: usize = 0x20;
@@ -332,7 +332,7 @@ pub type FnIsHmdFeatureSupported = unsafe extern "C" fn(i32) -> bool;
 
 /// `XREALComponent` device ids for the geometry APIs below. They are distinct from
 /// [`hmd_feature`]: here the RGB camera is `2`, not `1`. See
-/// docs/plans/coordinate-systems-notes.md.
+/// docs/develop/plans/coordinate-systems-notes.md.
 pub mod component {
     pub const DISPLAY_LEFT: i32 = 0;
     pub const DISPLAY_RIGHT: i32 = 1;
@@ -344,7 +344,7 @@ pub mod component {
     pub const MAGNETIC: i32 = 5;
 }
 // --- Device and camera geometry, the libXREALXRPlugin.so C exports, in Unity space. The export
-// symbols were confirmed with `llvm-objdump -T`. See docs/plans/coordinate-systems-notes.md. ---
+// symbols were confirmed with `llvm-objdump -T`. See docs/develop/plans/coordinate-systems-notes.md. ---
 // `GetDevicePoseFromHead(component, &pose) -> bool`. `pose` is a Unity `Pose`: the position
 // `[x,y,z]` then the rotation quaternion `[x,y,z,w]`, 7 floats in all, giving the device's
 // extrinsic relative to Head in Unity space.
@@ -361,7 +361,7 @@ pub type FnGetCameraIntrinsic = unsafe extern "C" fn(i32, *mut [f32; 2], *mut [f
 pub type FnGetCameraProjectionMatrix = unsafe extern "C" fn(i32, f32, f32, *mut [f32; 16]) -> bool;
 
 // --- Spatial anchors, the libXREALXRPlugin.so flat C exports; see
-// docs/plans/ar-features-plan.md --------
+// docs/develop/plans/ar-features-plan.md --------
 // The sources are `XREALAnchorSubsystem.cs`'s `[DllImport]` plus the demangled `InputManager::*`
 // internals. They need a 6DoF session AND the vendored `nr_spatial_anchor.aar` backend `.so`. The
 // poses are in Unity space, so convert them like the plane and hand poses. The changes-poll reuses
@@ -380,7 +380,7 @@ pub struct Guid {
 /// Field offsets within this SDK build's `XRTrackedAnchor` element (`element_size = 72`). Layout
 /// derived from the disassembly of `InputManager::AcquireNewTrackableAnchor` / `LoadTrackableAnchor`:
 /// `[trackableId:16][pose:28][trackingState:4][nativePtr:8][sessionId(Guid):16]`. See
-/// `docs/plans/ar-features-plan.md`.
+/// `docs/develop/plans/ar-features-plan.md`.
 pub mod xr_anchor {
     pub const TRACKABLE_ID: usize = 0x00;
     pub const POSE: usize = 0x10;
@@ -423,7 +423,7 @@ pub type FnRemapTrackableAnchor = unsafe extern "C" fn(TrackableId) -> bool;
 pub type FnEstimateTrackableAnchorQuality =
     unsafe extern "C" fn(TrackableId, UnityPose, *mut i32) -> bool;
 
-// --- Image tracking (libXREALXRPlugin.so flat C exports; see docs/plans/ar-features-plan.md) --------
+// --- Image tracking (libXREALXRPlugin.so flat C exports; see docs/develop/plans/ar-features-plan.md) --------
 // Source: `XREALImageTrackingSubsystem.cs` / `XREALImageDatabase.cs` + disassembly. Needs a 6DoF
 // session AND the vendored `nr_image_tracking.aar` backend + an `assets/nr_plugins.json` entry + a
 // reference-image DB blob built by the `trackableImageTools` CLI. The changes-poll reuses

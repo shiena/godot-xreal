@@ -116,7 +116,7 @@ func _setup_feed() -> void:
 		return
 
 	# Diagnostic: the RGB camera geometry (Unity space) from libXREALXRPlugin, which confirms that the
-	# device and camera-param APIs return real data. See docs/plans/coordinate-systems-notes.md.
+	# device and camera-param APIs return real data. See docs/develop/plans/coordinate-systems-notes.md.
 	if _system.has_method(&"get_camera_intrinsics"):
 		var comp := 2  # XREALComponent.RGB_CAMERA
 		print("[cam-geom] RGB res=%s intrinsics[fx,fy,cx,cy]=%s" % [_system.get_device_resolution(comp), _system.get_camera_intrinsics(comp)])

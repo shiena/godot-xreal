@@ -18,7 +18,7 @@ Unity SDK は Android の `.so` に薄く C# を被せた構造で、その `.so
 `libXREALNativeSessionManager.so` は `XREALGetHeadPoseAtTime` などを、`libXREALXRPlugin.so` は OpenXR 的なコンポジタレイヤ API を含む 274 関数を公開します。
 よって C# を翻訳せず、この拡張は `.so` を `dlopen` して Godot に直接つなぎます。
 下層の難読化された NRSDK proc テーブル（`libnr_api.so` の `NRGetProcAddr`）は回避します。
-詳細は [`docs/reference/reverse-engineering.md`](docs/reference/reverse-engineering.md)。
+ABI の導出過程と RE 済み関数の一覧は、開発者向けドキュメント（目次 [`docs/develop/README.md`](docs/develop/README.md)）にあります。
 
 ## 対応プラットフォーム
 
@@ -29,32 +29,33 @@ XREAL のネイティブは Android arm64 のみのため、対応端末（ス�
 
 XREAL SDK for Unity 3.1.0 のネイティブライブラリを用いて、XREAL One Pro（「Air 2 Ultra」表記の行は XREAL Air 2 Ultra）で実機確認しました。
 以下はすべてコミュニティによるリバースエンジニアリングでの相互運用であり、公式 API ではありません。
+各行の背景にある設計ノートと計測は、開発者向けドキュメント（目次 [`docs/develop/README.md`](docs/develop/README.md)）にあります。
 
 | 機能 | 状態 | 補足 |
 |---|---|---|
 | **ヘッドトラッキング**（6DoF、回転と位置の world-lock） | ✅ | XR-plugin の表示ポーズ（フル姿勢と並進）でアイカメラを駆動します。 |
 | **トラッキングモード**（6DoF / 3DoF / 0DoF） | ✅ | `xreal/tracking_type`、`XrealSystem.set_tracking_type`、`debug.xreal.tracking_type` で選択します。 |
 | **ステレオ表示**（ヘッドロックの覗き窓） | ✅ | グラス越しにワールド固定の 3D を表示します。既定は Multipass（両眼）です。 |
-| **Multiview** ステレオ（single-pass-instanced） | ✅ 動作するが性能向上なし | 両眼を正しく描画します（有効化は `setprop debug.xreal.stereo_mode 2`）。ただし**処理負荷は軽減されません**。本リグは Godot の SubViewport を左右2つ描画（2パス）した結果を配列レイヤーへコピーしており、そのコピーは片眼につき `glCopyImageSubData` 1回で、Multipass のコピーと同一コストです。single-pass-instanced の利得は、エンジンが両眼を1パスのマルチビューで描く場合にだけ得られます（Godot の Compatibility と SubViewport のリグはそれをしません）。よって既定は Multipass のままです。詳細 [`docs/archive/multiview-investigation.md`](docs/archive/multiview-investigation.md)。 |
-| **Vulkan Mobile レンダラー**（実験的） | ✅ 実機検証済み、オプトイン | 第2のエクスポートプリセット「Android Vulkan」が、移植全体を Godot の Forward Mobile Vulkan レンダラーで動かします。出荷版の Compatibility ビルドと同居してインストールできます。グラス描画、RGB カメラ、FPV 配信と録画のいずれも実機で動作し、色は Compatibility ビルドと一致します。グラスは既定でティアリングのない `vkQueueWaitIdle` 同期で約 52 FPS です。より速いパイプライン方式は 58〜60 FPS に達しますが、速い首振りで視野の下部がずれます。SDK コンポジタが再投影でアイ画像をサンプルする際、Vulkan から GL へのコピーとの間に GPU フェンスがないためです。`debug.xreal.vk_sync 1` でティアリングを許容して 58〜60 FPS に切り替えられます。60 FPS でティアリングを消す修正には、Godot が有効化していない Vulkan 拡張が必要です。各アイと各エンコードフレームは、自前で確保した `VkImage` を opaque-fd の GL テクスチャとして共有することで Vulkan から SDK の GL コンポジタへ渡ります。そのためコンポジタは従来どおり素の GL テクスチャ名を受け取ります。Compatibility レンダラーにはない `RenderingDevice` と GPU コンピュートが使え、描画経路が Android XR や Project Aura と統一されます。サーマル soak が完了するまでは `debug.xreal.vulkan_glasses` の後ろに置かれ、既定は Compatibility のままです。詳細 [`docs/plans/vulkan-path-plan.md`](docs/plans/vulkan-path-plan.md)。 |
+| **Multiview** ステレオ（single-pass-instanced） | ✅ オプトイン、利得はコンテンツ依存 | 既定はどちらのレンダラーでも Multipass です。Compatibility（GL）レンダラーの `setprop debug.xreal.stereo_mode 2` は両眼を正しく描画しますが、リグが SubViewport を左右2つ描いてから配列レイヤーへコピーするため、**処理負荷は Multipass と同一**です。Vulkan Mobile レンダラーには真の single-pass multiview があります。プロジェクト設定 `xreal/xr_multiview_poc`（または `setprop debug.xreal.xr_multiview 1`）を有効にすると、自前の `XRInterfaceExtension` を通じて Godot が両眼を1パスで 2-layer ターゲットへ描画します。実機では draw call が半減し、draw call 律速のシーンで 5.9% 高速、100k splat の 3DGS シーンでもわずかに高速でした。一方 GPU 律速のシーンは Adreno 710 で 13% 低速で、利得はコンテンツに依存します。有効化には `xr/shaders/enabled=true` とエクスポートプリセットの XR Mode を `OpenXR` にする設定が必要です。設定の詳細は[アドオンの README](addons/godot_xreal/README.md#project-settings)にあります。 |
+| **Vulkan Mobile レンダラー**（実験的） | ✅ 実機検証済み、オプトイン | 第2のエクスポートプリセット「Android Vulkan」が、移植全体を Godot の Forward Mobile Vulkan レンダラーで動かします。出荷版の Compatibility ビルドと同居してインストールできます。グラス描画、RGB カメラ、FPV 配信と録画のいずれも実機で動作し、色は Compatibility ビルドと一致します。グラスは既定でティアリングのない `vkQueueWaitIdle` 同期で約 52 FPS です。より速いパイプライン方式は 58〜60 FPS に達しますが、速い首振りで視野の下部がずれます。SDK コンポジタが再投影でアイ画像をサンプルする際、Vulkan から GL へのコピーとの間に GPU フェンスがないためです。`debug.xreal.vk_sync 1` でティアリングを許容して 58〜60 FPS に切り替えられます。60 FPS でティアリングを消す修正には、Godot が有効化していない Vulkan 拡張が必要です。各アイと各エンコードフレームは、自前で確保した `VkImage` を opaque-fd の GL テクスチャとして共有することで Vulkan から SDK の GL コンポジタへ渡ります。そのためコンポジタは従来どおり素の GL テクスチャ名を受け取ります。Compatibility レンダラーにはない `RenderingDevice` と GPU コンピュートが使え、描画経路が Android XR や Project Aura と統一されます。サーマル soak が完了するまでは `debug.xreal.vulkan_glasses` の後ろに置かれ、既定は Compatibility のままです。 |
 | **Recenter** | ✅ | 正面方向をリセットします（SDK の `NativePerception::Recenter`）。 |
-| **レンダーメトリクス**（present FPS、dropped、early、latency） | ✅ | コンポジタの実測値を `NRMetrics*` API で直接取得します（Unity の `UpdateMetrics` sink は使いません）。`XrealSystem` の `get_present_fps()` や `get_dropped_frame_count()` などで読めます。詳細 [`docs/plans/render-metrics-gdscript-plan.md`](docs/plans/render-metrics-gdscript-plan.md)。 |
+| **レンダーメトリクス**（present FPS、dropped、early、latency） | ✅ | コンポジタの実測値を `NRMetrics*` API で直接取得します（Unity の `UpdateMetrics` sink は使いません）。`XrealSystem` の `get_present_fps()` や `get_dropped_frame_count()` などで読めます。 |
 | **フォーカス平面**（コンポジタの再投影） | ✅ 実機検証待ち | コンポジタは VSync のたびに直前のフレームを最新の頭部ポーズへワープします。その基準となる平面を SDK は 1.4 m に固定しており、そこから離れた表示ほど尾を引いて二重に見えます。`XrealSystem.set_focus_plane()` が頭部ローカル座標で毎フレーム動かせます。`XrealFocusPlane` コンポーネントは SDK の `FocusManager` と同じく前方レイキャストから駆動します。`SetFocusPlane` export の引数は値渡しの `UnityXRVector3` 2 個（点と法線）で、Unity 側のラッパーが取る 3 個目の velocity はここへ届く前に捨てられます。 |
 | **グラス入力**（物理キー MENU/MULTI のクリック、ダブル、長押し） | ✅ | Godot シグナル `key_event` と `key_state_changed` で受け取ります。 |
 | **装着センサー、明るさ、音量、調光、USB ホットプラグ** | ✅ | `wearing_changed`、`brightness_changed`、`glasses_connected` などのシグナルで受け取ります。 |
 | **診断**（セッションとトラッキングの状態、HMD クロック、プラグイン版） | ✅ | `XrealSystem` 経由で取得します。 |
-| **マルチレジューム**（スマホを別アプリに切替えてもグラスのアプリが描画ごと継続） | ✅ | Unity SDK がフローティングウインドウ（復帰ボタン）で行う所を、本移植では auto-enter Picture-in-Picture で実装しています。背景化するとアプリはスマホ隅の小タイル（pause だが可視）になり、Godot の GL スレッドと Surface が生存するため、グラスはライブ描画を続けます。タイルをタップすると全画面に復帰します。`XrealBridge.enableAutoEnterPiP` を `demo/main.gd` から駆動し、manifest 足場として `nr_features=multiResume` と `NRFakeActivity` を置いています。実機では submit カウンタが背景化後も進むことを確認しました。フローティングウインドウ、foreground service、SurfaceView 付け替えを採らなかった理由は `docs/plans/background-render-plan.md`。 |
+| **マルチレジューム**（スマホを別アプリに切替えてもグラスのアプリが描画ごと継続） | ✅ | Unity SDK がフローティングウインドウ（復帰ボタン）で行う所を、本移植では auto-enter Picture-in-Picture で実装しています。背景化するとアプリはスマホ隅の小タイル（pause だが可視）になり、Godot の GL スレッドと Surface が生存するため、グラスはライブ描画を続けます。タイルをタップすると全画面に復帰します。`XrealBridge.enableAutoEnterPiP` を `demo/main.gd` から駆動し、manifest 足場として `nr_features=multiResume` と `NRFakeActivity` を置いています。実機では submit カウンタが背景化後も進むことを確認しました。設計比較では、フローティングウインドウ、foreground service、SurfaceView 付け替えのいずれよりも PiP が優れていました。 |
 | **キャプチャの音声**（マイクとアプリ音声） | ✅ | 録画も FPV 配信も両方載せられます。SDK のエンコーダが native に録音してミックスする方式で、Godot 自身のミキサーは経路に入りません。各キャプチャ機能の `audio_state` で選択します。マイクは `RECORD_AUDIO`、アプリ音声（内部音声）は Android の MediaProjection が必要です（`addInternalAudio` はエンコーダに `AudioPlaybackCapture` を開かせるため）。そのため、アプリ音声を要求する最初のキャプチャで画面キャプチャの同意ダイアログが出て、その回はマイクのみ、次回から両方入ります。マイクが通る DSP については[マイクが拾う音と拾わない音](#マイクが拾う音と拾わない音)を参照。 |
 | **RGB カメラ**（Godot `CameraFeed`） | ✅（One シリーズ） | フルカラーで 3D シーン内のヘッドロックのクアッドに表示します。6DoF と同時に使えます（SLAM は別系統のグレースケールカメラを使うため）。 |
-| **ハンドトラッキング**（両手26関節、Godot `XRHandTracker` へ） | ✅（Air 2 Ultra） | 手の関節を2つの `XRServer` ハンドトラッカ（`/user/hand_tracker/{left,right}`）へライブ供給します。デモは world-lock した関節球を描画します。One Pro は外向きカメラが無く `IsHandTrackingSupported()==false` を返すため、Air 2 Ultra 専用です。有効化は内部 `SetHandTrackingEnabled` と `input_source=3`。詳細 [`docs/plans/hand-tracking-plan.md`](docs/plans/hand-tracking-plan.md)。 |
-| **平面検出**（GDScript へ） | ✅（Air 2 Ultra） | 水平と垂直の平面検出を `XrealSystem.set_plane_detection_mode()` と `poll_planes()`（追加、更新、削除をポーズ、サイズ、alignment 付きで返す）、`get_plane_boundary()` で提供します。`libXREALXRPlugin.so` のフラット C export で動くため追加 AAR は不要で、6DoF が必須です。4 つの AR 機能の C ABI は RE 確定済みで、詳細は [`docs/plans/ar-features-plan.md`](docs/plans/ar-features-plan.md)。 |
+| **ハンドトラッキング**（両手26関節、Godot `XRHandTracker` へ） | ✅（Air 2 Ultra） | 手の関節を2つの `XRServer` ハンドトラッカ（`/user/hand_tracker/{left,right}`）へライブ供給します。デモは world-lock した関節球を描画します。One Pro は外向きカメラが無く `IsHandTrackingSupported()==false` を返すため、Air 2 Ultra 専用です。有効化は内部 `SetHandTrackingEnabled` と `input_source=3`。 |
+| **平面検出**（GDScript へ） | ✅（Air 2 Ultra） | 水平と垂直の平面検出を `XrealSystem.set_plane_detection_mode()` と `poll_planes()`（追加、更新、削除をポーズ、サイズ、alignment 付きで返す）、`get_plane_boundary()` で提供します。`libXREALXRPlugin.so` のフラット C export で動くため追加 AAR は不要で、6DoF が必須です。4 つの AR 機能の C ABI は RE 確定済みです。 |
 | **空間アンカー**（GDScript へ） | ✅（Air 2 Ultra） | ワールドアンカーの作成、永続化、復元を `XrealSystem.acquire_anchor()`、`poll_anchors()`、`save_anchor()`、`load_anchor()`、`estimate_anchor_quality()` などで提供します。フラット C export（`XRTrackedAnchor` レイアウトは実機確定）と同梱の `nr_spatial_anchor.aar` バックエンドで動き、6DoF が必須です。併せて `is_camera_supported()` と `is_hmd_feature_supported()`（SDK のデバイス別判定。Air 2 Ultra は RGB カメラ非搭載）も追加しています。 |
 | **オンスクリーンタッチコントローラ**（スマホ画面） | ✅（デモ） | アプリ層の Godot UI です（`demo/touch_controller.gd`）。カスタマイズ可能なタッチパッドとボタンがシグナルを出し、スマホ振動でハプティクスを返します。スマホにコントローラ、グラスに 3D を表示する画面分離の構成で、ネイティブには依存しません。SDK の `XREALVirtualController` に相当します。 |
 | **スマホ 3D ポインター**（ホスト IMU） | ✅（デモ） | スマホを傾けてグラス内に 3D レイを飛ばします（`demo/phone_pointer.gd`）。姿勢は `XrealSystem.poll_controller()` が露出する NRController の生 IMU（`accel` からピッチとロール、`gyro` からヨー）を GDScript で融合して作ります。本機では NRController の融合ポーズも Godot 内蔵の `Input.get_gyroscope()` も空だったためです。レイキャストで当たったオブジェクトをハイライトし、トリガーで選択します。オンスクリーンの左右手切替でレイの原点を切替え、gyro ドリフトはバイアス学習とデッドゾーンで抑えます。`recenter` で正面をリセットします。 |
 
 このほか画像トラッキング、マーカートラッキング、深度メッシュ、写真と合成のキャプチャ、FPV 配信も移植済みです。
 深度メッシュは SDK の頂点ごとの意味分類を保持し、グラスで保存したスキャンはエディタ dock で `ArrayMesh` や `.glb` に変換できます。
-一部は実機検証待ちで、状況は [`docs/plans/ar-features-plan.md`](docs/plans/ar-features-plan.md) にあります。
+一部は実機検証待ちです。
 
 ## インストール（プリビルト）
 
@@ -127,7 +128,7 @@ XrealBridge の Java ソースは、vendoring も事前コンパイルも要り�
 必要になるのは拡張を改造する場合だけで、多くのユーザーはプリビルトを使います。
 GDExtension 部分は素の godot-rust です。
 先に XREAL ネイティブライブラリの vendoring を済ませてからビルドします。
-コマンドの詳細（デスクトップ反復、手動の `cargo ndk` と Gradle、署名）は [`docs/guides/build-and-release.md`](docs/guides/build-and-release.md)。
+コマンドの詳細（デスクトップ反復、手動の `cargo ndk` と Gradle、署名）は、開発者向けドキュメント（目次 [`docs/develop/README.md`](docs/develop/README.md)）にあります。
 
 デスクトップエディタでライブラリ欠落エラーを出さずに開くには、クローン後に一度だけ何もしないスタブをビルドします。
 `pwsh scripts/build_dummy_libs.ps1`（または `./scripts/build_dummy_libs.sh`）を実行するだけで、必要なのは clang と lld のみ、どのホストからでも全デスクトップターゲットをクロスコンパイルできます。
@@ -147,7 +148,7 @@ GDExtension 部分は素の godot-rust です。
 ## 使い方
 
 1. アドオンを導入し（[プリビルト](#インストールプリビルト) か [ソースからビルド](#ビルドソースから)）、ライブラリを vendoring します。
-2. シーンに `XrealHeadTracker` ノードを追加し、その子に `Camera3D` を置きます。
+2. `addons/godot_xreal/xreal_rig.tscn`（`XrealHeadTracker` + 子 `Camera3D`）をシーンに配置します。`XrealHeadTracker` を追加して子に `Camera3D` を自分で置いても同じです。
 3. 実機では、カメラが頭の動きに追従します（6DoF の回転と位置）。
 4. PC で確認するときは `addons/godot_xreal/xreal_desktop_preview.tscn` も追加します。デスクトップ実行にはグラス向けの描画先が無いため、このコンポーネントが 2 枚目のウィンドウを開いてそこに 3D を描きます。右ドラッグで見回し、WASD で移動できます。実機では自分を破棄するので、そのまま残せます。操作の一覧は [アドオンの README](addons/godot_xreal/README.md#previewing-the-glasses-view-on-desktop) にあります。
 
@@ -165,7 +166,7 @@ XrealHeadTracker (Node3D)   # ネイティブのヘッドポーズで回転 + �
 | `is_tracking() -> bool` | 直前フレームでネイティブのポーズが適用されたか |
 | `recenter()` | 正面方向をリセットする（`RecenterGlasses`） |
 
-全クラスのリファレンス（メソッド、シグナル、プロパティ、定数、GDScript の機能コンポーネントも含む）は、doc コメントから生成した [クラスリファレンス](docs/api/README.md) にあります。
+全クラスのリファレンス（メソッド、シグナル、プロパティ、定数、GDScript の機能コンポーネントも含む）は、doc コメントから生成した [クラスリファレンス](docs/user/api/README.md) にあります。
 
 ## 機能ごとのセットアップ
 
@@ -268,19 +269,25 @@ pwsh scripts/stream_server/receive.ps1 -Record   # 同フォルダに .mkv で�
 `HWEncoderNotifyAudioData` はアプリ音声用ではなくマイク側のパイプラインに直結しているため、ネイティブのマイクと併用すると同一トラックに2つの producer が並びます。
 その結果、音声トラックは映像の 1.79 倍の長さになり、その 35% が無音になっていました。
 SDK が本来想定しているのは、上記の MediaProjection 経路です。
-詳細は [`docs/archive/codex-audio-mix-analysis.md`](docs/archive/codex-audio-mix-analysis.md)。
 
 ## 構成
 
 ```
 godot_xreal.gdextension  GDExtension マニフェスト（Android .so + デスクトップスタブ + dlopen 依存）
 addons/godot_xreal/      インストール可能なアドオン
-  plugin.cfg/.gd         EditorPlugin — エディタ dock も登録
+  plugin.cfg/.gd         EditorPlugin — プロジェクト設定とエディタ dock を登録
   export_plugin.gd       Android エクスポート: manifest・権限・.aar/assets ステージング
   xreal_rig.tscn         XrealHeadTracker + Camera3D リグ
+  xreal_desktop_preview.tscn/.gd   デスクトッププレビュー（実機では自分を破棄）
+  xreal_android_bridge.gd   XrealBridge Java ヘルパの起動役（PiP、Activity 取得）
+  features/              置くだけで動く機能コンポーネント: カメラ、平面、アンカー、
+                         画像トラッキング、深度メッシュ、ハンド、フォーカス平面、
+                         写真と合成のキャプチャ、配信、録画
+  shaders/               各コンポーネントが共有する YCbCr とカメラ+AR 合成シェーダー
   editor/                dock: vendor_import_dock.gd（SDK 取込）, image_db_dock.gd,
                          mesh_snapshot_dock.gd（深度メッシュのスキャン → ArrayMesh/.glb）
   android/               ブリッジ Java ソース（nr_plugins.json と .aar は vendoring・git 管理外）
+  tools/                 vendoring した trackableImageTools CLI（git 管理外）
   bin/                   ビルド済みライブラリ（git 管理外）: android/libgodot_xreal.so + デスクトップ dummy スタブ
 src/                     Rust GDExtension 本体
   lib.rs                 ExtensionLibrary エントリ
@@ -291,18 +298,25 @@ src/                     Rust GDExtension 本体
   system.rs              XrealSystem（RefCounted）+ XrealAR（Node — AR 変化シグナル）
   camera_feed.rs         XrealCameraFeed（CameraFeed）= RGB カメラ
   hand_tracking.rs       XrealHandTracker（Node）→ XRHandTracker
+  xr_interface.rs        XrealXrInterface（XRInterfaceExtension）= オプトインの Vulkan multiview
   depth_mesh.rs · metrics.rs · video_encoder.rs · controller_probe.rs
                          AR メッシュ · レンダーメトリクス · FPV H.264 配信 · スマホ IMU ポインタ
   gl.rs / unity_plugin.rs   GLES + Unity ネイティブプラグイン emulation（表示パス）
+  vk_bridge.rs / egl_context.rs   Vulkan グラスブリッジ（opaque-fd の VkImage → GL テクスチャ共有)
+                         + 専用 EGL コンテキスト。ahb_probe.rs はその stage-0 共有プローブ
   glasses_events.rs / native_error.rs   キャッシュ型イベント funnel
+  doc_gen.rs / api_docs.rs   doc 生成器（F1 スタブと docs/user/api）。ホストの cargo test で実行
 demo/                    AR デモ（main.tscn + 各 manager: hand/anchor/image/mesh/stream/
                          capture/blend + スマホタッチコントローラ）
-dummy/                   デスクトップ GDExtension スタブのソース（gdext_dummy.c）= ビルド先は addons/godot_xreal/bin/
+dummy/                   デスクトップ GDExtension スタブのソース（gdext_dummy.c + 生成物
+                         stub_*.inc: クラス一覧、メンバ、F1 doc）= ビルド先は addons/godot_xreal/bin/
 addons/godot_xreal/jniLibs/  vendoring した XREAL コア .so（git 管理外）
-scripts/                 build + vendor_xreal_libs + build_dummy_libs + build_image_db（.ps1/.sh）
+scripts/                 build + vendor_xreal_libs + build_dummy_libs + build_image_db
+                         + gen_stub_classes / gen_docs / gen_api_docs（.ps1/.sh の双子）
   stream_server/         FPV 受信サーバー: fpv_server.py（ブラウザ）+ receive.ps1/.sh（ffplay/録画）
 .github/workflows/       CI（fmt/clippy/test/build）+ Release（プリビルトアドオン）
-docs/                    guides / reference / plans / archive — 目次は docs/README.md
+docs/                    user/（生成クラスリファレンス api/ とその目次）と develop/（開発
+                         ドキュメント: guides / reference / plans / archive、目次は各 README）
 ```
 
 ## ライセンス

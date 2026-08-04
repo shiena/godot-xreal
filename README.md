@@ -18,9 +18,9 @@ The Unity SDK is a thin C# wrapper over Android `.so` libraries. Those libraries
 engine-agnostic C ABI (`libXREALNativeSessionManager.so` → `XREALGetHeadPoseAtTime`, …;
 `libXREALXRPlugin.so` → 274 exports including an OpenXR-style compositor layer API). So instead of
 translating C#, this extension `dlopen`s the libraries and feeds Godot directly. It avoids the
-obfuscated lower NRSDK proc table (`libnr_api.so` / `NRGetProcAddr`). ABI derivation:
-[`docs/reference/reverse-engineering.md`](docs/reference/reverse-engineering.md); the RE'd functions and their
-GDScript surface: [`docs/reference/native-api-reference.md`](docs/reference/native-api-reference.md).
+obfuscated lower NRSDK proc table (`libnr_api.so` / `NRGetProcAddr`). How the ABI was derived, and
+the full list of RE'd functions, are in the developer docs, indexed at
+[`docs/develop/README.md`](docs/develop/README.md).
 
 ## Platform
 
@@ -32,25 +32,27 @@ for scene editing, but head tracking stays inert.
 
 Verified on the XREAL One Pro (rows marked "Air 2 Ultra" on the XREAL Air 2 Ultra) with the
 XREAL SDK for Unity 3.1.0 native libraries. Everything below is community-reverse-engineered interop, not an official API.
+The design notes and measurements behind each row live in the developer docs, indexed at
+[`docs/develop/README.md`](docs/develop/README.md).
 
 | Feature | Status | Notes |
 |---|---|---|
 | **Head tracking** (6DoF: rotation and position world-lock) | ✅ | The XR-plugin display pose, full orientation and translation, drives the eye cameras. |
 | **Tracking mode** 6DoF / 3DoF / 0DoF | ✅ | Select it with `xreal/tracking_type`, `XrealSystem.set_tracking_type`, or `debug.xreal.tracking_type`. |
 | **Stereo glasses display** (head-locked peek window) | ✅ | World-locked 3D through the glasses. Multipass, both eyes, is the default. |
-| **Multiview** stereo (single-pass-instanced) | ✅ works, but no performance gain | Renders both eyes correctly (opt-in: `setprop debug.xreal.stereo_mode 2`), yet **costs exactly what Multipass costs**. Our rig draws two Godot SubViewports (two passes), then copies each into an array layer with one direct `glCopyImageSubData` per eye, identical to the Multipass copy. The single-pass-instanced win arrives only when the *engine* draws both eyes in one multiview pass, which Godot's Compatibility SubViewport rig does not. Multipass therefore stays the default. See [`docs/archive/multiview-investigation.md`](docs/archive/multiview-investigation.md). |
-| **Vulkan Mobile renderer** (experimental) | ✅ device-verified, opt-in | A second export preset, "Android Vulkan", runs the whole port on Godot's Forward Mobile Vulkan renderer and installs alongside the shipping Compatibility build. Glasses rendering, the RGB camera, and FPV streaming and recording all work on device, matching the Compatibility build's colors. Glasses default to a tear-free `vkQueueWaitIdle` sync at about 52 FPS; the faster pipelined mode reaches 58-60 FPS but shears the lower part of the view under fast head motion, because the SDK compositor reprojects the eye image with no GPU fence against our Vulkan-to-GL copy. `debug.xreal.vk_sync 1` opts into 58-60 FPS with that tear, and the tear-free-at-60 fix needs a Vulkan device extension Godot does not enable. Each eye and each encoder frame crosses from Vulkan to the SDK's GL compositor through a self-allocated `VkImage` shared as an opaque-fd GL texture, so the compositor still receives plain GL texture names. It unlocks `RenderingDevice` and GPU compute, which the Compatibility renderer lacks, and unifies the render path with Android XR and Project Aura. It stays behind `debug.xreal.vulkan_glasses` while a thermal soak finishes, so Compatibility remains the default. See [`docs/plans/vulkan-path-plan.md`](docs/plans/vulkan-path-plan.md). |
+| **Multiview** stereo (single-pass-instanced) | ✅ opt-in; gains depend on content | Multipass stays the default on both renderers. On the Compatibility (GL) renderer (`setprop debug.xreal.stereo_mode 2`) both eyes render correctly but **cost exactly what Multipass costs**: the rig still draws two SubViewports and copies each into an array layer, so nothing is saved. The Vulkan Mobile renderer has true single-pass multiview: enable the `xreal/xr_multiview_poc` project setting (or `setprop debug.xreal.xr_multiview 1`) and a custom `XRInterfaceExtension` has Godot render both eyes in one scene pass into a two-layer target. On device it halves draw calls: a draw-call-bound scene ran 5.9% faster and a 100k-splat 3DGS scene slightly faster, while a GPU-bound scene ran 13% slower on the Adreno 710. It needs `xr/shaders/enabled=true` and XR Mode `OpenXR` on the export preset; the [addon README](addons/godot_xreal/README.md#project-settings) covers the setup. |
+| **Vulkan Mobile renderer** (experimental) | ✅ device-verified, opt-in | A second export preset, "Android Vulkan", runs the whole port on Godot's Forward Mobile Vulkan renderer and installs alongside the shipping Compatibility build. Glasses rendering, the RGB camera, and FPV streaming and recording all work on device, matching the Compatibility build's colors. Glasses default to a tear-free `vkQueueWaitIdle` sync at about 52 FPS; the faster pipelined mode reaches 58-60 FPS but shears the lower part of the view under fast head motion, because the SDK compositor reprojects the eye image with no GPU fence against our Vulkan-to-GL copy. `debug.xreal.vk_sync 1` opts into 58-60 FPS with that tear, and the tear-free-at-60 fix needs a Vulkan device extension Godot does not enable. Each eye and each encoder frame crosses from Vulkan to the SDK's GL compositor through a self-allocated `VkImage` shared as an opaque-fd GL texture, so the compositor still receives plain GL texture names. It unlocks `RenderingDevice` and GPU compute, which the Compatibility renderer lacks, and unifies the render path with Android XR and Project Aura. It stays behind `debug.xreal.vulkan_glasses` while a thermal soak finishes, so Compatibility remains the default. |
 | **Recenter** | ✅ | Resets the forward direction (SDK `NativePerception::Recenter`). |
-| **Render metrics** (present FPS, dropped, early, latency) | ✅ | Live compositor stats from the `NRMetrics*` API, queried directly rather than through the Unity `UpdateMetrics` sink. Read them on `XrealSystem` with `get_present_fps()`, `get_dropped_frame_count()`, and friends. See [`docs/plans/render-metrics-gdscript-plan.md`](docs/plans/render-metrics-gdscript-plan.md). |
+| **Render metrics** (present FPS, dropped, early, latency) | ✅ | Live compositor stats from the `NRMetrics*` API, queried directly rather than through the Unity `UpdateMetrics` sink. Read them on `XrealSystem` with `get_present_fps()`, `get_dropped_frame_count()`, and friends. |
 | **Focus plane** (compositor reprojection) | ✅ device verification pending | Before every VSync the compositor warps the last frame onto the newest head pose, against a single plane the SDK pins at 1.4 m. Content far from that plane smears and doubles. `XrealSystem.set_focus_plane()` moves it per frame in head-local space, and the `XrealFocusPlane` component drives it from a forward raycast, as the SDK's `FocusManager` does. The `SetFocusPlane` export takes two by-value `UnityXRVector3`s, point and normal, where Unity's own wrapper takes a third velocity it drops before this point. |
 | **Glasses input** (physical keys MENU/MULTI: click, double, long) | ✅ | Godot signals `key_event` and `key_state_changed`. |
 | **Wear sensor, brightness, volume, electrochromic, USB hot-plug** | ✅ | Signals `wearing_changed`, `brightness_changed`, `glasses_connected`, and the rest. |
 | **Diagnostics** (session and tracking state, HMD clock, plugin version) | ✅ | Read from `XrealSystem`. |
-| **Multi-resume** (the glasses app keeps running and rendering when the phone switches apps) | ✅ | Where the Unity SDK uses a floating return window, this port enters Picture-in-Picture automatically. Backgrounding drops the app to a small phone tile, paused but visible, so Godot's GL thread and Surface stay alive and the glasses keep showing live frames; tapping the tile returns to fullscreen. `XrealBridge.enableAutoEnterPiP` drives it from `demo/main.gd`, with manifest scaffolding `nr_features=multiResume` and `NRFakeActivity`. On device, the render submit counter keeps advancing past background. For why PiP beats the floating window, a foreground service, or a SurfaceView reparent, see `docs/plans/background-render-plan.md`. |
+| **Multi-resume** (the glasses app keeps running and rendering when the phone switches apps) | ✅ | Where the Unity SDK uses a floating return window, this port enters Picture-in-Picture automatically. Backgrounding drops the app to a small phone tile, paused but visible, so Godot's GL thread and Surface stay alive and the glasses keep showing live frames; tapping the tile returns to fullscreen. `XrealBridge.enableAutoEnterPiP` drives it from `demo/main.gd`, with manifest scaffolding `nr_features=multiResume` and `NRFakeActivity`. On device, the render submit counter keeps advancing past background. PiP won the design comparison against a floating window, a foreground service, and a SurfaceView reparent. |
 | **Capture audio** (microphone and app audio) | ✅ | Recordings and FPV streams can carry both, and the SDK's encoder captures and mixes them natively; Godot's own mixer stays out of the path. Set the capture component's `audio_state`. The mic needs `RECORD_AUDIO`. App ("internal") audio needs an Android MediaProjection, because `addInternalAudio` makes the encoder open its own `AudioPlaybackCapture`: a screen-capture consent dialog appears on the first capture that asks for it, and that capture records mic-only while the next has both. For the DSP the mic goes through, see the [audio note](#note-what-the-microphone-does-and-does-not-pick-up) below. |
 | **RGB camera** as a Godot `CameraFeed` | ✅ (One series) | Full colour, shown in-scene on a head-locked quad. Runs alongside 6DoF, since SLAM uses the separate grayscale cameras. |
-| **Hand tracking** (26 joints, both hands) → Godot `XRHandTracker` | ✅ (Air 2 Ultra) | Live hand joints feed two `XRServer` hand trackers (`/user/hand_tracker/{left,right}`), and the demo draws world-locked joint spheres. The One Pro lacks the outward cameras and answers `IsHandTrackingSupported()==false`, so this needs an Air 2 Ultra. The internal `SetHandTrackingEnabled` plus `input_source=3` turns it on. See [`docs/plans/hand-tracking-plan.md`](docs/plans/hand-tracking-plan.md). |
-| **Plane detection** → GDScript | ✅ (Air 2 Ultra) | Horizontal and vertical plane detection through `XrealSystem.set_plane_detection_mode()` and `poll_planes()`, which reports added, updated, and removed planes with pose, size, and alignment, plus `get_plane_boundary()`. Flat C exports in `libXREALXRPlugin.so` carry it, so it needs no extra AAR, but it does need 6DoF. All four AR features' C ABI is RE-confirmed: see [`docs/plans/ar-features-plan.md`](docs/plans/ar-features-plan.md). |
+| **Hand tracking** (26 joints, both hands) → Godot `XRHandTracker` | ✅ (Air 2 Ultra) | Live hand joints feed two `XRServer` hand trackers (`/user/hand_tracker/{left,right}`), and the demo draws world-locked joint spheres. The One Pro lacks the outward cameras and answers `IsHandTrackingSupported()==false`, so this needs an Air 2 Ultra. The internal `SetHandTrackingEnabled` plus `input_source=3` turns it on. |
+| **Plane detection** → GDScript | ✅ (Air 2 Ultra) | Horizontal and vertical plane detection through `XrealSystem.set_plane_detection_mode()` and `poll_planes()`, which reports added, updated, and removed planes with pose, size, and alignment, plus `get_plane_boundary()`. Flat C exports in `libXREALXRPlugin.so` carry it, so it needs no extra AAR, but it does need 6DoF. All four AR features' C ABI is RE-confirmed. |
 | **Spatial anchors** → GDScript | ✅ (Air 2 Ultra) | Create, persist, and restore world anchors with `XrealSystem.acquire_anchor()`, `poll_anchors()`, `save_anchor()`, `load_anchor()`, `estimate_anchor_quality()`, and the rest. Flat C exports (the `XRTrackedAnchor` layout is device-confirmed) sit on the vendored `nr_spatial_anchor.aar` backend, and 6DoF is required. This also adds the SDK's per-device gate, `is_camera_supported()` and `is_hmd_feature_supported()`, since the Air 2 Ultra has no RGB camera. |
 | **On-screen touch controller** (phone screen) | ✅ (demo) | App-level Godot UI (`demo/touch_controller.gd`): a customizable touchpad and buttons emit signals, and the phone vibrates for haptics. The phone shows the controller while the glasses show the 3D scene, on separate screens, with no native dependency. It is the Godot analog of the SDK's `XREALVirtualController`. |
 | **Phone 3D pointer** (host IMU) | ✅ (demo) | Tilt the phone to aim a 3D ray in the glasses (`demo/phone_pointer.gd`). GDScript fuses the orientation from the NRController's raw IMU (`accel` for pitch and roll, `gyro` for yaw) exposed by `XrealSystem.poll_controller()`, because the NRController *fused pose* and Godot's own `Input.get_gyroscope()` both read empty on this host. The ray highlights what it hits and the trigger selects it; an on-screen left/right-hand toggle switches the beam origin; bias-learning and a deadzone damp the gyro drift. `recenter` sets forward. |
@@ -58,7 +60,7 @@ XREAL SDK for Unity 3.1.0 native libraries. Everything below is community-revers
 Also ported: image tracking, marker tracking, depth meshing, photo and blended capture, and FPV
 streaming. Depth meshing carries the SDK's per-vertex semantic classification, and a scan saved on
 the glasses becomes an `ArrayMesh` or a `.glb` through an editor dock. Device verification is still
-pending for some; see [`docs/plans/ar-features-plan.md`](docs/plans/ar-features-plan.md).
+pending for some.
 
 ## Install (prebuilt)
 
@@ -133,9 +135,9 @@ extension ignores the QNN/SNPE libs inside `nr_common.aar`, but they ride into t
 ## Build (from source)
 
 You need this only to modify the extension; most users install a prebuilt release (above). The
-GDExtension is plain godot-rust: vendor the XREAL libraries first (above), then build. For the full
-command reference (desktop iteration, manual `cargo ndk` and Gradle steps, signing), see
-[`docs/guides/build-and-release.md`](docs/guides/build-and-release.md).
+GDExtension is plain godot-rust: vendor the XREAL libraries first (above), then build. The full
+command reference (desktop iteration, manual `cargo ndk` and Gradle steps, signing) is in the
+developer docs, indexed at [`docs/develop/README.md`](docs/develop/README.md).
 
 To open the project in a desktop editor without a missing-library error, build the do-nothing desktop
 stubs once after cloning: `pwsh scripts/build_dummy_libs.ps1` (or `./scripts/build_dummy_libs.sh`). It
@@ -179,9 +181,9 @@ XrealHeadTracker (Node3D)   # rotation + position driven by the native head pose
 
 ### Runtime classes (registered by the GDExtension)
 
-The highlights are below. The [full class reference](docs/api/README.md) covers every class, method,
+The highlights are below. The [full class reference](docs/user/api/README.md) covers every class, method,
 signal, property, and constant, including the GDScript feature components; it is generated from the
-doc comments and lives in [`docs/api/`](docs/api/README.md).
+doc comments and lives in [`docs/user/api/`](docs/user/api/README.md).
 
 | Class | Member | Description |
 |---|---|---|
@@ -313,20 +315,25 @@ Historical note: earlier versions fed app audio in from Godot's mixer through `A
 limitation. That was wrong on both counts. `HWEncoderNotifyAudioData` feeds the *microphone* pipeline
 rather than an app-audio one, so enabling it alongside the native mic produced two rival producers on
 one track: an audio track 1.79× the video's length, 35 % of it silence. The SDK intends the
-MediaProjection path above. See
-[`docs/archive/codex-audio-mix-analysis.md`](docs/archive/codex-audio-mix-analysis.md).
+MediaProjection path above.
 
 ## Layout
 
 ```
 godot_xreal.gdextension  GDExtension manifest (Android .so + desktop stubs + dlopen deps)
 addons/godot_xreal/      the installable addon
-  plugin.cfg/.gd         EditorPlugin — also registers the editor docks
+  plugin.cfg/.gd         EditorPlugin — project settings + editor docks
   export_plugin.gd       Android export: manifest, permissions, .aar/assets staging
   xreal_rig.tscn         XrealHeadTracker + Camera3D rig
+  xreal_desktop_preview.tscn/.gd   desktop preview window (frees itself on device)
+  xreal_android_bridge.gd   bootstrap for the XrealBridge Java helper (PiP, activity access)
+  features/              drop-in feature components: camera, planes, anchors, image tracking,
+                         depth mesh, hands, focus plane, photo/blend capture, stream, recorder
+  shaders/               YCbCr and camera+AR blend shaders the components share
   editor/                docks: vendor_import_dock.gd (SDK import), image_db_dock.gd,
                          mesh_snapshot_dock.gd (depth-mesh scan -> ArrayMesh/.glb)
   android/               bridge Java source (nr_plugins.json + .aar vendored, git-ignored)
+  tools/                 vendored trackableImageTools CLI (git-ignored)
   bin/                   built libs (git-ignored): android/libgodot_xreal.so + desktop dummy stubs
 src/                     the Rust GDExtension
   lib.rs                 ExtensionLibrary entry
@@ -337,18 +344,25 @@ src/                     the Rust GDExtension
   system.rs              XrealSystem (RefCounted) + XrealAR (Node — AR-change signals)
   camera_feed.rs         XrealCameraFeed (CameraFeed) — RGB camera
   hand_tracking.rs       XrealHandTracker (Node) → XRHandTracker
+  xr_interface.rs        XrealXrInterface (XRInterfaceExtension) — opt-in Vulkan multiview
   depth_mesh.rs · metrics.rs · video_encoder.rs · controller_probe.rs
                          AR mesh · render metrics · FPV H.264 streaming · phone-IMU pointer
   gl.rs / unity_plugin.rs   GLES + Unity native-plugin emulation (display path)
+  vk_bridge.rs / egl_context.rs   Vulkan glasses bridge (opaque-fd VkImage → GL texture)
+                         + its private EGL context; ahb_probe.rs is the stage-0 share probe
   glasses_events.rs / native_error.rs   cached event funnels
+  doc_gen.rs / api_docs.rs   doc generators (F1 stubs + docs/user/api), run as host cargo tests
 demo/                    AR demo (main.tscn + managers: hand/anchor/image/mesh/stream/
                          capture/blend + phone touch controller)
-dummy/                   desktop GDExtension stub source (gdext_dummy.c) — built into addons/godot_xreal/bin/
+dummy/                   desktop GDExtension stub source (gdext_dummy.c + generated
+                         stub_*.inc: class list, members, F1 docs) — built into addons/godot_xreal/bin/
 addons/godot_xreal/jniLibs/  vendored XREAL core .so (git-ignored)
-scripts/                 build + vendor_xreal_libs + build_dummy_libs + build_image_db (.ps1/.sh)
+scripts/                 build + vendor_xreal_libs + build_dummy_libs + build_image_db
+                         + gen_stub_classes / gen_docs / gen_api_docs (.ps1/.sh twins)
   stream_server/         FPV receivers: fpv_server.py (browser) + receive.ps1/.sh (ffplay/record)
 .github/workflows/       CI (fmt/clippy/test/build) + Release (prebuilt addon)
-docs/                    guides / reference / plans / archive — see docs/README.md for the index
+docs/                    user/ (the generated class reference api/ and its index) and develop/
+                         (developer docs: guides / reference / plans / archive; each has a README)
 ```
 
 ## License

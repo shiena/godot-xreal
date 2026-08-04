@@ -138,7 +138,7 @@ func set_enabled(on: bool) -> void:
 	# App audio is captured natively too, but only through an Android MediaProjection. Consent is a
 	# system dialog and therefore asynchronous, so the first capture that wants app audio triggers it
 	# and records microphone-only, and the next one has both. Passing the flag without a projection
-	# would only enable an empty AAC path (docs/archive/codex-audio-mix-analysis.md), so it is dropped
+	# would only enable an empty AAC path (docs/develop/archive/codex-audio-mix-analysis.md), so it is dropped
 	# here.
 	var want_app := XrealShared.audio_wants_app(audio_state)
 	if want_app and not XrealShared.is_app_audio_ready():

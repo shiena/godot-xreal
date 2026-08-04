@@ -71,7 +71,7 @@ func _get_android_manifest_application_element_contents(_platform: EditorExportP
 
 ## The local .aar the plugin ships, the XREAL and NR runtime archives. nr_spatial_anchor and
 ## nr_image_tracking carry the libnr_spatial_anchor.so and libnr_image_tracking.so backends for the
-## anchor and image-tracking C ABIs; see docs/plans/ar-features-plan.md.
+## anchor and image-tracking C ABIs; see docs/develop/plans/ar-features-plan.md.
 func _get_android_libraries(_platform: EditorExportPlatform, _debug: bool) -> PackedStringArray:
 	return PackedStringArray([
 		ANDROID_DIR + "nr_loader.aar",

@@ -238,7 +238,7 @@ jobs:
              **XREAL Import** editor dock: pick `com.xreal.xr(.tgz|.tar.gz)`. Pin the SDK to the version
              these offsets were built against (**com.xreal.xr 3.1.0**).
           4. Android export: *Use Gradle Build* ON, Min SDK 29, Architectures arm64-v8a, renderer
-             Compatibility (GLES3). See docs/guides/android-setup.md.
+             Compatibility (GLES3). Details are in the developer docs, indexed at docs/develop/README.md.
           EOF
           zip -r "${NAME}.zip" "${NAME}"
           echo "ARCHIVE=${NAME}.zip" >> $GITHUB_ENV
@@ -258,7 +258,7 @@ jobs:
           cp project.godot export_presets.cfg "${NAME}/"
           cp -r demo "${NAME}/"
           cp -r scripts/stream_server "${NAME}/scripts/"   # FPV receivers, run on the PC not in Godot
-          cp -r docs/api "${NAME}/docs/"                   # generated class reference
+          cp -r docs/user/api "${NAME}/docs/"                   # generated class reference
           cat > "${NAME}/README.md" <<'EOF'
           # Godot XREAL: demo project
 
@@ -286,7 +286,7 @@ jobs:
             the AR scene and one instance of every feature component.
           - `scripts/stream_server/` the FPV receivers. They run on a PC, not inside Godot: start one
             before pressing Stream in the app. See the README in that folder.
-          - `docs/api/` every class the addon exposes to GDScript, one page each.
+          - `docs/user/api/` every class the addon exposes to GDScript, one page each.
 
           Image tracking is the one feature that needs a build step: it wants a compiled
           reference-image database, which is SDK-derived and so absent here. Build one with the

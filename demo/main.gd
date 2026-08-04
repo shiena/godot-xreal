@@ -44,7 +44,7 @@ var _tracker: Node3D
 var _system: Object
 var _extension_loaded := false
 # One-shot AR-feature availability diagnostic: logs which native AR ABIs resolved on this device,
-# a short delay after boot (so the session has come up). See docs/plans/ar-features-plan.md.
+# a short delay after boot (so the session has come up). See docs/develop/plans/ar-features-plan.md.
 var _ar_diag_frames := 0
 # Phase C path B: phone IMU (via NRController state) drives the 3D pointer (_ar.phone_pointer).
 var _controller_started := false

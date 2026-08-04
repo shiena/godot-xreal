@@ -1,6 +1,6 @@
 //! Minimal GLES3 binding for the XREAL display path.
 //!
-//! `libXREALXRPlugin.so`'s display provider (see `docs/plans/frame-submission-plan.md`) asks the
+//! `libXREALXRPlugin.so`'s display provider (see `docs/develop/plans/frame-submission-plan.md`) asks the
 //! engine to allocate its render textures through `IUnityXRDisplay::CreateTexture`. This module
 //! is that engine side: it `dlopen`s `libGLESv3.so` and exposes just enough GL to allocate a
 //! texture and copy pixels into it.
@@ -255,7 +255,7 @@ pub fn has_current_context() -> Option<bool> {
 /// The GL glasses display path hands eye SubViewport textures to the SDK compositor as client GL
 /// texture names, which requires Godot itself to own an EGL context. Under the Vulkan renderers
 /// (Forward+ / Mobile) that context does not exist, so this GL path is skipped; the vk_bridge (an
-/// opaque-fd VkImage shared into a private EGL context; see `docs/plans/vulkan-path-plan.md`)
+/// opaque-fd VkImage shared into a private EGL context; see `docs/develop/plans/vulkan-path-plan.md`)
 /// renders the glasses instead when `debug.xreal.vulkan_glasses=1`, otherwise phone display and
 /// tracking only. Head tracking, the SDK session and the phone display stay renderer-independent.
 pub fn renderer_is_gl() -> bool {
@@ -404,7 +404,7 @@ unsafe fn scratch_fbo(g: &Gl, slot: usize) -> u32 {
 /// `GL_SRGB8_ALPHA8`, the same bytes but sRGB-typed, came out about 26% too dark, because the
 /// compositor applies a sample-time sRGB-to-linear decode. Unity's port uses an sRGB-typed target
 /// because it renders in *linear* space, whereas our display-ready values must not be decoded. See
-/// `docs/archive/multiview-investigation.md`, the 2026-07-17 color-space test.
+/// `docs/develop/archive/multiview-investigation.md`, the 2026-07-17 color-space test.
 ///
 /// **`GL_RGB10_A2`**, a UNORM format like the previous `GL_RGBA8`, deliberately matches Godot's
 /// `gl_compatibility` 3D render-target format, probed as `0x8059` on device 2026-07-21; see
@@ -474,7 +474,7 @@ pub fn alloc_texture(width: i32, height: i32, _srgb: bool) -> Option<u32> {
 /// still presents black on the right, with a screencap right stddev of 0.0. Immutable storage is
 /// therefore not the blocker, and the wall is inside libnr_api. The change stays dormant, since
 /// Multiview is opt-in and shelved, as a faithful Unity match. See
-/// `docs/archive/multiview-investigation.md`, 2026-07-17. The mutable path is the fallback for GL
+/// `docs/develop/archive/multiview-investigation.md`, 2026-07-17. The mutable path is the fallback for GL
 /// implementations lacking immutable storage.
 pub fn alloc_texture_array(width: i32, height: i32, layers: i32, _srgb: bool) -> Option<u32> {
     let g = gl()?;

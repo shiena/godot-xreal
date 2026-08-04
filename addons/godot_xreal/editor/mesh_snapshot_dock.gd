@@ -396,7 +396,7 @@ static func _from_base64(encoded: String) -> PackedByteArray:
 ##
 ## A snapshot is written in the RUNTIME's space, not a canonical Godot one: the port's eye
 ## SubViewports render with an inverted Y, and the whole conversion chain compensates by negating Y
-## on top of the canonical Unity(LH) -> Godot(RH) negate-Z (see docs/plans/coordinate-systems-notes.md
+## on top of the canonical Unity(LH) -> Godot(RH) negate-Z (see docs/develop/plans/coordinate-systems-notes.md
 ## and mesh_block_to_dict in src/system.rs). That is a mirror, so what looks right through the
 ## glasses opens upside down and left-right swapped anywhere else: in this editor's viewport, in a
 ## .glb in Blender, or against physics. Negating Y here undoes it, which is device-verified against a

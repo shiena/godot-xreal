@@ -15,7 +15,7 @@
 //! The struct layouts and the graphics GUID and enum constants come from Unity's PUBLIC PluginAPI
 //! headers, `IUnityInterface.h` and `IUnityGraphics.h`. The XR GUIDs and provider layouts are
 //! **RE'd and unverified**, recovered from `libXREALXRPlugin.so` AArch64 disassembly and its
-//! relocation tables; see `docs/reference/reverse-engineering.md`.
+//! relocation tables; see `docs/develop/reference/reverse-engineering.md`.
 
 // It retains the RE'd Unity provider layouts and the shelved texture-provider experiment for
 // reference, both unused on the active path, and desktop never drives this path at all. Allow
@@ -129,7 +129,7 @@ struct RegisteredGfxThreadProvider {
 
 /// `IUnityXRDisplayInterface`, from the Unity XR SDK's `IUnityXRDisplay.h`. Disassembly of the
 /// `DisplayManager` wrappers that call each slot confirms the slot order; see
-/// `docs/plans/frame-submission-plan.md`. The SDK reaches through +0x18, +0x20 and +0x28 to make
+/// `docs/develop/plans/frame-submission-plan.md`. The SDK reaches through +0x18, +0x20 and +0x28 to make
 /// the engine allocate, query and free its render textures, and the earlier 3-member struct was
 /// truncated there.
 #[repr(C)]
@@ -189,7 +189,7 @@ struct XrTexture {
     /// The `color_format` and `flags` the SDK passed to `CreateTexture`. `QueryTextureDesc` has to echo
     /// them back, especially for the Multiview 2-layer array: reporting a 1-layer, flags-0 descriptor
     /// for a 2-layer object mis-registers the NR swapchain, so layer 1 never gets our content and the
-    /// right eye shows a fixed cleared gray. See docs/archive/codex-righteye-analysis.md.
+    /// right eye shows a fixed cleared gray. See docs/develop/archive/codex-righteye-analysis.md.
     color_format: u32,
     flags: u32,
     /// Whether WE allocated `gl_id`, which is the engine-allocated GLES path with `desc.color == 0`,
@@ -309,7 +309,7 @@ struct UnityXrVector4 {
 
 /// `IUnityXRInputInterface` (Unity XR SDK `IUnityXRInput.h`), full table through +0xd8.
 ///
-/// The RE, in docs/archive/codex-6dof-crash-analysis.md: `InputManager::UpdateHMDState`
+/// The RE, in docs/develop/archive/codex-6dof-crash-analysis.md: `InputManager::UpdateHMDState`
 /// unconditionally calls `DeviceState_Set{Binary,DiscreteState,Axis3D,Rotation}Value` through slots
 /// +0x90, +0x98, +0xb0 and +0xb8 on BOTH updateType paths, and `FillHMDDefinition` uses +0x40,
 /// +0x48, +0x50 and +0x78. With the earlier 3-slot table those `ldr [table,#slot]` loads read
@@ -692,7 +692,7 @@ pub fn call_input_update_hmd() -> i32 {
     let mut buf = [0u8; 1024];
     let state = buf.as_mut_ptr() as *mut c_void;
     // deviceId 0 is the HMD. Both update types are needed each frame. Per the RE in
-    // docs/archive/codex-6dof-crash-analysis.md and codex-headlock-analysis.md, UpdateHMDState
+    // docs/develop/archive/codex-6dof-crash-analysis.md and codex-headlock-analysis.md, UpdateHMDState
     // @0x7aa3c splits on `cmp w1,#1` @0x7aa68:
     //  - updateType 0 (Dynamic) uniquely stores the live 7-float head pose at InputManager+0x60
     //    (the `stp` sequence @0x7acec..0x7acf8), the pose basis that keeps POSITION world-locked
@@ -1606,7 +1606,7 @@ fn run_frame_tick_with(backend: FillBackend) {
     // Multiview is ONE render pass with TWO renderParams (not two passes). The RIGHT eye's
     // renderParams[1] lives at desc+0x80 (EyeProj base 0x78), NOT renderPasses[1] (desc+0xfc, which
     // is 0 here). Reading eye 1 from desc+0xfc gave the right eye a garbage/degenerate frustum → the
-    // right SubViewport rendered black → right-eye-black. See docs/archive/codex-righteye-analysis.md.
+    // right SubViewport rendered black → right-eye-black. See docs/develop/archive/codex-righteye-analysis.md.
     let multiview = pass_count == 1 && rp0_count >= 2 && tex_ids[0] != 0 && tex_ids[1] == 0;
 
     // Each renderParams block carries the SDK's per-eye projection (half-angle tangents at

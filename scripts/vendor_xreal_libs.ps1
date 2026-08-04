@@ -22,7 +22,7 @@
 
     Nothing is downloaded: you supply a local copy of the package. nractivitylife*.aar is
     DELIBERATELY EXCLUDED: its NRXRActivity/NRXRApp launcher is Unity-specific (instantiates
-    com.unity3d.player.UnityPlayer) and must not ship in a Godot app. See docs/guides/android-setup.md.
+    com.unity3d.player.UnityPlayer) and must not ship in a Godot app. See docs/develop/guides/android-setup.md.
 
 .PARAMETER XrealPackage
     Either the Unity package root (the folder containing Runtime/Plugins/Android) or the
@@ -118,7 +118,7 @@ try {
     }
 
     # libmedia_codec.so lives under the Camera Features plugin path; it is the FPV HW encoder, see
-    # docs/plans/fpv-streaming-plan.md. Copy it into jniLibs too, where godot_xreal.gdextension
+    # docs/develop/plans/fpv-streaming-plan.md. Copy it into jniLibs too, where godot_xreal.gdextension
     # lists it.
     $mediaCodecSrc = Join-Path $XrealPackage 'Runtime/Scripts/Android/Camera Features/Plugins/Android/arm64/libmedia_codec.so'
     if (Test-Path $mediaCodecSrc) {
@@ -169,7 +169,7 @@ try {
 
     # --- 3) Host build tool -> addons/godot_xreal/tools/ (NOT shipped in the APK): trackableImageTools
     #        generates the image-tracking reference-image DB blob from PNGs at build time (see
-    #        docs/plans/ar-features-plan.md).
+    #        docs/develop/plans/ar-features-plan.md).
     $toolsDir = Join-Path $repo 'addons/godot_xreal/tools'
     New-Item -ItemType Directory -Force -Path $toolsDir | Out-Null
     $toolSrc = Join-Path $XrealPackage 'Tools~/Windows/trackableImageTools.exe'

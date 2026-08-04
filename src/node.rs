@@ -393,7 +393,7 @@ impl INode3D for XrealHeadTracker {
         // Primary path: drive the eye cameras from the **display** InputManager pose, the exact pose the
         // compositor reprojects the glasses layer against. It carries the full orientation, ROLL
         // included, which the compact session-manager NrPose lacks; see
-        // docs/archive/roll-tracking-investigation.md. Sharing one pose between our render and the
+        // docs/develop/archive/roll-tracking-investigation.md. Sharing one pose between our render and the
         // compositor is what makes the peek window correct on every axis.
         // CRASH RULE, device-confirmed: never query BOTH head_pose_display() and head_pose() in the same
         // frame, or the app takes a SIGSEGV at 0x3f800000. The session-manager read is therefore a
@@ -417,7 +417,7 @@ impl INode3D for XrealHeadTracker {
                     // same NRSDK-to-Godot Y-flip as the rotation. It is in metres, 1:1 with Godot. The position only
                     // world-locks because the per-frame updateType-0 UpdateHMDState call keeps the SDK's dynamic pose
                     // cache at InputManager+0x60 live; without it the compositor cancels the translation
-                    // (device-verified 2026-07-18, see docs/archive/codex-6dof-crash-analysis.md).
+                    // (device-verified 2026-07-18, see docs/develop/archive/codex-6dof-crash-analysis.md).
                     self.base_mut()
                         .set_position(Vector3::new(raw[12], -raw[13], raw[14]));
                     let euler = rotation.get_euler() * (180.0 / std::f32::consts::PI);
@@ -1138,7 +1138,7 @@ impl XrealHeadTracker {
 
     /// Catch-all for every native glasses event, including the types without a dedicated signal, such
     /// as temperature, screen on and off, and the disconnect reason. The values are the raw
-    /// `GlassesEventData` fields; see `XREALActionType` in `docs/plans/input-plan.md`.
+    /// `GlassesEventData` fields; see `XREALActionType` in `docs/develop/plans/input-plan.md`.
     #[signal]
     fn glasses_event(action_type: i64, para: i64, para2: i64, para3: f64);
 

@@ -3,7 +3,7 @@
 //! `InitUserDefinedSettings` needs the host `Activity` as a JNI `jobject`, which the Unity SDK
 //! calls `unityActivity`. On Android we read it from the process-wide [`ndk_context`]. When
 //! nothing has published a context yet, [`activity_ptr`] returns `None` and the session bootstrap
-//! reports "no Android Activity" (see `docs/plans/port-plan.md`).
+//! reports "no Android Activity" (see `docs/develop/plans/port-plan.md`).
 //!
 //! **Device-confirmed:** Godot does NOT populate `ndk_context`, because it uses its own Java and
 //! native bridge rather than the `ndk-context` or `android-activity` crates, so
@@ -84,7 +84,7 @@ pub extern "system" fn Java_com_godot_game_XrealBridge_nativeRegisterActivity<'l
 /// `HWEncoderSetMediaProjection` wants exactly this, and the SDK's C# passes
 /// `AndroidJavaObject.GetRawObject()`. A null projection is not a neutral value: reverse
 /// engineering showed `addInternalAudio:true` builds an `AudioPlaybackCaptureConfiguration` from
-/// it (see `docs/archive/codex-audio-mix-analysis.md`), so a null one leaves app-audio capture
+/// it (see `docs/develop/archive/codex-audio-mix-analysis.md`), so a null one leaves app-audio capture
 /// unstarted and the encoder's mixer with nothing to add to the microphone.
 ///
 /// It is backed by a global ref we own (see [`MEDIA_PROJECTION_OWNER`]), because Java-side
