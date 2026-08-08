@@ -488,7 +488,7 @@ pub fn interleave_cbcr_rgba(u: &[u8], v: &[u8], width: i32, height: i32, out: &m
 }
 
 /// Per-stage cost of one grab, in microseconds, so the SDK's own calls can be told apart from the
-/// client-side work around them. `XrealCameraFeed` reports it when `debug.xreal.camera_timing` is
+/// client-side work around them. `XrealCameraFeed` measured it during the optimisation pass
 /// set.
 ///
 /// This settled the open question in `docs/develop/archive/codex-camera-acquire-analysis.md`: the

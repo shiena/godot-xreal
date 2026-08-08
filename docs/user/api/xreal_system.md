@@ -398,7 +398,7 @@ Activate a database from [`init_image_database()`](#method-init_image_database) 
 
 ### set_input_source(source: int)
 
-Which input sources `InitUserDefinedSettings` asks the SDK for: `1` is Controller, the default, `2` is Hands and `3` is ControllerAndHands. It must be called **before** the XR rig starts the session, because it is read once at bootstrap. It is also settable with `adb shell setprop debug.xreal.input_source <n>`.
+Which input sources `InitUserDefinedSettings` asks the SDK for: `1` is Controller, the default, `2` is Hands and `3` is ControllerAndHands. It must be called **before** the XR rig starts the session, because it is read once at bootstrap. It is also settable with the ProjectSetting `xreal/input_source`.
 
 **Ask for Hands only if you actually use hand tracking.** The Hands bit makes the SDK call `NativePerception::SetHandTrackingEnabled(true)` synchronously during input start, measured at **about 878 ms of cold start** on an X4000 with a One Pro, and hand tracking is Air 2 Ultra only, so on any other headset that is pure latency. `addons/godot_xreal/features/xreal_hands.tscn` sets this to `3` from its `_ready()`, so scenes that include the hands feature get it automatically and everyone else starts faster. See `docs/develop/archive/codex-input-start-analysis.md`.
 
@@ -418,7 +418,7 @@ Enable plane detection (`PLANE_HORIZONTAL | PLANE_VERTICAL` flags). Needs a live
 
 ### set_tracking_type(mode: int)
 
-Select the head-tracking mode applied when the native session **bootstraps**, a startup selector: `0` is 6DoF, SLAM position and orientation with no drift, the recommended mode; `1` is 3DoF, IMU orientation only with no position; and `2` is 0DoF. **Call it before the session starts**, for instance in an autoload `_ready`, before the XR rig enters the tree, because it is read once at `InitUserDefinedSettings`. It is equivalent to the ProjectSetting `xreal/tracking_type` or to `adb shell setprop debug.xreal.tracking_type <n>`. Use `get_tracking_type()` for the mode actually active on the running session, and `switch_tracking_type()` to change it at runtime, an SDK call that may be unavailable mid-session.
+Select the head-tracking mode applied when the native session **bootstraps**, a startup selector: `0` is 6DoF, SLAM position and orientation with no drift, the recommended mode; `1` is 3DoF, IMU orientation only with no position; and `2` is 0DoF. **Call it before the session starts**, for instance in an autoload `_ready`, before the XR rig enters the tree, because it is read once at `InitUserDefinedSettings`. It is equivalent to the ProjectSetting `xreal/tracking_type`. Use `get_tracking_type()` for the mode actually active on the running session, and `switch_tracking_type()` to change it at runtime, an SDK call that may be unavailable mid-session.
 
 <a id="method-smoke_test_nr_rendering_create_destroy"></a>
 

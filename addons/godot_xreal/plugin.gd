@@ -44,8 +44,7 @@ var _mesh_snapshot_dock: Control
 ## user-chosen values.
 const PROJECT_SETTINGS: Array[Dictionary] = [
 	{
-		# Head-tracking mode applied at boot. "SDK Default" (-1) leaves the native default and the
-		# `debug.xreal.tracking_type` system property in charge.
+		# Head-tracking mode applied at boot. "SDK Default" (-1) leaves the native default in charge.
 		"name": "xreal/tracking_type",
 		"type": TYPE_INT,
 		"hint": PROPERTY_HINT_ENUM,
@@ -56,7 +55,6 @@ const PROJECT_SETTINGS: Array[Dictionary] = [
 		# Per-eye internal 3D resolution. The compositor-facing texture remains 1968x1134, while
 		# Godot renders 3D at this scale and bilinearly upscales it. 0.75 renders 44% fewer pixels.
 		# This is also the quality ceiling when xreal/dynamic_render_scale is enabled.
-		# `debug.xreal.render_scale=<50..100>` overrides it for device A/B measurements.
 		"name": "xreal/render_scale",
 		"type": TYPE_FLOAT,
 		"hint": PROPERTY_HINT_RANGE,
@@ -88,8 +86,7 @@ const PROJECT_SETTINGS: Array[Dictionary] = [
 		"default": true,
 	},
 	{
-		# Which input sources InitUserDefinedSettings asks the SDK for. "SDK Default" (-1) leaves the
-		# `debug.xreal.input_source` property, and the native default of Controller, in charge.
+		# Which input sources InitUserDefinedSettings asks the SDK for. "SDK Default" (-1) leaves the the native default of Controller in charge.
 		#
 		# Pick a value with Hands only if you actually use hand tracking. The Hands bit makes the SDK
 		# call NativePerception::SetHandTrackingEnabled synchronously during input start, measured at
@@ -130,7 +127,7 @@ const PROJECT_SETTINGS: Array[Dictionary] = [
 		# starting point; this asks the codec for a sync frame about once a second so late joiners
 		# work. ON by default. It reaches the codec through a reverse-engineered object layout, so an
 		# SDK update may need it re-checked (see docs/develop/archive/codex-idr-analysis.md); turn it off to
-		# fall back to the single-IDR behaviour. `debug.xreal.idr_hack` overrides this at runtime.
+		# fall back to the single-IDR behaviour.
 		"name": "xreal/idr_workaround",
 		"type": TYPE_BOOL,
 		"default": true,

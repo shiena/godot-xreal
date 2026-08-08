@@ -140,13 +140,20 @@ async, so their real state comes back through `active_changed`.
 
 ### Project settings
 
-Start with the renderer. `renderer/rendering_method` has to be `gl_compatibility`, for the mobile
-override as well: the glasses path hands its eye-viewport textures to the XREAL compositor as GL
-texture names, and only that renderer gives Godot the context those names live in. Nothing errors
-out under Forward+ or Mobile. The session starts, head tracking runs, the phone display draws, and
-the glasses stay black, which makes it an expensive setting to get wrong. Vulkan reaches the
-glasses only through the opt-in vk_bridge, behind the Android property
-`debug.xreal.vulkan_glasses=1`.
+Start with the renderer, `renderer/rendering_method`, because getting it wrong is expensive: under
+Forward+ nothing errors out at all. The session starts, head tracking runs, the phone display draws,
+and the glasses stay black.
+
+`mobile` is the default. The glasses reach the SDK compositor through the Vulkan bridge, which
+shares each eye as an opaque-fd `VkImage`. A `VK_KHR_external_semaphore_fd` fence on that image is
+what keeps the glasses tear-free at 60 FPS. The extension has to be listed in
+`rendering/rendering_device/vulkan/additional_device_extensions`, so the export template has to come
+from a Godot that offers that setting. Where it does not, the bridge stops rather than falling back,
+by design.
+
+`gl_compatibility` is the choice on a Godot without that setting, and it stays fully supported. The
+glasses path there hands its eye-viewport textures to the compositor as GL texture names, which that
+renderer's context supplies directly.
 
 This addon targets XREAL glasses only.
 
@@ -158,9 +165,7 @@ default, so a project without it saved behaves identically.
 `xreal/dynamic_render_scale` is enabled. Both settings are sampled when the stereo rig is created.
 Dynamic scaling needs no min/max/target tuning: it uses 0.5 as the internal floor, calibrates the
 target from the XREAL compositor when a reliable rate is available, lowers the scale after
-sustained frame pressure and restores it only after longer stable headroom. An explicit
-`debug.xreal.render_scale` Android property keeps the scale fixed for A/B measurements and disables
-the controller.
+sustained frame pressure and restores it only after longer stable headroom.
 
 `xreal/xr_multiview_poc` (default off) is experimental: on the Mobile (Vulkan) renderer it renders
 both eyes in one scene pass through Godot's XR multiview instead of two viewports. Enabling it
@@ -169,8 +174,8 @@ setting), and set **XR Mode** to `OpenXR` in the Android export preset; without 
 strips the XR shaders and 3D stops rendering. Leave `xr/openxr/enabled` at its `false` default for
 this path: the preset flag only preserves the shaders, and the OpenXR runtime itself stays off.
 The Compatibility renderer ignores the setting, logs a warning, and keeps the regular two-viewport
-Multipass path, which is fully supported there. The Android property `debug.xreal.xr_multiview`
-(0/1) overrides the setting for same-APK A/B comparison. Dynamic render scale does not apply to this path; `xreal/render_scale` is
+Multipass path, which is fully supported there. Dynamic render scale does not apply to this path;
+`xreal/render_scale` is
 sampled once at startup.
 
 ### Editor tooling

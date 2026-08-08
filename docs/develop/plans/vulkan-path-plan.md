@@ -2,30 +2,45 @@
 
 Status: **ALL FOUR STAGES WORKING ON DEVICE (2026-07-31)** - stereo glasses rendering at 58-60
 FPS (parity with GL: 59.4 vs 59.8), camera on the vk_rd path, FPV stream rendering live in the
-browser, mp4 recording to the gallery. Every stage's design was cross-checked against a codex
-second opinion (the review sections below + docs/develop/archive/codex-vulkan-stage*-design.md).
-Remaining before flipping the Vulkan preset's defaults ON (`debug.xreal.vulkan_glasses` is still
-opt-in): the 60 min x 3 thermal sign-off soak, the libmedia_codec periodic-IDR follow-up (stage-4
-notes), and encoder-only mode. Stages: phone screen -> glasses rendering -> camera rendering ->
-FPV stream, one commit each.
+browser, mp4 recording to the gallery. **Sync v2 landed 2026-08-01: tear-free 60 FPS glasses
+rendering via a SYNC_FD semaphore fence, on an export template built from a Godot 4.7 tree with
+PR #114940 backported (see the stage-2 bullet for the sync history and the stock-template
+behavior).** **Branch decision (2026-08-01): Vulkan is the default rendering method on this
+branch.** project.godot dropped the `gl_compatibility` base and `.mobile` overrides, so the
+registered default ("mobile") applies and BOTH Android presets export the Mobile (Vulkan)
+renderer; the "Android Vulkan" preset still forces it through the baked `_cl_` args and adds
+`--print-fps`. The `debug.xreal.vulkan_glasses` gate is gone (2026-08-09): it was a bring-up
+switch, not a user setting, and with Vulkan the default renderer the glasses now render whenever
+the renderer is Vulkan. A bridge failure still latches BROKEN and degrades to phone-only, which is
+the remaining safety net. The READMEs now say Mobile is the default. Every stage's design was
+cross-checked against a codex second opinion (the review sections below +
+docs/develop/archive/codex-vulkan-stage*-design.md). Remaining: the libmedia_codec periodic-IDR
+follow-up (stage-4 notes) and encoder-only mode. Stages: phone screen -> glasses rendering ->
+camera rendering -> FPV stream, one commit each.
 
 - **Stage 2 device results (Beam Pro, 2026-07-30)**: 14 opaque-fd eye slots imported and
   registered (7 per eye); solid-color probe correct per eye (left red / right blue, screencap of
   display id 4626964009369245188); real stereo content with live head tracking; crash bar passed
-  (fill #5400+); **58-60 FPS with the pipelined-fence sync, 52-53 with `vkQueueWaitIdle`. Default
-  flipped to wait-idle 2026-07-31: the pipelined mode tears under fast head motion (the SDK
-  timewarp resamples the eye slot before our copy completes; no GPU-GPU sync), and `vk_sync 1`
-  opts back into 60 FPS with that tear. Real fix is sync v2 (SYNC_FD semaphore), blocked on
-  `VK_KHR_external_semaphore_fd` which Godot does not enable (device-probe-confirmed 2026-07-31;
-  proposal + issue drafts in `docs/`)**; 10 min soak: 20/20 alive checks, 60 FPS at thermal
+  (fill #5400+); **sync history: the bare pipelined-fence sync ran 58-60 FPS but tore under fast
+  head motion (the SDK timewarp resamples the eye slot before our copy completes; no GPU-GPU
+  sync), `vkQueueWaitIdle` ran tear-free at 52-53, and sync v2 (2026-08-01) closed the gap - the
+  fill submission signals an exportable semaphore, exported as a SYNC_FD (`vkGetSemaphoreFdKHR`)
+  and queued as a server-side `eglWaitSyncKHR` on the private EGL context before
+  `SubmitCurrentFrame`. Device-verified: steady 60 FPS, no tearing under head shake, live
+  `vk_sync` A/B 0 = 51-58 FPS vs 2 (default) = 60. Sync v2 needs `VK_KHR_external_semaphore_fd`,
+  which stock Godot never enables: the export template must be built from a Godot 4.7 tree with
+  PR #114940 backported, and project.godot requests the extension through
+  `additional_device_extensions`. No fallback by design - on a stock template the default sync
+  latches the bridge BROKEN, with `vk_sync 0/1` as explicit measurement overrides**; 10 min soak: 20/20 alive checks, 60 FPS at thermal
   steady state, clean Exit-button teardown; **color A/B vs the GL build: cyan object mean
   (151,236,254) IDENTICAL, pink floor within 2/255** - the raw-copy path carries display-ready
   bytes exactly as designed, no sRGB double-transform. **Vulkan-vs-GL FPS parity, same method
   (frame_tick 300-frame intervals, back-to-back runs): GL 59.8 vs Vulkan 59.4** - both
   vsync-locked, the bridge's overhead is inside measurement noise.
 
-- **Stage 0 PASSED**: `src/ahb_probe.rs` (one-shot, render thread, `debug.xreal.ahb_probe 0` to
-  skip). RGBA8 1968x1134 with `GPU_COLOR_OUTPUT|GPU_SAMPLED_IMAGE`: isSupported=1, allocate ok
+- **Stage 0 PASSED**: `src/ahb_probe.rs` (one-shot, render thread; the module was removed on
+  2026-08-09 once OPAQUE_FD replaced AHB sharing). RGBA8 1968x1134 with
+  `GPU_COLOR_OUTPUT|GPU_SAMPLED_IMAGE`: isSupported=1, allocate ok
   (row stride 1984 px), EGLImage import + `GL_TEXTURE_2D` bind ok, FBO clear+readback exact
   ([51,102,204,255]), blit-out+readback exact. The Vulkan→GL eye-buffer bridge is viable.
 - **Renderer dispatch in place**: `gl.rs::renderer_is_gl()` resolves the runtime renderer once and
@@ -87,9 +102,8 @@ Rejected, with reasons:
 - **A verification-only `xreal/demo_phone_3d_preview` setting plus a fixed 3D workload.** Worth it
   if stage 1 were the end of the line, but stage 2 puts the 3D world on screen through the eye
   SubViewports by construction, which is the same workload without a demo-side flag to carry.
-- **60 min x 3 sessions before moving on.** Kept as the bar for the stage-2 sign-off, not stage 1:
-  10 min clean at 60 FPS is enough to know the phone path is not the risk, and the thermal-soak
-  budget is better spent once eye rendering is in.
+- **10 min clean at 60 FPS is the bar for stage 1.** Enough to know the phone path is not the
+  risk, and the stage-2 device runs cover the eye rendering that follows.
 
 ### Stage 2 second-opinion review (two designs compared, 2026-07-30)
 
@@ -147,7 +161,7 @@ parameter is the ex-builder form in gdext 0.5.3.
    `XrealSystem.is_render_texture_encoder_supported()` with the refusal in `xreal_stream.gd` /
    `xreal_video_recorder.gd` and the Stream / Record grey-out in
    `demo/main.gd::_apply_capabilities()`. Code-verified (clippy, tests, gdlint); the on-device
-   spot-check rides along with the stage-2 soak.
+   spot-check rides along with the stage-2 device runs.
 2. **Stage 2 - glasses rendering. Design settled (see the review above); building**: bridge-owned
    post-draw command buffer on Godot's queue, one share bundle per `xr_create_texture` slot,
    fill v1 = `vkCmdCopyImage` with exact source-layout restore (fill v2 = fullscreen pass if the
@@ -157,7 +171,7 @@ parameter is the ex-builder form in gdext 0.5.3.
    unchanged. Bring-up ladder and instruments:
    `docs/develop/archive/codex-vulkan-stage2-design.md` section 9. **Re-run the RGBA8-vs-sRGB color A/B
    on device** (the old measurement was against gl_compatibility output) and the crash bar of
-   frame #1500+ / 25 s+, then the 60 min x 3 soak.
+   frame #1500+ / 25 s+.
 
    **Share mechanics pivot, device-forced (2026-07-30): OPAQUE_FD, not AHB.** The stage-0 AHB
    share assumed the Vulkan side could import an AHardwareBuffer, but that import needs
@@ -203,7 +217,7 @@ callback, which is deliberately post-render and would add a guaranteed extra fra
 teardown order (clear `texture_rd_rid` -> `free_rid` on the render thread -> drop wrappers; no
 Drop-based cleanup). (5) `feed_camera_server=true` keeps the whole Image path. (6) The probe
 ladder (format-support query, Y-only stall probe, cross-plane generation-mismatch synthetic).
-Kill switch `debug.xreal.vulkan_camera`, default OFF for the first landing, sampled at capture
+The vk_rd path is always on under Vulkan (its kill switch was removed on 2026-08-09), sampled at capture
 start. Path label `vk_rd`.
 
 **Stage-3b device results (Beam Pro, 2026-07-31): PASS, default flipped ON.** `path=vk_rd` live
@@ -214,7 +228,7 @@ vk_rd total 2004 us (acquire 513, snapshot 234, interleave 124, texture_update Y
 CbCr 333, queue_wait 29) vs Image path total 2219 us. The honest reading: under Vulkan the
 Image path never had the GL driver's per-texel tiling cost, so the win is NOT the old
 "multi-ms -> 525 us" - it is ~10% total and a ~60% cut of the main-thread share (871 us vs
-2200 us per grab at 30 Hz). `debug.xreal.vulkan_camera 0` reverts to the Image path.
+2200 us per grab at 30 Hz).
 4. **Stage 4 - FPV stream: WORKING ON DEVICE (2026-07-31).** Device results, Beam Pro + One Pro:
    the encoder starts on the Vulkan tick, the ping-pong bundles alternate (`vk encoder copy/fed`
    logs, status=0 at ~60 feeds/s), and the **browser (fpv_server.py + mpegts.js) rendered the
@@ -231,8 +245,8 @@ Image path never had the GL driver's per-texel tiling cost, so the win is NOT th
      encoder object layout codex confirmed (`*(handle+0x88)` -> `*(+0x08)`) and inject Android's
      `request-sync` once a second via `libmediandk.so`. **Default ON** through the
      `xreal/idr_workaround` ProjectSetting (registered in `plugin.gd`, so it shows in Project
-     Settings and end users can turn it off without adb), overridable at runtime by
-     `debug.xreal.idr_hack` (0/1). It depends on that opaque layout, pinned to Build ID
+     Settings and end users can turn it off).
+     It depends on that opaque layout, pinned to Build ID
      75a6536f531fa7de046db96609c7e119ad5287f4, so an SDK bump needs the offsets re-checked.
      **Device-verified 2026-07-31: WORKS** - `request-sync -> 0`, MediaCodec logged
      `coding.request-sync-frame.value = 1`, and a browser that reloaded (late-joined) 12 s INTO
@@ -385,10 +399,10 @@ One Pro keeps gl_compatibility as the shipping default; Vulkan is a second expor
 `rendering_method` is a project-level setting baked per preset at export time). All four stages
 are device-verified (2026-07-31): glasses rendering at 58-60 FPS with colors matching the GL
 build, the camera on the vk_rd path, and FPV streaming and mp4 recording through the opaque-fd
-encoder bundles with the periodic-IDR workaround. The glasses path stays behind
-`debug.xreal.vulkan_glasses` (default OFF) until the 60 min x 3 thermal sign-off soak passes; the
-crash bar (frame #1500+ / 25 s+) is long cleared. Flipping that default ON, after the soak, is
-what makes the Vulkan preset a first-class shipping option alongside the GL default.
+encoder bundles with the periodic-IDR workaround. The glasses path no longer sits behind
+`debug.xreal.vulkan_glasses`; that gate was removed on 2026-08-09, verified on device with the
+property unset (`glasses rendering through the bridge`, `sync_fd=available`, 60 FPS, both eyes
+filled past frame #2700). The crash bar (frame #1500+ / 25 s+) is long cleared.
 
 ## Camera colour on the Vulkan renderer (2026-07-31)
 

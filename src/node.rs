@@ -41,9 +41,6 @@ pub(crate) const HALF_IPD: f32 = 0.0315;
 /// size and upscale directly into the XREAL eye texture; the fallback keeps a full-size output and
 /// uses Godot's bilinear 3D scaling. The Android property overrides the persisted project setting.
 pub(crate) fn eye_render_scale() -> f32 {
-    if let Some(percent) = session::android_prop_i32(b"debug.xreal.render_scale\0") {
-        return (percent as f32 / 100.0).clamp(0.5, 1.0);
-    }
     let ps = ProjectSettings::singleton();
     if ps.has_setting("xreal/render_scale") {
         ps.get_setting_with_override("xreal/render_scale")
@@ -87,9 +84,6 @@ fn apply_project_viewport_quality(viewport: &mut Gd<SubViewport>) {
 
 /// Whether this project opts into the Vulkan-only Godot XR multiview proof of concept.
 fn xr_multiview_poc_enabled() -> bool {
-    if let Some(enabled) = session::android_prop_i32(b"debug.xreal.xr_multiview\0") {
-        return enabled != 0;
-    }
     let ps = ProjectSettings::singleton();
     ps.has_setting("xreal/xr_multiview_poc")
         && ps
@@ -350,13 +344,6 @@ impl INode3D for XrealHeadTracker {
         // GL renderer only: the probe is a GL-build probe by design (under Vulkan, Godot owns no
         // EGL context, so it could only report "no context"; the stage-2 private-context bridge is
         // where a Vulkan-side equivalent would live).
-        if self.frames == 600 && gl::renderer_is_gl() {
-            let callable = Callable::from_fn("xreal_ahb_probe", |_| {
-                crate::ahb_probe::run_once();
-                Variant::nil()
-            });
-            RenderingServer::singleton().call_on_render_thread(&callable);
-        }
         let Some(session) = session::shared() else {
             self.tracking = false;
             return;
@@ -379,9 +366,9 @@ impl INode3D for XrealHeadTracker {
         // The glasses display path: under the GL (Compatibility) renderer it feeds the SDK
         // compositor client GL texture names out of Godot's own EGL context; under Vulkan the
         // stage-2 bridge does the same through per-slot AHardwareBuffers and a private EGL
-        // context (vk_bridge.rs), gated by `debug.xreal.vulkan_glasses`. With neither, the
-        // glasses submission is skipped while everything below — head tracking, signals, the
-        // phone display — keeps working.
+        // context (vk_bridge.rs). A bridge failure latches BROKEN, and the glasses submission is
+        // then skipped while everything below — head tracking, signals, the phone display — keeps
+        // working.
         let xr_multiview = self.xr_multiview_rig.is_some();
         if gl::renderer_is_gl() {
             // Build the per-eye offscreen render rig once we are in the tree and so have a World3D.
@@ -571,9 +558,7 @@ impl XrealHeadTracker {
         // linear blit upscale it when supported, otherwise render full-size and let Godot's
         // bilinear 3D scaling do the reduction.
         let render_scale = eye_render_scale();
-        let scale_blit_supported =
-            session::android_prop_i32(b"debug.xreal.scale_blit\0").unwrap_or(1) != 0
-                && crate::vk_bridge::linear_scale_blit_supported();
+        let scale_blit_supported = crate::vk_bridge::linear_scale_blit_supported();
         let direct_scale_blit = render_scale < 0.999 && scale_blit_supported;
         let target_size = if direct_scale_blit {
             Vector2i::new(
@@ -656,9 +641,7 @@ impl XrealHeadTracker {
                 return;
             }
             rig.scale_upgrade_done = true;
-            if session::android_prop_i32(b"debug.xreal.scale_blit\0").unwrap_or(1) == 0
-                || !crate::vk_bridge::linear_scale_blit_supported()
-            {
+            if !crate::vk_bridge::linear_scale_blit_supported() {
                 return;
             }
             let target = Vector2i::new(
@@ -917,8 +900,7 @@ impl XrealHeadTracker {
         };
         let render_scale = eye_render_scale();
         let scale_blit_supported =
-            session::android_prop_i32(b"debug.xreal.scale_blit\0").unwrap_or(1) != 0
-                && (gl::renderer_is_gl() || crate::vk_bridge::linear_scale_blit_supported());
+            gl::renderer_is_gl() || crate::vk_bridge::linear_scale_blit_supported();
         let direct_scale_blit = render_scale < 0.999 && scale_blit_supported;
         let source_width = if direct_scale_blit {
             (EYE_W as f32 * render_scale).round() as i32
@@ -961,9 +943,8 @@ impl XrealHeadTracker {
             scale_blit_supported,
             direct_scale_blit,
         });
-        self.dynamic_scale = (dynamic_render_scale_enabled()
-            && session::android_prop_i32(b"debug.xreal.render_scale\0").is_none())
-        .then(|| DynamicScaleController::new(render_scale));
+        self.dynamic_scale =
+            dynamic_render_scale_enabled().then(|| DynamicScaleController::new(render_scale));
         // The two eye viewports already draw the shared World3D. Most XREAL apps use the host
         // display for 2D controls, so drawing that world on the root viewport adds a hidden third
         // scene pass. Preserve an opt-out for apps that intentionally show a 3D phone mirror.

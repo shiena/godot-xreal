@@ -1527,13 +1527,6 @@ fn run_frame_tick_with(backend: FillBackend) {
     // on a null metrics callback ~1 s in).
     crate::signal_guard::reassert_update_metrics_on_render_thread();
 
-    // One-shot stage-0 Vulkan-path probe (AHardwareBuffer -> EGLImage -> GL bridge), a few seconds
-    // in, on this render/GL thread. GL backend only: under Vulkan the bridge itself IS the
-    // production form of what the probe proves.
-    if backend == FillBackend::Gl {
-        crate::ahb_probe::maybe_run(n);
-    }
-
     // Drive the per-frame HMD input update (→ DisplayManager::OnBeforeRender) BEFORE populating the
     // frame, so the render pose the compositor reprojects against is refreshed to the live head pose
     // instead of freezing at session start, which would world-anchor our render. It runs on the render
@@ -1691,8 +1684,9 @@ fn run_frame_tick_with(backend: FillBackend) {
     }
     if backend == FillBackend::Vulkan && !vk_targets.is_empty() {
         // One command buffer for both eyes: foreign acquire -> copy (or solid-color clear)
-        // -> foreign release, then the sync-v1 queue wait, so everything the compositor will
-        // sample has completed before SubmitCurrentFrame below.
+        // -> foreign release, then the sync mode's ordering - sync v2 (default) queues a SYNC_FD
+        // wait on this context so the compositor's GL sampling executes after the copies;
+        // vk_sync=0 instead waits the queue idle - before SubmitCurrentFrame below.
         filled = crate::vk_bridge::fill_eyes(&vk_targets);
     }
 

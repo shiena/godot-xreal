@@ -9,11 +9,16 @@
 //! SDK receives, exactly as under GL. Per frame, a bridge-owned command buffer copies each eye
 //! SubViewport's `VkImage` into the acquired slot's `VkImage` (`vkCmdCopyImage` at native scale,
 //! or `vkCmdBlitImage` when an UNORM low-resolution source can be linearly upscaled), bracketed by
-//! `VK_QUEUE_FAMILY_EXTERNAL` acquire/release barriers. Sync defaults to a `vkQueueWaitIdle`
-//! before `SubmitCurrentFrame` (tear-free, 52 FPS); `debug.xreal.vk_sync 1` pipelines a fence for
-//! 60 FPS but tears under head motion, pending sync v2 (see `fill_eyes`). The design and its
-//! alternatives (a fullscreen sampled pass as fill v2, a SYNC_FD fence as sync v2, the latter
-//! blocked on an extension Godot does not enable) are recorded in
+//! `VK_QUEUE_FAMILY_EXTERNAL` acquire/release barriers. Sync defaults to sync v2: the fill
+//! submission signals an exportable semaphore, exported as a `SYNC_FD` (`vkGetSemaphoreFdKHR`)
+//! and queued as a server-side `eglWaitSyncKHR` on the private context before
+//! `SubmitCurrentFrame`, so the compositor's GL sampling waits on the copies with no CPU stall.
+//! This needs `VK_KHR_external_semaphore_fd`, which only the custom 4.7 template enables (the
+//! `additional_device_extensions` project setting, PR #114940 backport); without it the bridge
+//! latches [`BROKEN`] - deliberately no fallback.
+//! tear-free 52 FPS) and `1` (bare pipelined fence, 60 FPS but tears) remain as measurement
+//! overrides (see `fill_eyes`). The design history and its alternatives (a fullscreen sampled
+//! pass as fill v2, the sync-v2 extension blockage before the custom template) are recorded in
 //! `docs/develop/plans/vulkan-path-plan.md` and `docs/develop/archive/codex-vulkan-stage2-design.md`.
 //!
 //! Why OPAQUE_FD and not the plan's original AHardwareBuffer: the AHB import needs
@@ -33,10 +38,7 @@
 //! it defers into Godot's next frame command buffer, which makes it unorderable against
 //! `SubmitCurrentFrame` and unbracketable by the foreign-ownership barriers.)
 //!
-//! Kill switch: `adb shell setprop debug.xreal.vulkan_glasses 1` enables the bridge (default
-//! OFF for the first landing). `debug.xreal.vk_solid 1` clears the eyes to solid red/blue and
-//! `2` animates, replacing the copy - the bring-up ladder's steps 4 and 5. Every Vulkan failure
-//! latches [`BROKEN`] and the app degrades to the stage-1 phone-only behavior.
+//! Every Vulkan failure latches [`BROKEN`] and the app degrades to phone-only, the safety net.
 
 #![allow(dead_code)]
 #![allow(clippy::too_many_arguments)]
@@ -46,8 +48,6 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 use libloading::Library;
-
-use crate::session::android_prop_i32;
 
 // ---------------------------------------------------------------------------------------------
 // Vulkan ABI: the minimal handful of types and entry points the bridge needs. Dispatchable
@@ -70,8 +70,12 @@ const VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_IMAGE_CREATE_INFO: u32 = 1000072001;
 const VK_STRUCTURE_TYPE_EXPORT_MEMORY_ALLOCATE_INFO: u32 = 1000072002;
 const VK_STRUCTURE_TYPE_MEMORY_GET_FD_INFO_KHR: u32 = 1000074002;
 const VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO: u32 = 1000127001;
+const VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO: u32 = 9;
+const VK_STRUCTURE_TYPE_EXPORT_SEMAPHORE_CREATE_INFO: u32 = 1000077000;
+const VK_STRUCTURE_TYPE_SEMAPHORE_GET_FD_INFO_KHR: u32 = 1000079001;
 
 const VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT: u32 = 0x0000_0001;
+const VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_SYNC_FD_BIT: u32 = 0x0000_0010;
 /// Queue-family for the ownership handoff to the GL/compositor side. `VK_QUEUE_FAMILY_EXTERNAL`
 /// deliberately, not `FOREIGN_EXT`: EXTERNAL is core Vulkan 1.1 (via the promoted
 /// VK_KHR_external_memory), while FOREIGN_EXT needs VK_EXT_queue_family_foreign, which Godot's
@@ -297,6 +301,28 @@ struct VkFenceCreateInfo {
 }
 
 #[repr(C)]
+struct VkSemaphoreCreateInfo {
+    s_type: u32,
+    p_next: *const c_void,
+    flags: u32,
+}
+
+#[repr(C)]
+struct VkExportSemaphoreCreateInfo {
+    s_type: u32,
+    p_next: *const c_void,
+    handle_types: u32,
+}
+
+#[repr(C)]
+struct VkSemaphoreGetFdInfoKHR {
+    s_type: u32,
+    p_next: *const c_void,
+    semaphore: VkHandle,
+    handle_type: u32,
+}
+
+#[repr(C)]
 struct VkCommandPoolCreateInfo {
     s_type: u32,
     p_next: *const c_void,
@@ -391,6 +417,10 @@ type FnVkCreateFence =
 type FnVkDestroyFence = unsafe extern "C" fn(VkPtr, VkHandle, *const c_void);
 type FnVkWaitForFences = unsafe extern "C" fn(VkPtr, u32, *const VkHandle, u32, u64) -> i32;
 type FnVkResetFences = unsafe extern "C" fn(VkPtr, u32, *const VkHandle) -> i32;
+type FnVkCreateSemaphore =
+    unsafe extern "C" fn(VkPtr, *const VkSemaphoreCreateInfo, *const c_void, *mut VkHandle) -> i32;
+type FnVkGetSemaphoreFdKHR =
+    unsafe extern "C" fn(VkPtr, *const VkSemaphoreGetFdInfoKHR, *mut i32) -> i32;
 
 /// Godot's Vulkan handles plus the resolved device-level entry points and the bridge's command
 /// pool/buffer. Everything is used only from the frame-drawn callback thread (asserted by the
@@ -422,10 +452,20 @@ struct VkApi {
     reset_fences: FnVkResetFences,
     command_pool: VkHandle,
     command_buffer: VkPtr,
-    /// Fence signaled by the fill submission; used by the pipelined sync mode (vk_sync=1).
+    /// Fence signaled by the fill submission; guards the next tick's command-buffer reset and
+    /// bundle teardown (pipelined sync and sync v2, vk_sync=1/2).
     fence: VkHandle,
     /// Whether optimal-tiled RGBA8 UNORM supports source/destination blit and linear filtering.
     linear_blit_rgba8: bool,
+    /// Sync v2's exporter, `vkGetSemaphoreFdKHR`. Resolves only when
+    /// `VK_KHR_external_semaphore_fd` is enabled on Godot's device, which takes the custom 4.7
+    /// template plus the `additional_device_extensions` project setting (PR #114940 backport);
+    /// stock Godot never enables it.
+    get_semaphore_fd: Option<FnVkGetSemaphoreFdKHR>,
+    /// The exportable binary semaphore the fill submission signals each frame (sync v2). SYNC_FD
+    /// export has copy transference, so each export resets the payload for the next frame's
+    /// signal. 0 when [`Self::get_semaphore_fd`] is `None`.
+    sync_semaphore: VkHandle,
     _lib: Library,
 }
 
@@ -451,6 +491,11 @@ const GL_TEXTURE_TILING_EXT: u32 = 0x9580;
 const GL_DEDICATED_MEMORY_OBJECT_EXT: u32 = 0x9581;
 const GL_OPTIMAL_TILING_EXT: i32 = 0x9584;
 const GL_HANDLE_TYPE_OPAQUE_FD_EXT: u32 = 0x9586;
+// EGL_ANDROID_native_fence_sync / EGL_KHR_wait_sync tokens (sync v2).
+const EGL_SYNC_NATIVE_FENCE_ANDROID: u32 = 0x3144;
+const EGL_SYNC_NATIVE_FENCE_FD_ANDROID: i32 = 0x3145;
+const EGL_NONE: i32 = 0x3038;
+const EGL_TRUE: i32 = 1;
 
 type FnEglGetProcAddress = unsafe extern "C" fn(*const u8) -> *mut c_void;
 type FnGenTextures = unsafe extern "C" fn(i32, *mut u32);
@@ -465,6 +510,9 @@ type FnDeleteMemoryObjects = unsafe extern "C" fn(i32, *const u32);
 type FnMemoryObjectParameteriv = unsafe extern "C" fn(u32, u32, *const i32);
 type FnImportMemoryFd = unsafe extern "C" fn(u32, u64, u32, i32);
 type FnTexStorageMem2D = unsafe extern "C" fn(u32, i32, u32, i32, i32, u32, u64);
+type FnEglCreateSyncKHR = unsafe extern "C" fn(*mut c_void, u32, *const i32) -> *mut c_void;
+type FnEglWaitSyncKHR = unsafe extern "C" fn(*mut c_void, *mut c_void, i32) -> i32;
+type FnEglDestroySyncKHR = unsafe extern "C" fn(*mut c_void, *mut c_void) -> u32;
 
 struct GlMem {
     finish: FnGlFinish,
@@ -479,6 +527,9 @@ struct GlMem {
     memory_object_parameteriv: FnMemoryObjectParameteriv,
     import_memory_fd: FnImportMemoryFd,
     tex_storage_mem_2d: FnTexStorageMem2D,
+    create_sync: FnEglCreateSyncKHR,
+    wait_sync: FnEglWaitSyncKHR,
+    destroy_sync: FnEglDestroySyncKHR,
     _libs: Vec<Library>,
 }
 
@@ -540,6 +591,9 @@ impl GlMem {
                 ),
                 import_memory_fd: ext_sym!(gles, "glImportMemoryFdEXT", FnImportMemoryFd),
                 tex_storage_mem_2d: ext_sym!(gles, "glTexStorageMem2DEXT", FnTexStorageMem2D),
+                create_sync: ext_sym!(egl, "eglCreateSyncKHR", FnEglCreateSyncKHR),
+                wait_sync: ext_sym!(egl, "eglWaitSyncKHR", FnEglWaitSyncKHR),
+                destroy_sync: ext_sym!(egl, "eglDestroySyncKHR", FnEglDestroySyncKHR),
                 _libs: vec![gles, egl],
             })
         }
@@ -589,7 +643,8 @@ static BROKEN: AtomicBool = AtomicBool::new(false);
 static FILL_LOG: AtomicU32 = AtomicU32::new(0);
 /// One-shot "Vulkan side initialized" log gate (ensure_init is idempotent, may be called often).
 static VK_INIT_LOGGED: AtomicBool = AtomicBool::new(false);
-/// Set while a fill submission's fence has not been waited on yet (pipelined sync, vk_sync=1).
+/// Set while a fill submission's fence has not been waited on yet (pipelined sync and sync v2,
+/// vk_sync=1/2).
 static FENCE_PENDING: AtomicBool = AtomicBool::new(false);
 /// One-shot eye-source format log gate.
 static SRC_LOGGED: AtomicBool = AtomicBool::new(false);
@@ -619,19 +674,16 @@ fn broken(reason: &str) {
     }
 }
 
-/// Is the glasses-rendering kill switch on? Renderer must be Vulkan and
-/// `debug.xreal.vulkan_glasses` (default OFF while stage 2 is in bring-up) must be set. This
-/// gates the eye rendering ONLY; the encoder path (stage 4) can run the bridge machinery without
-/// it (encoder-only mode), so it keys on [`bridge_ready`] instead.
+/// Does this renderer reach the glasses through the bridge? True on Vulkan, where the bridge owns
+/// the eye submission, and false on GL, where Godot's own EGL context feeds the compositor
+/// directly. This answers for the eye rendering ONLY; the encoder path (stage 4) can run the bridge
+/// machinery on either renderer, so it keys on [`bridge_ready`] instead.
 pub fn glasses_enabled() -> bool {
     static ENABLED: OnceLock<bool> = OnceLock::new();
     *ENABLED.get_or_init(|| {
-        let on = !crate::gl::renderer_is_gl()
-            && android_prop_i32(b"debug.xreal.vulkan_glasses\0") == Some(1);
+        let on = !crate::gl::renderer_is_gl();
         if on {
-            godot::global::godot_print!(
-                "[xreal] vk_bridge: glasses rendering enabled (debug.xreal.vulkan_glasses=1)"
-            );
+            godot::global::godot_print!("[xreal] vk_bridge: glasses rendering through the bridge");
         }
         on
     })
@@ -846,10 +898,54 @@ fn load_vk() -> Result<VkApi, String> {
             return Err(format!("vkCreateFence -> {r}"));
         }
 
+        // Sync v2 wiring: vkGetSemaphoreFdKHR resolving is the device-truth probe for
+        // VK_KHR_external_semaphore_fd. Unresolved is not an init failure - the encoder path and
+        // the vk_sync=0/1 measurement overrides need none of this - but sync v2 is the default
+        // glasses sync, and fill_eyes latches BROKEN if it runs without the exporter.
+        let get_semaphore_fd: Option<FnVkGetSemaphoreFdKHR> = {
+            let p = gdpa(device as VkPtr, c"vkGetSemaphoreFdKHR".as_ptr().cast());
+            if p.is_null() {
+                None
+            } else {
+                Some(std::mem::transmute::<*mut c_void, FnVkGetSemaphoreFdKHR>(p))
+            }
+        };
+        let mut sync_semaphore: VkHandle = 0;
+        if get_semaphore_fd.is_some() {
+            let create_semaphore: FnVkCreateSemaphore =
+                dev_fn!("vkCreateSemaphore", FnVkCreateSemaphore);
+            let export_info = VkExportSemaphoreCreateInfo {
+                s_type: VK_STRUCTURE_TYPE_EXPORT_SEMAPHORE_CREATE_INFO,
+                p_next: std::ptr::null(),
+                handle_types: VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_SYNC_FD_BIT,
+            };
+            let sem_info = VkSemaphoreCreateInfo {
+                s_type: VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
+                p_next: &export_info as *const _ as *const c_void,
+                flags: 0,
+            };
+            let r = create_semaphore(
+                device as VkPtr,
+                &sem_info,
+                std::ptr::null(),
+                &mut sync_semaphore,
+            );
+            if r != VK_SUCCESS {
+                destroy_fence(device as VkPtr, fence, std::ptr::null());
+                destroy_command_pool(device as VkPtr, command_pool, std::ptr::null());
+                return Err(format!("vkCreateSemaphore(exportable) -> {r}"));
+            }
+        }
+
         godot::global::godot_print!(
             "[xreal] vk_bridge: device={device:#x} queue={queue:#x} family={queue_family} \
-             linear_blit_rgba8={linear_blit_rgba8} format_features={:#x}",
+             linear_blit_rgba8={linear_blit_rgba8} format_features={:#x} sync_fd={}",
             rgba8_properties.optimal_tiling_features,
+            if sync_semaphore != 0 {
+                "available"
+            } else {
+                "UNAVAILABLE (stock template? sync v2 will latch broken)"
+            }
         );
         Ok(VkApi {
             device: device as VkPtr,
@@ -880,6 +976,8 @@ fn load_vk() -> Result<VkApi, String> {
             command_buffer,
             fence,
             linear_blit_rgba8,
+            get_semaphore_fd,
+            sync_semaphore,
             _lib: lib,
         })
     }
@@ -1495,26 +1593,82 @@ pub fn wait_entry_fence() -> bool {
     true
 }
 
-/// Copy the published eye sources into the acquired slots, then wait the queue idle (the default,
-/// tear-free) or pipeline a fence (`vk_sync=1`, faster but tears under head motion). `targets`
-/// pairs each acquired slot's GL name with its eye index. Tick thread only, after Godot's frame
-/// submission. Returns the number of eyes filled.
+/// Sync v2's GL half: export the fill submission's queued semaphore signal as a `SYNC_FD`
+/// (`vkGetSemaphoreFdKHR`), wrap it in an `EGL_ANDROID_native_fence_sync` object, and issue a
+/// server-side `eglWaitSyncKHR` on the private EGL context, so every GL command the SDK records
+/// on this context afterwards (its sampling of the eye slots at `SubmitCurrentFrame`) executes
+/// after the Vulkan copies - with no CPU stall. Tick thread, private context current, called
+/// right after the fill submit: the `SYNC_FD` export must follow the queued signal operation,
+/// and its copy transference resets the semaphore for the next frame's signal. Any failure
+/// latches [`BROKEN`] and returns `false`; there is deliberately no fallback.
+unsafe fn sync_fd_gl_wait(api: &VkApi) -> bool {
+    let (Some(get_fd), Some(gm)) = (api.get_semaphore_fd, gl_mem()) else {
+        broken("sync v2: exporter or GL loader missing");
+        return false;
+    };
+    let Some(display) = crate::egl_context::display() else {
+        broken("sync v2: no EGL display");
+        return false;
+    };
+    let info = VkSemaphoreGetFdInfoKHR {
+        s_type: VK_STRUCTURE_TYPE_SEMAPHORE_GET_FD_INFO_KHR,
+        p_next: std::ptr::null(),
+        semaphore: api.sync_semaphore,
+        handle_type: VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_SYNC_FD_BIT,
+    };
+    let mut fd: i32 = -1;
+    let r = get_fd(api.device, &info, &mut fd);
+    if r != VK_SUCCESS {
+        broken(&format!("vkGetSemaphoreFdKHR -> {r}"));
+        return false;
+    }
+    if fd < 0 {
+        // Spec-legal for SYNC_FD: the signal already executed, so there is nothing to wait on.
+        return true;
+    }
+    let attrs: [i32; 3] = [EGL_SYNC_NATIVE_FENCE_FD_ANDROID, fd, EGL_NONE];
+    let sync = (gm.create_sync)(display, EGL_SYNC_NATIVE_FENCE_ANDROID, attrs.as_ptr());
+    if sync.is_null() {
+        // EGL adopts the fd only on success; reclaim it before latching.
+        #[cfg(target_os = "android")]
+        libc::close(fd);
+        broken("sync v2: eglCreateSyncKHR(native fence) failed");
+        return false;
+    }
+    // The queued server-side wait outlives the sync object, so destroy immediately.
+    let ok = (gm.wait_sync)(display, sync, 0) == EGL_TRUE;
+    (gm.destroy_sync)(display, sync);
+    if !ok {
+        broken("sync v2: eglWaitSyncKHR failed");
+        return false;
+    }
+    true
+}
+
+/// Copy the published eye sources into the acquired slots, then order the SDK compositor's GL
+/// sampling after the copies: sync v2 (the default) signals an exportable semaphore and queues a
+/// `SYNC_FD` wait on the private EGL context; `vk_sync=0` waits the queue idle and `vk_sync=1`
+/// pipelines a bare fence (both kept as measurement overrides). `targets` pairs each acquired
+/// slot's GL name with its eye index. Tick thread only, after Godot's frame submission. Returns
+/// the number of eyes filled.
 pub fn fill_eyes(targets: &[(u32, usize)]) -> u32 {
     let Some(api) = vk() else { return 0 };
     if BROKEN.load(Ordering::Relaxed) {
         return 0;
     }
-    let solid = android_prop_i32(b"debug.xreal.vk_solid\0").unwrap_or(0);
-    // Sync mode: 0 (default) waits the queue idle after this frame's submit, so the SDK compositor
-    // always samples a fully-copied slot. Tear-free, but the CPU serializes on the GPU frame:
-    // 52-53 FPS (device-measured 2026-07-30). 1 pipelines by one frame (submit with a fence, wait
-    // the PREVIOUS frame's fence at entry) for 58-60 FPS, but the compositor's timewarp resamples
-    // the slot continuously starting right after SubmitCurrentFrame, so under fast head motion it
-    // catches our copy mid-flight and the lower part of the view shears against the top (reported
-    // on device 2026-07-31). The real fix is sync v2 (a GPU fence the SDK's GL sample waits on, no
-    // CPU stall), blocked on VK_KHR_external_semaphore_fd which Godot does not enable; see the
-    // SYNC-V2 SWITCH-OVER note at the submit below. Until then 0 is the default.
-    let sync_mode = android_prop_i32(b"debug.xreal.vk_sync\0").unwrap_or(0);
+    // Sync v2: the submit below signals the exportable semaphore; sync_fd_gl_wait exports it as
+    // a SYNC_FD and queues a server-side eglWaitSyncKHR on the private context before
+    // SubmitCurrentFrame, so the compositor's GL sampling orders after the copies with no CPU
+    // stall: tear-free at full rate. It needs VK_KHR_external_semaphore_fd, which the
+    // additional_device_extensions project setting requests; without it this latches BROKEN,
+    // deliberately with no fallback.
+    if api.sync_semaphore == 0 {
+        broken(
+            "sync v2 needs VK_KHR_external_semaphore_fd, which this device did not enable; \
+             the additional_device_extensions project setting requests it",
+        );
+        return 0;
+    }
     let n = FILL_LOG.fetch_add(1, Ordering::Relaxed);
 
     if !wait_entry_fence() {
@@ -1596,21 +1750,10 @@ pub fn fill_eyes(targets: &[(u32, usize)]) -> u32 {
                 &acquire,
             );
 
-            if solid > 0 || !fill_ok {
-                // Bring-up ladder steps 4/5 (and the no-source fallback): clear the slot to a
-                // per-eye color, animated when vk_solid=2, black when the source is just absent.
-                let t = if solid == 2 {
-                    (n % 120) as f32 / 120.0
-                } else {
-                    1.0
-                };
-                let color: [f32; 4] = if solid == 0 {
-                    [0.0, 0.0, 0.0, 1.0]
-                } else if eye == 0 {
-                    [t, 0.0, 0.0, 1.0]
-                } else {
-                    [0.0, 0.0, t, 1.0]
-                };
+            if !fill_ok {
+                // No source for this eye: clear the slot to black rather than leaving whatever
+                // the previous frame wrote.
+                let color: [f32; 4] = [0.0, 0.0, 0.0, 1.0];
                 (api.cmd_clear_color_image)(
                     api.command_buffer,
                     bundle.vk_image,
@@ -1817,47 +1960,25 @@ pub fn fill_eyes(targets: &[(u32, usize)]) -> u32 {
             p_wait_dst_stage_mask: std::ptr::null(),
             command_buffer_count: 1,
             p_command_buffers: &api.command_buffer,
-            signal_semaphore_count: 0,
-            p_signal_semaphores: std::ptr::null(),
+            signal_semaphore_count: 1,
+            p_signal_semaphores: &api.sync_semaphore,
         };
-        let with_fence = sync_mode == 1;
-        let r = (api.queue_submit)(
-            api.queue,
-            1,
-            &submit,
-            if with_fence { api.fence } else { 0 },
-        );
+        let r = (api.queue_submit)(api.queue, 1, &submit, api.fence);
         if r != VK_SUCCESS {
             broken(&format!("vkQueueSubmit -> {r}"));
             return 0;
         }
-        if with_fence {
-            // Pipelined (vk_sync=1): the wait happens at the next tick's entry (see above). Faster
-            // but tears under head motion, because the compositor's timewarp samples this slot
-            // before our copy completes.
-            FENCE_PENDING.store(true, Ordering::Relaxed);
-        } else {
-            // Default: wait the queue idle so the SDK's timewarp only ever samples a fully-copied
-            // slot. Tear-free; costs about 8 FPS.
-            //
-            // SYNC-V2 SWITCH-OVER: replace this CPU wait-idle with a GPU fence once
-            // VK_KHR_external_semaphore_fd is available (Godot enables it, or a patched export
-            // template; docs/godot-external-semaphore-fd-proposal.md, verified unresolved on stock
-            // 4.7 by device probe 2026-07-31). Then: create an exportable binary VkSemaphore, pass
-            // it as p_signal_semaphores on the submit above, vkGetSemaphoreFdKHR it as a SYNC_FD,
-            // import into the private EGL context via EGL_ANDROID_native_fence_sync, and
-            // eglWaitSyncKHR there before SubmitCurrentFrame. The SDK's GL sample then waits on the
-            // copy with no CPU stall -> tear-free at 60 FPS, and vk_sync can default back to 1.
-            let r = (api.queue_wait_idle)(api.queue);
-            if r != VK_SUCCESS {
-                broken(&format!("vkQueueWaitIdle -> {r}"));
-                return 0;
-            }
+        // The CPU-side fence wait happens at the next tick's entry and guards only the
+        // command-buffer reset and bundle teardown. What keeps the compositor off a half-copied
+        // slot is the GL-side wait queued below.
+        FENCE_PENDING.store(true, Ordering::Relaxed);
+        if !sync_fd_gl_wait(api) {
+            return 0; // BROKEN latched inside
         }
         drop(bundles);
         if n < 8 || n.is_multiple_of(300) {
             godot::global::godot_print!(
-                "[xreal] vk_bridge fill #{n}: targets={} filled={filled} solid={solid}",
+                "[xreal] vk_bridge fill #{n}: targets={} filled={filled}",
                 targets.len()
             );
         }

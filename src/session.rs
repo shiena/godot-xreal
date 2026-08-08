@@ -80,32 +80,7 @@ fn input_source() -> i32 {
     if ovr >= 0 {
         return ovr;
     }
-    android_prop_i32(b"debug.xreal.input_source\0").unwrap_or(1)
-}
-
-/// Read a NUL-terminated Android system property as an `i32`. It returns `None` off Android, and
-/// when the property is unset or unparseable.
-pub fn android_prop_i32(key: &[u8]) -> Option<i32> {
-    #[cfg(target_os = "android")]
-    {
-        let mut buf = [0u8; 92]; // PROP_VALUE_MAX
-        let n = unsafe {
-            libc::__system_property_get(
-                key.as_ptr() as *const libc::c_char,
-                buf.as_mut_ptr() as *mut libc::c_char,
-            )
-        };
-        if n > 0 {
-            if let Ok(s) = std::str::from_utf8(&buf[..n as usize]) {
-                if let Ok(v) = s.trim().parse::<i32>() {
-                    return Some(v);
-                }
-            }
-        }
-    }
-    #[cfg(not(target_os = "android"))]
-    let _ = key;
-    None
+    1
 }
 
 /// Head-tracking mode for `InitUserDefinedSettings`, resolved **once at session bootstrap** in
@@ -113,8 +88,6 @@ pub fn android_prop_i32(key: &[u8]) -> Option<i32> {
 ///   1. the GDScript override `XrealSystem.set_tracking_type`, which is also how the ProjectSetting
 ///      `xreal/tracking_type` is applied: read it in GDScript and pass it to the override before
 ///      the XR rig starts, as `demo/main.gd` does,
-///   2. the Android system property `debug.xreal.tracking_type`, set with
-///      `adb shell setprop debug.xreal.tracking_type 1`,
 ///   3. the default.
 ///
 /// `0` is MODE_6DOF, SLAM position and orientation, the recommended mode: the DISP pose the eye
@@ -131,8 +104,8 @@ fn tracking_mode() -> i32 {
     if ovr >= 0 {
         return ovr;
     }
-    // 2) Android system property, else the default.
-    android_prop_i32(b"debug.xreal.tracking_type\0").unwrap_or(DEFAULT)
+    // 2) Otherwise the default.
+    DEFAULT
 }
 
 /// The created session (success latch). `XrealNative` is `Send + Sync` (the `libloading`

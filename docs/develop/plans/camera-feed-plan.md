@@ -80,8 +80,8 @@ Not adopted, both measured and rejected:
 - **Zero-copy via AHardwareBuffer/EGLImage**: impossible through the public C ABI — see the archive
   memo. Commit `c5b9a67` should not be revived.
 
-Per-stage timing is still in the code, behind
-`adb shell setprop debug.xreal.camera_timing 1` (then toggle the camera off/on):
+Per-stage timing was measured during the optimisation pass
+(the instrumentation has since been removed):
 
 ```
 [xreal] camera timing/grab (us, n=120): acquire=4 planes=0 interleave=99 dispose=5 \

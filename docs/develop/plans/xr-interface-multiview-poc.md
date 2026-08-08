@@ -25,7 +25,7 @@ one offscreen SubViewport (use_xr=true, shared World3D)
 Project Settingsの`xreal/xr_multiview_poc`を有効にして、Mobile rendererを使う。addonとしての
 デフォルト値は`false`である。Mobile rendererは`Android Vulkan`プリセットの`--rendering-method mobile`が
 選択する。
-実機比較用にAndroid property `debug.xreal.xr_multiview=0/1`がProject Settingを上書きする。
+実機比較は Project Setting `xreal/xr_multiview_poc` を切り替えてビルドし直す。
 
 GodotはXR用shader groupをrenderer初期化時にだけ有効化するため、`xr/shaders/enabled=true`も必要になる。
 Androidの`Regular`プリセットは`--xr-mode off`を強制追加してこの設定を無視するため、PoCの
@@ -35,9 +35,6 @@ PoC上のworkaroundである。
 
 Vulkan glasses bridgeの既存kill switchも必要である。
 
-```powershell
-adb shell setprop debug.xreal.vulkan_glasses 1
-```
 
 起動ログで次を確認する。
 
@@ -149,7 +146,7 @@ Multipassをデフォルトに維持するのが良い。MultiviewはCPU draw-bo
 5. head-lock、roll、6DoF position、near/far、非対称projectionに回帰がないことを確認する。
 
 項目1・2・5とencoder経路は`demo/multiview_verify.tscn`で確認する。`run/main_scene`をこのsceneへ
-切り替え、同一APKを`debug.xreal.xr_multiview=0/1`で起動し直して比較する。検証・ベンチマーク用の
+切り替え、`xreal/xr_multiview_poc` を変えてビルドし直して比較する。検証・ベンチマーク用の
 scene一式（`demo/multiview_benchmark.*`、`demo/multiview_verify*`、`demo/multiview_view_index.gdshader`）
 はローカル専用で、リポジトリには含めない。VIEW_INDEX診断球が項目1、
 1/2/4/8 mのpillarと床gridが項目2と5、Near clip toggleがapp cameraのnear/far追従、Recordボタンが
@@ -160,7 +157,7 @@ scene一式（`demo/multiview_benchmark.*`、`demo/multiview_verify*`、`demo/mu
 
 ## 検証シーン実機結果（2026-08-05、Beam Pro + One Pro）
 
-`demo/multiview_verify.tscn`を`debug.xreal.xr_multiview=0/1`のA/Bで実行し、glasses display
+`demo/multiview_verify.tscn`を `xreal/xr_multiview_poc` の A/B で実行し、glasses display
 （`screencap -d <display-id>`、左右eyeがside-by-sideで写る）で直接確認した。
 
 - 項目1: VIEW_INDEX診断球はmultiviewで左=赤/右=青、multipassで両目赤。layer 1の実行を確認。

@@ -943,7 +943,7 @@ impl XrealSystem {
     /// is 3DoF, IMU orientation only with no position; and `2` is 0DoF.
     /// **Call it before the session starts**, for instance in an autoload `_ready`, before the XR rig
     /// enters the tree, because it is read once at `InitUserDefinedSettings`. It is equivalent to the
-    /// ProjectSetting `xreal/tracking_type` or to `adb shell setprop debug.xreal.tracking_type <n>`.
+    /// ProjectSetting `xreal/tracking_type`.
     /// Use `get_tracking_type()` for the mode actually active on the running session, and
     /// `switch_tracking_type()` to change it at runtime, an SDK call that may be unavailable
     /// mid-session.
@@ -955,7 +955,7 @@ impl XrealSystem {
     /// Which input sources `InitUserDefinedSettings` asks the SDK for: `1` is Controller, the default,
     /// `2` is Hands and `3` is ControllerAndHands. It must be called **before** the XR rig starts the
     /// session, because it is read once at bootstrap. It is also settable with
-    /// `adb shell setprop debug.xreal.input_source <n>`.
+    /// the ProjectSetting `xreal/input_source`.
     ///
     /// **Ask for Hands only if you actually use hand tracking.** The Hands bit makes the SDK call
     /// `NativePerception::SetHandTrackingEnabled(true)` synchronously during input start, measured at
