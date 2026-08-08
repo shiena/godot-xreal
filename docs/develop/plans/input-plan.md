@@ -104,8 +104,11 @@ signal ec_level_changed(level: int)
 ```
 
 Constants exported as class constants (`#[constant]`) mirroring the SDK C# enums.
-Games that want Godot actions can `Input.parse_input_event()` themselves from `key_event`;
-we don't bake an action map into the extension.
+The native extension still exposes these raw compatibility signals. The drop-in
+`XrealXRRuntime` layer additionally maps controller state to standard `XRControllerTracker`s and
+the canonical `xr_select`, `xr_grab`, and `xr_menu` InputMap actions. This keeps device-specific
+events available without requiring ordinary gameplay to consume them directly; see
+`docs/develop/reference/godot-xr-backend.md`.
 
 Methods (thin, all no-op safely when libs are absent — desktop editor rule):
 
@@ -143,15 +146,17 @@ is an alternative). Decide after A/B ship.
   getters+setters (plain int in/out, low RE risk since mangled `NativeGlasses` twins show
   `(Pi)`/`(i)` signatures); volume likely arrives only as an event (OS media volume owns the
   value). The change *events* already flow as signals (Phase A).
-- **Phase C — phone controller — IMPLEMENTED 2026-07-14 (route B, raw IMU):** the phone works
+- **Phase C — phone controller — IMPLEMENTED 2026-07-14; addon XR bridge 2026-08-08 (route B, raw IMU):** the phone works
   as a tilt-driven 3D pointer ray in the glasses. Key finding: on this host the fused
   `NRControllerGetPose` never returns a real orientation (and Godot's built-in
   `Input.get_gyroscope()` is also dead), but the **raw NRController IMU
   (accel/gyro/magnetometer) works** — `src/controller_probe.rs` reads it
   (`NRControllerCreate(int32 id, uint64* out)` — note the argument order), exposed as
-  `XrealSystem.start_controller()` / `poll_controller()`, and `demo/phone_pointer.gd` fuses it
-  with a complementary filter. Controller axes: X right / Y top-of-phone / Z out of the screen.
-  Touch/buttons/haptics remain unported.
+  `XrealSystem.start_controller()` / `poll_controller()`. `XrealXRInputRouter` now owns polling and
+  complementary-filter fusion, publishes the standard `aim`/`grip` pose and native touchpad, and
+  lets an app-owned phone UI feed canonical buttons through `XrealXRRuntime`. Controller axes:
+  X right / Y top-of-phone / Z out of the screen. The raw native button bitfield and haptics remain
+  unported; its bit layout must be device-verified before decoding.
 
 ## Risks / notes
 

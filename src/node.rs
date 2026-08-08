@@ -1,10 +1,10 @@
 //! [`XrealHeadTracker`], the head-tracking node.
 //!
-//! Add it to a scene and parent a `Camera3D` under it. At runtime on XREAL hardware it drives its
-//! own transform from the native 6DoF head pose, rotation and position, every frame, so the camera
-//! moves and looks around with the wearer's head and the stereo rig presents the world to the
-//! glasses. On desktop and in the editor the native libraries are absent, so the node stays at
-//! identity and logs a single warning.
+//! Add it to a scene as the XREAL backend driver. At runtime it publishes the native 6DoF head pose
+//! through [`crate::xr_interface::XrealXrInterface`] so a regular Godot `XRCamera3D` can consume it,
+//! while the existing compositor bridge presents the world to the glasses. The node still mirrors
+//! the pose onto its own transform for backwards compatibility with the original child-Camera3D
+//! rig. On desktop the native libraries are absent, so it stays inert.
 
 use godot::classes::sub_viewport::UpdateMode;
 use godot::classes::viewport::Scaling3DMode;
@@ -46,7 +46,7 @@ pub(crate) fn eye_render_scale() -> f32 {
     }
     let ps = ProjectSettings::singleton();
     if ps.has_setting("xreal/render_scale") {
-        ps.get_setting("xreal/render_scale")
+        ps.get_setting_with_override("xreal/render_scale")
             .try_to::<f64>()
             .map(|scale| (scale as f32).clamp(0.5, 1.0))
             .unwrap_or(1.0)
@@ -63,7 +63,7 @@ fn xr_multiview_poc_enabled() -> bool {
     let ps = ProjectSettings::singleton();
     ps.has_setting("xreal/xr_multiview_poc")
         && ps
-            .get_setting("xreal/xr_multiview_poc")
+            .get_setting_with_override("xreal/xr_multiview_poc")
             .try_to::<bool>()
             .unwrap_or(false)
 }
@@ -74,7 +74,7 @@ fn dynamic_render_scale_enabled() -> bool {
     let ps = ProjectSettings::singleton();
     ps.has_setting("xreal/dynamic_render_scale")
         && ps
-            .get_setting("xreal/dynamic_render_scale")
+            .get_setting_with_override("xreal/dynamic_render_scale")
             .try_to::<bool>()
             .unwrap_or(false)
 }
@@ -270,14 +270,14 @@ impl INode3D for XrealHeadTracker {
         // default.
         let ps = ProjectSettings::singleton();
         self.bypass_psensor = if ps.has_setting("xreal/display_bypass_psensor") {
-            ps.get_setting("xreal/display_bypass_psensor")
+            ps.get_setting_with_override("xreal/display_bypass_psensor")
                 .try_to::<bool>()
                 .unwrap_or(true)
         } else {
             true
         };
         self.disable_host_viewport_3d = if ps.has_setting("xreal/disable_host_viewport_3d") {
-            ps.get_setting("xreal/disable_host_viewport_3d")
+            ps.get_setting_with_override("xreal/disable_host_viewport_3d")
                 .try_to::<bool>()
                 .unwrap_or(true)
         } else {
@@ -286,6 +286,7 @@ impl INode3D for XrealHeadTracker {
         // Kick off initialization early. `shared()` logs its own outcome, and retries on later frames
         // when the Android Activity has not been published yet.
         let _ = session::shared();
+        self.ensure_xr_interface();
         self.try_enable_xr_multiview();
     }
 
@@ -351,7 +352,7 @@ impl INode3D for XrealHeadTracker {
         // context (vk_bridge.rs), gated by `debug.xreal.vulkan_glasses`. With neither, the
         // glasses submission is skipped while everything below — head tracking, signals, the
         // phone display — keeps working.
-        let xr_multiview = self.xr_interface.is_some();
+        let xr_multiview = self.xr_multiview_rig.is_some();
         if gl::renderer_is_gl() {
             // Build the per-eye offscreen render rig once we are in the tree and so have a World3D.
             self.ensure_stereo();
@@ -482,6 +483,11 @@ impl INode3D for XrealHeadTracker {
             },
         }
 
+        // Publish the application camera to the primary XREAL interface every frame. XRCamera3D
+        // consumes this transform through Godot's normal XR path; the legacy node transform above
+        // remains only for backwards compatibility.
+        self.publish_standard_xr_view_state();
+
         // Point the eye cameras from the now-updated head transform, then publish their offscreen
         // textures for the frame tick to blit into the XREAL eye buffers.
         if xr_multiview {
@@ -494,6 +500,16 @@ impl INode3D for XrealHeadTracker {
 }
 
 impl XrealHeadTracker {
+    /// Register the XREAL interface even when the renderer uses the established GLES multipass
+    /// compositor path. Being primary is what lets a regular XRCamera3D consume the XREAL head
+    /// transform; it does not require the root viewport itself to render through the interface.
+    fn ensure_xr_interface(&mut self) {
+        if self.xr_interface.is_none() {
+            self.xr_interface =
+                crate::xr_interface::activate(Vector2::new(EYE_W as f32, EYE_H as f32));
+        }
+    }
+
     fn try_enable_xr_multiview(&mut self) {
         if !xr_multiview_poc_enabled() {
             return;
@@ -528,12 +544,13 @@ impl XrealHeadTracker {
         } else {
             Vector2i::new(EYE_W, EYE_H)
         };
-        let Some(interface) =
-            crate::xr_interface::activate(Vector2::new(target_size.x as f32, target_size.y as f32))
-        else {
+        let Some(interface) = self.xr_interface.as_mut() else {
             godot_warn!("[xreal] XR multiview PoC interface initialization failed");
             return;
         };
+        interface
+            .bind_mut()
+            .set_render_target_size(Vector2::new(target_size.x as f32, target_size.y as f32));
 
         let mut xr_viewport = SubViewport::new_alloc();
         xr_viewport.set_name("XrealMultiviewViewport");
@@ -558,7 +575,6 @@ impl XrealHeadTracker {
         if self.disable_host_viewport_3d {
             host_viewport.set_disable_3d(true);
         }
-        self.xr_interface = Some(interface);
         self.xr_multiview_rig = Some(XrMultiviewRig {
             viewport: xr_viewport,
             camera: xr_camera,
@@ -650,15 +666,15 @@ impl XrealHeadTracker {
                 rig.scale_upgrade_done = true;
             }
         }
-        let head = self.base().get_global_transform();
+        let head = self.base().get_transform();
         let source_camera = self
             .base()
             .get_viewport()
             .and_then(|viewport| viewport.get_camera_3d());
-        let transform = source_camera
-            .as_ref()
-            .map(|camera| camera.get_global_transform())
-            .unwrap_or(head);
+        // XRInterface camera transforms are tracking-space poses. XROrigin3D applies its own
+        // world transform to XRCamera3D, so publishing the camera's global transform here would
+        // feed the previous XR pose back into itself and double the origin transform.
+        let transform = head;
         let fov = source_camera
             .as_ref()
             .map(|camera| camera.get_fov())
@@ -677,6 +693,22 @@ impl XrealHeadTracker {
                 rig.camera.set_far(far);
             }
         }
+        crate::xr_interface::publish_view_state(transform, fov);
+    }
+
+    /// Publish the tracking-space head pose for XRCamera3D and the legacy multipass renderer.
+    /// XROrigin3D applies its world transform after this value is consumed.
+    fn publish_standard_xr_view_state(&self) {
+        let head = self.base().get_transform();
+        let source_camera = self
+            .base()
+            .get_viewport()
+            .and_then(|viewport| viewport.get_camera_3d());
+        let transform = head;
+        let fov = source_camera
+            .as_ref()
+            .map(|camera| camera.get_fov())
+            .unwrap_or(FALLBACK_EYE_VERTICAL_FOV);
         crate::xr_interface::publish_view_state(transform, fov);
     }
 
@@ -938,10 +970,11 @@ impl XrealHeadTracker {
             .base()
             .get_viewport()
             .and_then(|viewport| viewport.get_camera_3d());
-        let source_transform = source_camera
-            .as_ref()
-            .map(|camera| camera.get_global_transform())
-            .unwrap_or(head);
+        // The eye pose comes from the head, never from the app camera. The shared XR scene leaves an
+        // XRCamera3D `current` on the root viewport, and that node does not follow the headset on
+        // this path, so reading its transform pinned both eyes at the origin and the world rode
+        // along with the head. Everything else below still follows the app camera.
+        let source_transform = head;
         let source_near = source_camera
             .as_ref()
             .map(|camera| camera.get_near())

@@ -83,7 +83,6 @@ func _raycast(head: Node3D) -> Dictionary:
 		origin, origin - head.global_basis.z * max_distance, collision_mask)
 	return space.intersect_ray(query)
 
-## The head to cast from: the tracker on device, the desktop preview's stand-in off it.
+## The head to cast from: the standard XR camera, with legacy and desktop-preview fallbacks.
 func _head() -> Node3D:
-	var head := XrealShared.find_head_tracker(get_tree())
-	return head if head != null else XrealShared.find_preview_head(get_tree())
+	return XrealShared.find_tracking_head(get_tree())

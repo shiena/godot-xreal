@@ -7,13 +7,15 @@ extends Object
 ##   - XrealAR polls native change queues that are CONSUMED on poll, so a second XrealAR polling
 ##     the same stream would steal events. get_ar() shares exactly one node across all features.
 ##   - XrealHandTracker registers the XRServer hand trackers, and one instance suffices.
-##   - The XrealHeadTracker owns the stereo eye viewports and the render driver. The app owns its
-##     lifecycle, usually through addons/godot_xreal/xreal_rig.tscn, so it is only ever looked up.
+##   - The XrealHeadTracker owns the compositor render driver. The standard XRCamera3D is the app's
+##     tracking-space view; legacy rigs can still use the driver's mirrored Node3D transform.
 ##   - XrealSystem, by contrast, is a stateless facade over that global state, so every feature
 ##     creates its own instance freely (make_system).
 
 const GROUP_AR := &"xreal_shared_ar"
 const GROUP_HAND_TRACKER := &"xreal_shared_hand_tracker"
+## xr_origin.tscn's XRCamera3D joins this group. Custom common XR rigs should do the same.
+const GROUP_XR_CAMERA := &"xreal_shared_xr_camera"
 ## xreal_rig.tscn's root joins this group; add it to a custom rig's XrealHeadTracker too.
 const GROUP_HEAD_TRACKER := &"xreal_head_tracker"
 const GROUP_CAMERA := &"xreal_camera_feature"
@@ -89,7 +91,8 @@ static func is_app_audio_ready() -> bool:
 ## registers all the Xreal* classes for the F1 docs, so class presence alone proves nothing; gate
 ## on the platform too.
 static func is_native_runtime() -> bool:
-	return OS.get_name() == "Android" and ClassDB.class_exists(&"XrealSystem")
+	return OS.get_name() == "Android" \
+		and ClassDB.class_exists(&"XrealSystem")
 
 ## A fresh XrealSystem, a stateless facade over process-global native state, so each feature may
 ## own one. It returns null off device, which keeps the features inert on desktop.
@@ -141,6 +144,37 @@ static func get_hand_tracker(tree: SceneTree) -> Node:
 ## at each use.
 static func find_head_tracker(tree: SceneTree) -> Node3D:
 	return tree.get_first_node_in_group(GROUP_HEAD_TRACKER) as Node3D
+
+## Read a project setting with feature overrides resolved. ProjectSettings.get_setting() skips
+## `name.feature` entries and hands back the base value, which would quietly ignore a project that
+## scopes a setting per build, which projects shared with another XR target commonly do.
+## Every runtime read goes through here.
+static func read_setting(name: String, default: Variant) -> Variant:
+	if not ProjectSettings.has_setting(name):
+		return default
+	var value: Variant = ProjectSettings.get_setting_with_override(name)
+	return default if value == null else value
+
+## Whether the desktop preview window stands in for the glasses, which is any run off device. On
+## device the glasses present the view and a second window would be redundant.
+static func uses_desktop_preview() -> bool:
+	return OS.get_name() != "Android"
+
+## The effective XR head node used by shared scenes. XREAL desktop preview takes priority off-device
+## so head-locked content follows its flycam. Otherwise the standard XRCamera3D is preferred because
+## its global transform includes XROrigin3D movement, with legacy rigs as a final fallback.
+static func find_tracking_head(tree: SceneTree) -> Node3D:
+	# The XREAL desktop preview is the actual simulated head. The runtime XRCamera3D remains at
+	# identity off-device, so choosing it first would make head-locked content ignore the flycam.
+	if uses_desktop_preview():
+		var preview := find_preview_head(tree)
+		if preview != null:
+			return preview
+	var camera := tree.get_first_node_in_group(GROUP_XR_CAMERA) as XRCamera3D
+	if camera != null:
+		return camera
+	var driver := find_head_tracker(tree)
+	return driver if driver != null else find_preview_head(tree)
 
 ## The desktop preview window's head node, or null. It is the off-device stand-in for the head
 ## tracker, so head-locked content parents to whichever of the two exists: the tracker on device,

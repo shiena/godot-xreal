@@ -1,7 +1,8 @@
-//! Godot-native XR interface used by the opt-in multiview proof of concept.
+//! Godot-native XR interface for the XREAL backend.
 //!
-//! The XREAL compositor remains on the existing Unity-provider path. This interface only replaces
-//! the two Godot `SubViewport` scene passes with one standard XR viewport containing two layers.
+//! It always exposes the native head pose to standard Godot XR nodes. The XREAL compositor remains
+//! on the existing Unity-provider path: GLES uses the established two-`SubViewport` renderer,
+//! while the opt-in Vulkan proof of concept renders both views through a Godot XR viewport.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
@@ -66,14 +67,14 @@ fn projection_array(projection: Projection) -> PackedFloat64Array {
     PackedFloat64Array::from(values)
 }
 
-/// An opt-in `XRInterfaceExtension` that enters Godot's standard two-view render path.
+/// The XREAL `XRInterfaceExtension` used by standard Godot XR scene nodes.
 ///
-/// The addon registers and activates it internally when the ProjectSetting
+/// The addon always registers and activates it internally for pose delivery; scenes never
+/// instantiate it directly. It claims Godot's primary interface slot, so `XrealXRRuntime` hands
+/// that slot back first when a startup OpenXR interface holds it. When the ProjectSetting
 /// `xreal/xr_multiview_poc`, or the Android property `debug.xreal.xr_multiview`, enables the
-/// Vulkan-only multiview path; scenes never instantiate it directly. It needs
-/// `xr/shaders/enabled=true` and an export preset whose XR Mode is `OpenXR` (with
-/// `xr/openxr/enabled=false` the OpenXR runtime stays off). The established two-SubViewport
-/// Multipass path remains the default.
+/// Vulkan-only multiview renderer, it also needs `xr/shaders/enabled=true` and an export preset
+/// whose XR Mode is `OpenXR`. The established two-SubViewport Multipass path remains the default.
 #[derive(GodotClass)]
 #[class(base = XrInterfaceExtension, tool)]
 pub struct XrealXrInterface {
@@ -94,7 +95,7 @@ impl IXrInterfaceExtension for XrealXrInterface {
     }
 
     fn get_name(&self) -> StringName {
-        StringName::from("XREAL Multiview PoC")
+        StringName::from("XREAL")
     }
 
     fn get_capabilities(&self) -> u32 {
@@ -334,14 +335,14 @@ impl XrealXrInterface {
     }
 }
 
-/// Register, initialize and select the PoC interface as Godot's primary XR interface.
+/// Register, initialize and select the XREAL interface as Godot's primary XR interface.
 /// `render_size` is the target the XR viewport renders at: the reduced size when the bridge
 /// upscales directly, the full eye size otherwise.
 pub fn activate(render_size: Vector2) -> Option<Gd<XrealXrInterface>> {
     let mut server = XrServer::singleton();
     if let Some(primary) = server.get_primary_interface() {
         godot_warn!(
-            "[xreal] XR multiview PoC did not replace existing primary XR interface '{}'",
+            "[xreal] XREAL XR interface did not replace existing primary XR interface '{}'",
             primary.get_name(),
         );
         return None;
@@ -358,7 +359,7 @@ pub fn activate(render_size: Vector2) -> Option<Gd<XrealXrInterface>> {
     Some(interface)
 }
 
-/// Remove the PoC interface without disturbing a different primary interface.
+/// Remove the XREAL interface without disturbing a different primary interface.
 pub fn deactivate(interface: Gd<XrealXrInterface>) {
     let mut base_interface = interface.upcast::<godot::classes::XrInterface>();
     let mut server = XrServer::singleton();

@@ -9,11 +9,11 @@
 
 > The script declares no `class_name`, so **XrealHands** is this reference's name for it, not a type you can write in GDScript. Use it by instancing `addons/godot_xreal/features/xreal_hands.tscn`.
 
-Hand-tracking visualization as a drop-in feature component: small spheres at each of the 26 OpenXR joints per hand. It makes sure the shared XrealHandTracker node exists, which registers the XRServer hand trackers, so dropping this scene in is all it takes.
+Hand-tracking visualization as a drop-in feature component: small spheres at each of the 26 OpenXR joints per hand. On XREAL it makes sure the shared XrealHandTracker node exists; on an OpenXR backend it consumes the runtime-owned XRServer hand trackers without special wiring.
 
 World-locked: add this component under a world-fixed node such as the scene root, NOT under the head rig. The joint poses are in world/tracking space and stay fixed as the head moves. Under the rotating rig the head rotation would cancel against the eye cameras and the hands would appear head-locked, stuck to the screen; under a fixed node they stay on the real hands.
 
-Hardware-gated to the Air 2 Ultra. On unsupported glasses the trackers simply report has_tracking_data = false and the spheres stay hidden.
+XREAL hand tracking is hardware-gated to the Air 2 Ultra. On unsupported runtimes the trackers simply report has_tracking_data = false and the spheres stay hidden.
 
 ## Constants
 

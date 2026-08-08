@@ -1,0 +1,10 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://addons/godot_xreal/features/xreal_xr_runtime.gd" id="1_runtime"]
+[ext_resource type="Script" path="res://addons/godot_xreal/xr_input_router.gd" id="2_router"]
+
+[node name="XrealXRRuntime" type="Node3D" groups=["xreal_shared_xr_runtime"]]
+script = ExtResource("1_runtime")
+
+[node name="XRInputRouter" type="Node" parent="."]
+script = ExtResource("2_router")

@@ -17,6 +17,7 @@
 [ext_resource type="PackedScene" uid="uid://dcampreviewsc1" path="res://demo/camera_preview.tscn" id="15_preview"]
 [ext_resource type="PackedScene" uid="uid://xrdeskprevsc1" path="res://addons/godot_xreal/xreal_desktop_preview.tscn" id="16_desktop"]
 [ext_resource type="PackedScene" uid="uid://xrfocusscn01" path="res://addons/godot_xreal/features/xreal_focus_plane.tscn" id="17_focus"]
+[ext_resource type="PackedScene" path="res://addons/godot_xreal/xr_origin.tscn" id="18_xr_origin"]
 
 ; Front/back-coloured tracked-image marker (green front / red back via FRONT_FACING) so the
 ; tracked pose's facing is readable. It is assigned to XrealImageTracking's marker_material override.
@@ -25,6 +26,10 @@ shader = ExtResource("13_marker")
 
 [node name="Main" type="Node3D" unique_id=265623934]
 script = ExtResource("1_main")
+
+; The standard Godot XR hierarchy an OpenXR project would author, with the XREAL bootstrap
+; attached to it. An OpenXR build keeps the same nodes and drops the bootstrap.
+[node name="XROrigin3D" parent="." instance=ExtResource("18_xr_origin")]
 
 [node name="ARScene" parent="." unique_id=596317277 instance=ExtResource("2_ar")]
 

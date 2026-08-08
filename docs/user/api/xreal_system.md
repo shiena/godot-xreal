@@ -280,7 +280,7 @@ Poll anchor changes since the last call: `{ "added": Array, "updated": Array, "r
 
 ### poll_controller() -> PackedFloat32Array
 
-One-frame read of the live controller's raw sensors (call each frame after `start_controller`). Returns a flat `PackedFloat32Array`, layout: `[ok, accel.xyz(1..4), gyro.xyz(4..7), mag.xyz(7..10), touch(10), touch_xy(11..13), buttons(13)]`. The phone IMU (`accel` = gravity dir via `-accel.normalized()`) feeds the GDScript pointer fusion, since the NRController fused pose isn't available on this host.
+One-frame read of the live controller's raw sensors (call each frame after `start_controller`). Returns a flat `PackedFloat32Array`, layout: `[ok, accel.xyz(1..4), gyro.xyz(4..7), mag.xyz(7..10), touch(10), touch_xy(11..13), buttons(13)]`. The phone IMU feeds `XrealXRInputRouter`'s GDScript pose fusion, since the NRController fused pose isn't available on this host.
 
 <a id="method-poll_images"></a>
 

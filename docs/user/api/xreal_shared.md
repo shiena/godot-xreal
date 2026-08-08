@@ -12,7 +12,7 @@ Some native resources are process-global singletons, so the feature scenes must 
 
 - XrealAR polls native change queues that are CONSUMED on poll, so a second XrealAR polling the same stream would steal events. get_ar() shares exactly one node across all features.
 - XrealHandTracker registers the XRServer hand trackers, and one instance suffices.
-- The XrealHeadTracker owns the stereo eye viewports and the render driver. The app owns its lifecycle, usually through addons/godot_xreal/xreal_rig.tscn, so it is only ever looked up.
+- The XrealHeadTracker owns the compositor render driver. The standard XRCamera3D is the app's tracking-space view; legacy rigs can still use the driver's mirrored Node3D transform.
 - XrealSystem, by contrast, is a stateless facade over that global state, so every feature creates its own instance freely (make_system).
 
 ## Methods
@@ -65,6 +65,12 @@ The XrealHeadTracker (head rig), or null while it does not exist yet. It is neve
 
 The desktop preview window's head node, or null. It is the off-device stand-in for the head tracker, so head-locked content parents to whichever of the two exists: the tracker on device, this in the editor. Null on device, and in a scene with no xreal_desktop_preview.tscn.
 
+<a id="method-find_tracking_head"></a>
+
+### static find_tracking_head(tree: SceneTree) -> Node3D
+
+The effective XR head node used by shared scenes. XREAL desktop preview takes priority off-device so head-locked content follows its flycam. Otherwise the standard XRCamera3D is preferred because its global transform includes XROrigin3D movement, with legacy rigs as a final fallback.
+
 <a id="method-get_ar"></a>
 
 ### static get_ar(tree: SceneTree) -> Node
@@ -101,6 +107,12 @@ True only when the REAL native extension is live. The desktop editor loads a dum
 
 A fresh XrealSystem, a stateless facade over process-global native state, so each feature may own one. It returns null off device, which keeps the features inert on desktop.
 
+<a id="method-read_setting"></a>
+
+### static read_setting(name: String, default: Variant) -> Variant
+
+Read a project setting with feature overrides resolved. ProjectSettings.get_setting() skips `name.feature` entries and hands back the base value, which would quietly ignore a project that scopes a setting per build, which projects shared with another XR target commonly do. Every runtime read goes through here.
+
 <a id="method-request_app_audio_consent"></a>
 
 ### static request_app_audio_consent()
@@ -113,6 +125,12 @@ Android will only let an app capture playback audio through a MediaProjection, a
 
 ### static resolution_preset(level: int) -> Vector3i
 
+
+<a id="method-uses_desktop_preview"></a>
+
+### static uses_desktop_preview() -> bool
+
+Whether the desktop preview window stands in for the glasses, which is any run off device. On device the glasses present the view and a second window would be redundant.
 
 ## Enumerations
 
@@ -144,6 +162,7 @@ Android will only let an app capture playback audio through a MediaProjection, a
 | --- | --- | --- |
 | <a id="constant-GROUP_AR"></a>`GROUP_AR` | `&"xreal_shared_ar"` |  |
 | <a id="constant-GROUP_HAND_TRACKER"></a>`GROUP_HAND_TRACKER` | `&"xreal_shared_hand_tracker"` |  |
+| <a id="constant-GROUP_XR_CAMERA"></a>`GROUP_XR_CAMERA` | `&"xreal_shared_xr_camera"` | xr_origin.tscn's XRCamera3D joins this group. Custom common XR rigs should do the same. |
 | <a id="constant-GROUP_HEAD_TRACKER"></a>`GROUP_HEAD_TRACKER` | `&"xreal_head_tracker"` | xreal_rig.tscn's root joins this group; add it to a custom rig's XrealHeadTracker too. |
 | <a id="constant-GROUP_CAMERA"></a>`GROUP_CAMERA` | `&"xreal_camera_feature"` |  |
 | <a id="constant-GROUP_DESKTOP_PREVIEW"></a>`GROUP_DESKTOP_PREVIEW` | `&"xreal_desktop_preview_head"` | The desktop preview window's head node (xreal_desktop_preview.tscn) joins this group. |

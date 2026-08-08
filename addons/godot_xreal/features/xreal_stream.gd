@@ -15,8 +15,8 @@ extends Node
 ## The encoder reads the GL texture on the render thread, so the per-frame push runs inside a
 ## RenderingServer.call_on_render_thread callback. See docs/develop/plans/fpv-streaming-plan.md.
 ##
-## Both the head rig and the live camera feed are discovered per frame, through
-## XrealShared.find_head_tracker() and find_camera_feed(), so toggling the camera mid-stream simply
+## Both the common XR camera and the live camera feed are discovered per frame, through
+## XrealShared.find_tracking_head() and find_camera_feed(), so toggling the camera mid-stream simply
 ## switches the streamed view.
 
 ## Emitted when an operation fails or the feature is unavailable, so the load site can react by
@@ -289,7 +289,7 @@ func _process(_delta: float) -> void:
 		return
 	var feed := XrealShared.find_camera_feed(get_tree())
 	var blending := _use_blend(feed)
-	var tracker := XrealShared.find_head_tracker(get_tree())
+	var tracker := XrealShared.find_tracking_head(get_tree())
 	if tracker and _ar_cam:
 		if blending:
 			# Blend, with the camera ON: drive the AR camera from the RGB camera's real geometry, its FOV

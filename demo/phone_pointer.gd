@@ -5,11 +5,10 @@ extends Node3D
 ## integration. A complementary filter keeps pitch and roll locked to gravity while the gyro
 ## carries yaw; recenter to re-align "forward".
 ##
-## Feed it each frame through `update_imu(accel, gyro, dt, head_transform)` with the NRController
-## sensors. The phone IMU frame is X right, Y top, Z out of the screen, verified on device. It
-## raycasts along the beam, highlights whatever it hits, and `select()`, wired to a trigger,
-## clicks it. `recenter()` makes the current aim forward. Learning the resting bias and applying a
-## small deadzone suppress the gyro drift.
+## XrealXRRuntime now owns the native IMU fusion and feeds this demo through a standard
+## XRController3D pose (`aim_from_transform`). `update_imu` remains as a standalone visualization
+## helper. The phone IMU frame is X right, Y top, Z out of the screen, verified on device. The ray
+## highlights whatever it hits, and `select()` clicks it.
 
 ## Complementary-filter gain: how strongly gravity corrects pitch/roll each frame (0 = gyro only).
 @export var gravity_gain := 0.06
@@ -103,6 +102,14 @@ func update_imu(accel: Vector3, gyro: Vector3, dt: float, head_transform: Transf
 ## "recenter" on that path is the caller zeroing its own angles rather than [method recenter].
 func aim_from(aim_basis: Basis, head_transform: Transform3D) -> void:
 	_apply_aim(aim_basis, head_transform)
+
+## Drive the demo ray from a standard XRController3D aim pose.
+func aim_from_transform(aim_transform: Transform3D) -> void:
+	global_transform = aim_transform
+	visible = true
+	_raycast.force_raycast_update()
+	_update_hover()
+	aim_changed.emit(aim_transform.origin, -aim_transform.basis.z)
 
 ## Put the beam at the hand offset from the head, point it along [param aim_basis], then raycast
 ## and highlight what it hits. Shared by the IMU path and the direct one.

@@ -6,6 +6,6 @@
 **Inherits:** [`XrInterfaceExtension`](https://docs.godotengine.org/en/stable/classes/class_xrinterfaceextension.html)  
 **Registered by:** the `godot_xreal` GDExtension  
 
-An opt-in `XRInterfaceExtension` that enters Godot's standard two-view render path.
+The XREAL `XRInterfaceExtension` used by standard Godot XR scene nodes.
 
-The addon registers and activates it internally when the ProjectSetting `xreal/xr_multiview_poc`, or the Android property `debug.xreal.xr_multiview`, enables the Vulkan-only multiview path; scenes never instantiate it directly. It needs `xr/shaders/enabled=true` and an export preset whose XR Mode is `OpenXR` (with `xr/openxr/enabled=false` the OpenXR runtime stays off). The established two-SubViewport Multipass path remains the default.
+The addon always registers and activates it internally for pose delivery; scenes never instantiate it directly. It claims Godot's primary interface slot, so `XrealXRRuntime` hands that slot back first when a startup OpenXR interface holds it. When the ProjectSetting `xreal/xr_multiview_poc`, or the Android property `debug.xreal.xr_multiview`, enables the Vulkan-only multiview renderer, it also needs `xr/shaders/enabled=true` and an export preset whose XR Mode is `OpenXR`. The established two-SubViewport Multipass path remains the default.

@@ -1,15 +1,15 @@
 extends Node3D
 ## Hand-tracking visualization as a drop-in feature component: small spheres at each of the 26
-## OpenXR joints per hand. It makes sure the shared XrealHandTracker node exists, which registers
-## the XRServer hand trackers, so dropping this scene in is all it takes.
+## OpenXR joints per hand. On XREAL it makes sure the shared XrealHandTracker node exists; on an
+## OpenXR backend it consumes the runtime-owned XRServer hand trackers without special wiring.
 ##
 ## World-locked: add this component under a world-fixed node such as the scene root, NOT under the
 ## head rig. The joint poses are in world/tracking space and stay fixed as the head moves. Under
 ## the rotating rig the head rotation would cancel against the eye cameras and the hands would
 ## appear head-locked, stuck to the screen; under a fixed node they stay on the real hands.
 ##
-## Hardware-gated to the Air 2 Ultra. On unsupported glasses the trackers simply report
-## has_tracking_data = false and the spheres stay hidden.
+## XREAL hand tracking is hardware-gated to the Air 2 Ultra. On unsupported runtimes the trackers
+## simply report has_tracking_data = false and the spheres stay hidden.
 
 const JOINT_COUNT := 26
 # XRHandTracker.HandJoint fingertip ordinals, drawn a touch larger so the hand shape reads clearly.
@@ -44,7 +44,7 @@ func _ready() -> void:
 	# you, because the session bootstraps from the XR rig's first _process and the choice has to be
 	# made before that, so say so loudly instead of failing silently.
 	if XrealShared.is_native_runtime():
-		var src := int(ProjectSettings.get_setting("xreal/input_source", -1))
+		var src := int(XrealShared.read_setting("xreal/input_source", -1))
 		# -1 ("SDK Default") resolves to controller-only, so it carries no Hands bit either. Parenthesise
 		# the mask: in GDScript `==` binds tighter than `&`.
 		if src < 0 or (src & 2) == 0:

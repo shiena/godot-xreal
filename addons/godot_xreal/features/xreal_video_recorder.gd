@@ -288,7 +288,7 @@ func _process(_delta: float) -> void:
 		return
 	var feed := XrealShared.find_camera_feed(get_tree())
 	var blending := _use_blend(feed)
-	var tracker := XrealShared.find_head_tracker(get_tree())
+	var tracker := XrealShared.find_tracking_head(get_tree())
 	if tracker:
 		if blending:
 			# Blend, with the camera ON: drive the AR camera from the RGB camera's real geometry, its FOV

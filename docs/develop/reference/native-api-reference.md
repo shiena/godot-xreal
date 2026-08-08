@@ -193,7 +193,7 @@ RE 済みだが直叩き経路は袋小路（`reverse-engineering.md` 参照）�
 | `XrealSystem` メソッド | 用途 |
 |---|---|
 | `start_controller() -> String` | NRController サブシステムの発見・生成・start（診断文字列を返す） |
-| `poll_controller() -> PackedFloat32Array` | 生 IMU（accel/gyro/mag）。`demo/phone_pointer.gd` が相補フィルタで姿勢化 |
+| `poll_controller() -> PackedFloat32Array` | 生 IMU（accel/gyro/mag）とtouch/button state。`XrealXRInputRouter` がpoll・相補filter・標準XR tracker公開を担当。raw button bit割当は未検証 |
 
 ---
 
