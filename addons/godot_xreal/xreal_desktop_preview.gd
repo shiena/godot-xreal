@@ -12,8 +12,10 @@ extends Node
 ## same 3D world from a second camera, not a copy of the scene. [member Camera3D.current] is
 ## per-viewport, so this leaves the root viewport's own rendering exactly as it was.
 ##
-## Head-locked content (a cursor, a HUD quad) can be parented to [member head], which stands in for
-## the XrealHeadTracker. Find it from anywhere with [method XrealShared.find_preview_head].
+## Head-locked content (a cursor, a HUD quad) can be parented to [member head], the desktop stand-in
+## for the common XRCamera3D. On the XREAL desktop backend,
+## [method XrealShared.find_tracking_head] selects this flycam before the inactive runtime camera;
+## on device and OpenXR it prefers the standard runtime camera.
 ##
 ## Controls: right-drag looks, WASD/QE moves (Shift sprints), R returns the flycam to the origin,
 ## and Tab hands the window's mouse and keys to the app, which then receives them through
@@ -49,8 +51,8 @@ const WINDOW_GAP := 24
 ## Godot's 75 degree default, so this frames roughly what the wearer would see.
 @export var camera_fov := 50.0
 
-## Stand-in for the XrealHeadTracker: parent head-locked content here. Null on device and until
-## _ready has run.
+## Desktop stand-in for the common XR head: parent head-locked content here. Null on device and
+## until _ready has run.
 var head: Node3D
 ## Whether the flycam currently owns the window's mouse and keys. Tab toggles it.
 var flycam_active := true
@@ -65,8 +67,10 @@ var _yaw := 0.0
 var _pitch := 0.0
 
 func _ready() -> void:
-	# On device the glasses show the real thing, so this is desktop-only.
-	if not enabled or XrealShared.is_native_runtime():
+	# Only stand in when nothing else presents the view. Testing the XREAL native runtime alone was
+	# not enough: with the OpenXR backend selected that reads false on an OpenXR headset too, and
+	# this component would open a second OS window on the headset itself.
+	if not enabled or not XrealShared.uses_desktop_preview():
 		set_process(false)
 		queue_free()
 		return

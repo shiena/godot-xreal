@@ -6,6 +6,10 @@ English | [日本語](README_ja.md)
 that drives [XREAL](https://www.xreal.com/) glasses. It ports the Unity `com.xreal.xr` SDK by reusing
 the SDK's native libraries instead of its Unity C# layer.
 
+You build with Godot's XR workflow: an `XROrigin3D` holding an `XRCamera3D` and `XRController3D`
+nodes, hand joints on `XRHandTracker`, buttons on InputMap actions. The addon attaches to that
+hierarchy rather than replacing it.
+
 > **⚠️ Unofficial and experimental.** This independent community project is not affiliated with,
 > endorsed by, or supported by XREAL. "XREAL" and the SDK belong to their respective owners. The
 > native libraries are not bundled; you vendor them yourself as a build prerequisite (see
@@ -37,6 +41,7 @@ The design notes and measurements behind each row live in the developer docs, in
 
 | Feature | Status | Notes |
 |---|---|---|
+| **Godot XR workflow** (`XROrigin3D`, `XRCamera3D`, `XRController3D`, `XRHandTracker`, InputMap) | ✅ | Your scene owns the hierarchy; the addon attaches to it. Controller inputs use Godot's standard OpenXR action names (`trigger_click`, `grip_click`, `menu_button`, `primary_click`, `trigger`, `grip`, `primary`). The XREAL-only capabilities below stay in this addon's own components. |
 | **Head tracking** (6DoF: rotation and position world-lock) | ✅ | The XR-plugin display pose, full orientation and translation, drives the eye cameras. |
 | **Tracking mode** 6DoF / 3DoF / 0DoF | ✅ | Select it with `xreal/tracking_type`, `XrealSystem.set_tracking_type`, or `debug.xreal.tracking_type`. |
 | **Stereo glasses display** (head-locked peek window) | ✅ | World-locked 3D through the glasses. Multipass, both eyes, is the default. |
@@ -55,7 +60,7 @@ The design notes and measurements behind each row live in the developer docs, in
 | **Plane detection** → GDScript | ✅ (Air 2 Ultra) | Horizontal and vertical plane detection through `XrealSystem.set_plane_detection_mode()` and `poll_planes()`, which reports added, updated, and removed planes with pose, size, and alignment, plus `get_plane_boundary()`. Flat C exports in `libXREALXRPlugin.so` carry it, so it needs no extra AAR, but it does need 6DoF. All four AR features' C ABI is RE-confirmed. |
 | **Spatial anchors** → GDScript | ✅ (Air 2 Ultra) | Create, persist, and restore world anchors with `XrealSystem.acquire_anchor()`, `poll_anchors()`, `save_anchor()`, `load_anchor()`, `estimate_anchor_quality()`, and the rest. Flat C exports (the `XRTrackedAnchor` layout is device-confirmed) sit on the vendored `nr_spatial_anchor.aar` backend, and 6DoF is required. This also adds the SDK's per-device gate, `is_camera_supported()` and `is_hmd_feature_supported()`, since the Air 2 Ultra has no RGB camera. |
 | **On-screen touch controller** (phone screen) | ✅ (demo) | App-level Godot UI (`demo/touch_controller.gd`): a customizable touchpad and buttons emit signals, and the phone vibrates for haptics. The phone shows the controller while the glasses show the 3D scene, on separate screens, with no native dependency. It is the Godot analog of the SDK's `XREALVirtualController`. |
-| **Phone 3D pointer** (host IMU) | ✅ (demo) | Tilt the phone to aim a 3D ray in the glasses (`demo/phone_pointer.gd`). GDScript fuses the orientation from the NRController's raw IMU (`accel` for pitch and roll, `gyro` for yaw) exposed by `XrealSystem.poll_controller()`, because the NRController *fused pose* and Godot's own `Input.get_gyroscope()` both read empty on this host. The ray highlights what it hits and the trigger selects it; an on-screen left/right-hand toggle switches the beam origin; bias-learning and a deadzone damp the gyro drift. `recenter` sets forward. |
+| **Phone controller → Godot XR/Input** | ✅ | `XrealXRRuntime` polls the NRController raw IMU/touchpad and `XrealXRInputRouter` fuses a standard `XRControllerTracker` pose. Glasses keys and app-owned phone UI buttons flow through the same addon bridge to `XRController3D` and `xr_select`/`xr_grab`/`xr_menu`. The demo only draws the standard pose as a ray. Raw native button bits remain unmapped until device-verified. |
 
 Also ported: image tracking, marker tracking, depth meshing, photo and blended capture, and FPV
 streaming. Depth meshing carries the SDK's per-vertex semantic classification, and a scan saved on
@@ -162,21 +167,31 @@ missing.
 
 1. Install the addon, either a [prebuilt release](#install-prebuilt) or one
    [built from source](#build-from-source), and vendor the libraries.
-2. Instance `addons/godot_xreal/xreal_rig.tscn` (an `XrealHeadTracker` with a `Camera3D`
-   child) into your scene, or add an `XrealHeadTracker` and parent a `Camera3D` yourself.
-3. On device, the camera follows the wearer's head (6DoF: rotation and position).
+2. Set the renderer to **Compatibility**. The glasses path hands its eye textures to the XREAL
+   compositor as GL texture names, which only that renderer's context can supply. Under Forward+
+   or Mobile the session, head tracking and the phone display still come up, so the only symptom
+   is glasses that stay black.
+3. Build the scene the way you would for any Godot XR target: an `XROrigin3D` with an
+   `XRCamera3D` and controllers, named however you like. Your scene owns it. Add
+   `addons/godot_xreal/features/xreal_xr_runtime.tscn` under it and it attaches to what it finds,
+   with no application code. Starting from nothing, instance `addons/godot_xreal/xr_origin.tscn`
+   instead: the same hierarchy with that component already in it.
 4. On a PC, add `addons/godot_xreal/xreal_desktop_preview.tscn` too. A desktop run has no eye
    viewports, so it draws the 3D world into a second window you fly with right-drag and WASD, and
    it frees itself on device. The
    [addon README](addons/godot_xreal/README.md#previewing-the-glasses-view-on-desktop) lists the
    rest of the controls.
 
-The bundled `demo/main.tscn` does exactly this with a ring of boxes and an on-screen
-status panel.
+The bundled `demo/main.tscn` does exactly this with a ring of boxes and an on-screen controller.
+Its shared input router exposes XR inputs through the controller nodes and maps the canonical
+buttons to `xr_select`, `xr_grab`, and `xr_menu` InputMap actions.
 
 ```
-XrealHeadTracker (Node3D)   # rotation + position driven by the native head pose
-└── Camera3D                # current = true
+XROrigin3D                     # yours
+├── XRCamera3D
+├── LeftController  (XRController3D, tracker = left_hand)
+├── RightController (XRController3D, tracker = right_hand)
+└── XrealXRRuntime             # the XREAL bootstrap, attached to the above
 ```
 
 ### Runtime classes (registered by the GDExtension)
@@ -324,11 +339,12 @@ godot_xreal.gdextension  GDExtension manifest (Android .so + desktop stubs + dlo
 addons/godot_xreal/      the installable addon
   plugin.cfg/.gd         EditorPlugin — project settings + editor docks
   export_plugin.gd       Android export: manifest, permissions, .aar/assets staging
-  xreal_rig.tscn         XrealHeadTracker + Camera3D rig
+  xr_origin.tscn         shared standard Godot XR node hierarchy
+  xreal_rig.tscn         legacy XrealHeadTracker + Camera3D rig
   xreal_desktop_preview.tscn/.gd   desktop preview window (frees itself on device)
   xreal_android_bridge.gd   bootstrap for the XrealBridge Java helper (PiP, activity access)
-  features/              drop-in feature components: camera, planes, anchors, image tracking,
-                         depth mesh, hands, focus plane, photo/blend capture, stream, recorder
+  features/              drop-in components: XR runtime bootstrap, camera, planes, anchors,
+                         image tracking, depth mesh, hands, focus plane, captures, stream, recorder
   shaders/               YCbCr and camera+AR blend shaders the components share
   editor/                docks: vendor_import_dock.gd (SDK import), image_db_dock.gd,
                          mesh_snapshot_dock.gd (depth-mesh scan -> ArrayMesh/.glb)
@@ -344,7 +360,7 @@ src/                     the Rust GDExtension
   system.rs              XrealSystem (RefCounted) + XrealAR (Node — AR-change signals)
   camera_feed.rs         XrealCameraFeed (CameraFeed) — RGB camera
   hand_tracking.rs       XrealHandTracker (Node) → XRHandTracker
-  xr_interface.rs        XrealXrInterface (XRInterfaceExtension) — opt-in Vulkan multiview
+  xr_interface.rs        XrealXrInterface — standard XR pose path + opt-in Vulkan multiview
   depth_mesh.rs · metrics.rs · video_encoder.rs · controller_probe.rs
                          AR mesh · render metrics · FPV H.264 streaming · phone-IMU pointer
   gl.rs / unity_plugin.rs   GLES + Unity native-plugin emulation (display path)

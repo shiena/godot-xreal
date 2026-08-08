@@ -93,9 +93,20 @@ running on an XREAL-compatible host (phone / Beam) with the glasses on USB-C.
   2026-07-21 each eye is ONE direct `glCopyImageSubData` into the `GL_RGB10_A2` array (same copy
   cost as Multipass). No rendering-load gain over Multipass (the rig still draws two
   SubViewports), so Multipass stays the default.
-- The `XRInterfaceExtension` migration was not needed for stereo and is not planned; hand
-  tracking does integrate with Godot XR via `XRHandTracker`/`XRServer`
-  (`docs/develop/plans/hand-tracking-plan.md`).
+- An `XRInterfaceExtension` was not required to make stereo submission work. It is now used as the
+  standard Godot XR pose provider while the proven compositor path remains intact; hand tracking
+  likewise integrates through `XRHandTracker`/`XRServer`.
+
+### Phase 5 — standard Godot XR scene backend ✅ DONE 2026-08-08
+
+- The earlier Phase 4 verdict above applied only to replacing the proven compositor path for
+  stereo rendering. `XrealXrInterface` now remains active on GLES too, as the standard head-pose
+  provider for `XRCamera3D`, while Multipass submission stays unchanged.
+- `features/xreal_xr_runtime.tscn` initializes XREAL or OpenXR behind one `XROrigin3D` scene.
+- Phone controller input is published as standard `XRControllerTracker` state and canonical
+  InputMap actions. Hand tracking already used standard `XRHandTracker`s.
+- See `docs/develop/reference/godot-xr-backend.md` for the current architecture and compatibility
+  policy.
 
 ## Risks
 - **Display path is the single make-or-break risk** — validate Phase 2 early.

@@ -11,7 +11,7 @@
 
 Frame blending, or mixed-reality capture, as a drop-in feature component: the Godot analog of the SDK's FrameBlender. It renders the AR scene from the head POV into a transparent-background SubViewport, then a composite SubViewport blends that OVER the RGB camera YCbCr feed (xreal_blend_2d.gdshader). capture_blended() saves the composite as a JPG, which is what a bystander would see: the camera image with the virtual content overlaid. This is an RGB-camera (Eyes) feature, so One Series only.
 
-It needs the camera running (xreal_camera.tscn enabled) and the head rig in the tree. Both are discovered at capture time through XrealShared.find_camera_feed() and find_head_tracker(), with no wiring needed.
+It needs the camera running (xreal_camera.tscn enabled) and a common XR camera in the tree. Both are discovered at capture time through XrealShared.find_camera_feed() and find_tracking_head(), with no wiring needed.
 
 ## Properties
 

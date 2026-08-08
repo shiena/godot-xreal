@@ -17,16 +17,13 @@ extends Node3D
 ##     you don't need, since they know nothing about each other.
 ## The debug UI ($UI) also lives in main.tscn, its Recenter button wired the same way.
 ##
-## This script does only the demo glue: detect the GDExtension, instance the addon camera rig
-## (addons/godot_xreal/xreal_rig.tscn, an XrealHeadTracker with a Camera3D child), map the
-## phone-menu controls to the feature components, and pump the controller IMU into the phone
-## pointer per frame. On XREAL hardware the camera looks around with the wearer's head; on
-## desktop the rig stays at identity and the features stay inert, so the scene still runs.
+## This script does only the demo glue: map the phone-menu controls to the drop-in feature
+## components and pump the controller IMU into the phone pointer. XrealXRRuntime owns all backend
+## initialization, so application code sees the same standard Godot XR hierarchy on every runtime.
 
 # The GDExtension classes (XrealHeadTracker, XrealSystem, XrealAR, XrealHandTracker,
 # XrealCameraFeed) exist only when the native extension loaded, so every lookup below is
 # defensive: a missing or failed extension shows a diagnostic instead of a blank scene.
-const RIG_SCENE := "res://addons/godot_xreal/xreal_rig.tscn"
 
 # Demo-side shared-storage saver (pure GDScript MediaStore through JavaClassWrapper): the capture,
 # recorder and mesh components return the saved file's path and the demo forwards it into the phone
@@ -46,9 +43,6 @@ var _extension_loaded := false
 # One-shot AR-feature availability diagnostic: logs which native AR ABIs resolved on this device,
 # a short delay after boot (so the session has come up). See docs/develop/plans/ar-features-plan.md.
 var _ar_diag_frames := 0
-# Phase C path B: phone IMU (via NRController state) drives the 3D pointer (_ar.phone_pointer).
-var _controller_started := false
-var _imu_poll_count := 0
 var _phone_pointer: Node3D
 var _cursor_mat: StandardMaterial3D
 # Which way "up" is for the touchpad cursor; see _setup_touch_controller.
@@ -88,6 +82,11 @@ var _switching: Dictionary = {}
 @onready var _status: Label = $UI/Panel/Margin/VBox/Status
 @onready var _ar: Node3D = $ARScene
 @onready var _cursor: MeshInstance3D = $ARScene.cursor
+@onready var _xr_runtime: XrealXRRuntime = $XROrigin3D/XrealXRRuntime
+@onready var _xr_camera: XRCamera3D = $XROrigin3D/XRCamera3D
+@onready var _xr_controllers: Array[XRController3D] = [
+	$XROrigin3D/LeftController, $XROrigin3D/RightController,
+]
 # The addon feature components, instanced in main.tscn as children of Main, a world-fixed node,
 # which the world-locked features require.
 @onready var _camera: Node3D = $XrealCamera
@@ -101,33 +100,20 @@ var _switching: Dictionary = {}
 @onready var _recorder: Node = $XrealVideoRecorder
 
 func _ready() -> void:
-	XrealAndroidBridge.register()
-	# The GDExtension is Android-only. On desktop the editor loads a dummy stub that DOES register
-	# these classes, so the F1 help can document them, which means class presence alone no longer
-	# proves the real extension is live. Gate on the platform too, or the demo would drive no-op
-	# placeholders.
-	_extension_loaded = OS.get_name() == "Android" \
-		and ClassDB.class_exists(&"XrealSystem") and ClassDB.class_exists(&"XrealHeadTracker")
-	if _extension_loaded:
-		_system = ClassDB.instantiate(&"XrealSystem")
-		# Boot-time settings from Project Settings (xreal/*), applied before the session starts.
-		# Each "SDK Default" (-1) falls back to the matching debug.xreal.* property / native default.
-		# Head-tracking mode (0 = 6DoF [recommended], 1 = 3DoF, 2 = 0DoF).
-		var tracking_type := int(ProjectSettings.get_setting("xreal/tracking_type", -1))
-		if tracking_type >= 0 and _system.has_method(&"set_tracking_type"):
-			_system.set_tracking_type(tracking_type)
-		# Stereo rendering mode (0 = Multipass [recommended], 2 = Multiview).
-		var stereo_mode := int(ProjectSettings.get_setting("xreal/stereo_mode", -1))
-		if stereo_mode >= 0 and _system.has_method(&"set_stereo_mode"):
-			_system.set_stereo_mode(stereo_mode)
-		# Input sources (1 = Controller [default], 2 = Hands, 3 = both). Hands costs ~878 ms of cold
-		# start; see the setting's comment in addons/godot_xreal/plugin.gd.
-		var input_source := int(ProjectSettings.get_setting("xreal/input_source", -1))
-		if input_source >= 0 and _system.has_method(&"set_input_source"):
-			_system.set_input_source(input_source)
-	else:
-		push_error("[demo] godot_xreal GDExtension not loaded: XrealSystem/XrealHeadTracker missing. Build the Android .so (cargo ndk) and check the .gdextension paths.")
-	_spawn_rig()
+	_extension_loaded = _xr_runtime.is_xreal_active()
+	_system = _xr_runtime.get_xreal_system()
+	_tracker = _xr_runtime.get_xreal_driver()
+	_xr_runtime.display_started.connect(_on_display_started)
+	_xr_runtime.key_event.connect(_on_key_event)
+	_xr_runtime.wearing_changed.connect(_on_wearing_changed)
+	# Read the buttons through the standard XR nodes, the way an OpenXR project would. Both
+	# controllers are connected because the phone can act as either hand. The equivalent InputMap
+	# actions (xr_select, xr_grab) are published too, but a click coming from the glasses callback
+	# is a mid-process pulse, so polling is_action_just_pressed() would miss it; the signal is
+	# synchronous and never does.
+	for controller in _xr_controllers:
+		controller.button_pressed.connect(_on_xr_button_pressed)
+		controller.button_released.connect(_on_xr_button_released)
 	# Async feature states (camera start is lazy, stream pairing is async) are reflected back onto
 	# the phone-menu toggles through the components' active_changed signals.
 	_camera.active_changed.connect(_on_feature_active.bind("camera"))
@@ -156,23 +142,6 @@ func _ready() -> void:
 	# toggle from there.
 	_set_controller_disabled("mesh_save", true)
 
-func _spawn_rig() -> void:
-	if _extension_loaded:
-		var rig := (load(RIG_SCENE) as PackedScene).instantiate()
-		add_child(rig)
-		_tracker = rig  # the rig's root node IS the XrealHeadTracker
-		# Recenter the view to the current head direction once tracking goes live.
-		if _tracker.has_signal(&"display_started"):
-			_tracker.display_started.connect(_on_display_started)
-		# Glasses hardware inputs (One Pro: physical keys + wear sensor).
-		if _tracker.has_signal(&"key_event"):
-			_tracker.key_event.connect(_on_key_event)
-			_tracker.wearing_changed.connect(_on_wearing_changed)
-	# No else branch: off device the glasses half of the split is drawn by $XrealDesktopPreview, in
-	# its own window, so the root viewport needs no camera of its own. Adding one here would only
-	# draw the scene a second time, under the touch controller's opaque backdrop where nobody can
-	# see it.
-
 ## Set up the runtime side of the phone touch controller, meaning the head-locked 3D cursor and
 ## the host-preview camera. $PhoneScreen keeps its layout and signal wiring static in
 ## phone_screen.tscn and main.tscn, and it renders only on the phone's root viewport, so the
@@ -181,25 +150,23 @@ func _setup_touch_controller() -> void:
 	# The head-locked cursor makes phone touches visible in the glasses, which proves the split, so
 	# reparent it under whatever is playing the head: the tracker on device, the preview window's
 	# head on desktop. With neither there is nothing to lock it to, so drop it.
-	var head: Node3D = _tracker if _tracker else XrealShared.find_preview_head(get_tree())
+	var head: Node3D = _xr_camera if _tracker else XrealShared.find_preview_head(get_tree())
 	if head:
 		_cursor.reparent(head, false)
 		_cursor_mat = _cursor.material_override as StandardMaterial3D
-		# The eye cameras invert Y (pose handedness) but the plain preview camera does not, so the
-		# touchpad's "up" maps to -y in the glasses and to +y in the preview window.
+		# The XREAL eye cameras invert Y (pose handedness), so the touchpad's "up" maps to -y there.
+		# Nothing else does: OpenXR renders through Godot's standard path and the preview window
+		# uses a plain camera, so both keep +y. This tracks the eye buffers, not the head choice
+		# above, which is why it tests the XREAL driver alone.
 		_cursor_y_sign = -1.0 if _tracker else 1.0
 	else:
 		_cursor.queue_free()
 		_cursor = null
+	if _extension_loaded:
+		_setup_phone_pointer()
 
-	# The phone shows the controller, not a 3D preview, so stop the rig's host-preview camera. The
-	# root viewport then stops rendering the world, one full scene pass less: it used to be drawn
-	# three times, the host preview plus two eyes. The glasses are unaffected, since they render
-	# from the extension's own per-eye SubViewports.
-	if _tracker:
-		var host_cam := _tracker.get_node_or_null(^"Camera3D") as Camera3D
-		if host_cam:
-			host_cam.current = false
+	# The XREAL backend disables host 3D once its eye viewports are live. OpenXR renders this same
+	# XRCamera3D directly through the root XR viewport.
 
 ## Desktop only: off device the phone pointer has no IMU to follow, so the preview window's mouse
 ## aims it instead. Tab hands that mouse between flying the camera and aiming the pointer, and R
@@ -238,33 +205,45 @@ func _on_preview_app_input(event: InputEvent) -> void:
 		_pointer_aimed = true
 
 func _on_tc_touchpad(value: Vector2) -> void:
+	_xr_runtime.set_controller_axis(value)
 	if _cursor:
 		_cursor.position = Vector3(value.x * 0.8, value.y * 0.5 * _cursor_y_sign, -2.0)
 
 func _on_tc_touchpad_released() -> void:
+	_xr_runtime.set_controller_axis(Vector2.ZERO, false)
 	if _cursor:
 		_cursor.position = Vector3(0.0, 0.0, -2.0)
 
 func _on_tc_trigger(pressed: bool) -> void:
+	_xr_runtime.set_controller_button(&"trigger_click", pressed)
 	if _cursor_mat:
 		_cursor_mat.albedo_color = Color(1.0, 0.4, 0.3) if pressed else Color(0.3, 0.85, 1.0)
-	# Trigger click = select whatever the phone pointer is aiming at.
-	if pressed and _phone_pointer and _phone_pointer.has_method(&"select"):
-		_phone_pointer.select()
 
-## Right/left hand toggle from the on-screen controller: flip the pointer's beam origin.
+## Right/left hand toggle from the on-screen controller, fed through the addon runtime.
 func _on_tc_hand(is_right: bool) -> void:
-	if _phone_pointer and _phone_pointer.has_method(&"set_hand"):
-		_phone_pointer.set_hand(is_right)
+	_xr_runtime.set_controller_hand(is_right)
 
 func _on_tc_grip(pressed: bool) -> void:
-	if _cursor:
-		_cursor.scale = Vector3.ONE * (1.6 if pressed else 1.0)
+	_xr_runtime.set_controller_button(&"grip_click", pressed)
+
+## Canonical XR buttons, whatever fed them: the on-screen controller, a glasses key, or an OpenXR
+## controller. trigger_click and primary_click both mean "select" (they share the xr_select action).
+func _on_xr_button_pressed(input_name: String) -> void:
+	match input_name:
+		"trigger_click", "primary_click":
+			if _phone_pointer and _phone_pointer.has_method(&"select"):
+				_phone_pointer.select()
+		"grip_click":
+			if _cursor:
+				_cursor.scale = Vector3.ONE * 1.6
+
+func _on_xr_button_released(input_name: String) -> void:
+	if input_name == "grip_click" and _cursor:
+		_cursor.scale = Vector3.ONE
 
 func _on_tc_menu() -> void:
+	_xr_runtime.pulse_controller_button(&"menu_button")
 	_on_recenter_pressed()
-	if _phone_pointer:
-		_phone_pointer.recenter()
 
 ## Phone-menu "Camera" toggle, driving the XrealCamera component. set_enabled(true) only
 ## *requests* the camera, since the capture starts lazily once tracking is live; an async start
@@ -555,16 +534,14 @@ func _setup_phone_pointer() -> void:
 	# position and blocks the view before it can be aimed.
 
 func _on_recenter_pressed() -> void:
-	if _tracker and _tracker.has_method(&"recenter"):
-		_tracker.recenter()
+	_xr_runtime.recenter()
 
 func _on_display_started() -> void:
 	# The glasses display and tracking are live, so disarm the no-glasses watchdog. This is the
 	# reliable "glasses up" event, for when is_tracking() lags past the timeout on a slow cold start.
 	_tracking_seen = true
 	# Make the current head direction "forward".
-	if _tracker and _tracker.has_method(&"recenter"):
-		_tracker.recenter()
+	_xr_runtime.recenter()
 
 func _on_key_event(key: int, action: int) -> void:
 	# Long-press the MENU key to recenter (current head direction becomes "forward"),
@@ -605,20 +582,9 @@ func _process(_delta: float) -> void:
 		_phone_pointer.aim_from(
 			Basis.from_euler(Vector3(deg_to_rad(_pointer_pitch), deg_to_rad(_pointer_yaw), 0.0)),
 			(_preview.head as Node3D).global_transform)
-	# Phase C path B: the phone IMU, through NRController state, drives the 3D pointer. Godot's own
-	# IMU returns all-zero on this host, so we read accel (gravity for pitch and roll) and gyro (yaw)
-	# from the controller.
-	if _tracker and _tracker.has_method(&"is_tracking") and _tracker.is_tracking() and _system:
-		if not _controller_started and _system.has_method(&"start_controller"):
-			_controller_started = true
-			_system.start_controller()
-			_setup_phone_pointer()
-		elif _phone_pointer and _system.has_method(&"poll_controller"):
-			var s: PackedFloat32Array = _system.poll_controller()
-			if s.size() >= 7 and s[0] > 0.5:
-				var accel := Vector3(s[1], s[2], s[3])
-				var gyro := Vector3(s[4], s[5], s[6])
-				_phone_pointer.update_imu(accel, gyro, _delta, _tracker.global_transform)
-				_imu_poll_count += 1
-				if _imu_poll_count == 90:  # ~1.5 s in: capture the current aim as "forward"
-					_phone_pointer.recenter()
+	# The addon owns XREAL controller polling and fusion. The demo consumes only the standard
+	# XRController3D pose to draw its optional ray visualization.
+	if _phone_pointer and _extension_loaded:
+		var controller := _xr_runtime.get_active_controller()
+		if controller != null and controller.get_is_active():
+			_phone_pointer.aim_from_transform(controller.global_transform)

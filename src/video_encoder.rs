@@ -255,7 +255,7 @@ fn resolve_idr_hack() -> bool {
     use godot::obj::Singleton;
     let ps = ProjectSettings::singleton();
     if ps.has_setting("xreal/idr_workaround") {
-        ps.get_setting("xreal/idr_workaround")
+        ps.get_setting_with_override("xreal/idr_workaround")
             .try_to::<bool>()
             .unwrap_or(true)
     } else {

@@ -15,7 +15,7 @@ The destination is XREAL's "StreamingReceiver" PC app, found by LAN discovery (x
 
 The encoder reads the GL texture on the render thread, so the per-frame push runs inside a RenderingServer.call_on_render_thread callback. See docs/develop/plans/fpv-streaming-plan.md.
 
-Both the head rig and the live camera feed are discovered per frame, through XrealShared.find_head_tracker() and find_camera_feed(), so toggling the camera mid-stream simply switches the streamed view.
+Both the common XR camera and the live camera feed are discovered per frame, through XrealShared.find_tracking_head() and find_camera_feed(), so toggling the camera mid-stream simply switches the streamed view.
 
 ## Properties
 

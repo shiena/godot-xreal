@@ -18,8 +18,8 @@ extends EditorPlugin
 ##     (Air 2 Ultra only).
 ##   - XrealCameraFeed (CameraFeed) publishes the RGB camera frames.
 ##
-## The drop-in feature sub-scenes (camera, plane detection, spatial anchors, image tracking,
-## depth mesh, hand tracking, photo and blend capture, FPV streaming) live under
+## The drop-in feature sub-scenes (XR runtime bootstrap, camera, plane detection, spatial anchors,
+## image tracking, depth mesh, hand tracking, photo and blend capture, FPV streaming) live under
 ## addons/godot_xreal/features/.
 ##
 ## This EditorPlugin exists so the addon can be toggled from Project > Project Settings >
@@ -35,7 +35,7 @@ var _image_db_dock: Control
 var _vendor_import_dock: Control
 var _mesh_snapshot_dock: Control
 
-## The `xreal/*` project settings. Most are consumed at runtime, and demo/main.gd reads them with
+## The `xreal/*` project settings. Most are consumed by the drop-in runtime and feature scenes with
 ## these same inline defaults, so a project works with or without them persisted. The exceptions
 ## are `xreal/multi_resume` and `xreal/auto_log`, which export_plugin.gd reads at EXPORT time to
 ## shape the Android manifest. They are registered here so they show up in Project > Project

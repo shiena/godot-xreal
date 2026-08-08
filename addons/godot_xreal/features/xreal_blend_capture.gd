@@ -6,8 +6,8 @@ extends Node
 ## bystander would see: the camera image with the virtual content overlaid. This is an RGB-camera
 ## (Eyes) feature, so One Series only.
 ##
-## It needs the camera running (xreal_camera.tscn enabled) and the head rig in the tree. Both are
-## discovered at capture time through XrealShared.find_camera_feed() and find_head_tracker(), with
+## It needs the camera running (xreal_camera.tscn enabled) and a common XR camera in the tree. Both are
+## discovered at capture time through XrealShared.find_camera_feed() and find_tracking_head(), with
 ## no wiring needed.
 
 ## Emitted when an operation fails or the feature is unavailable, so the load site can react by
@@ -134,7 +134,7 @@ func capture_blended() -> String:
 		return ""
 	_ensure()
 	_apply_rgb_geometry()
-	var tracker := XrealShared.find_head_tracker(get_tree())
+	var tracker := XrealShared.find_tracking_head(get_tree())
 	for eye in _ar_cams.size():
 		if tracker:
 			# Sit the AR camera at the RGB camera's pose, the head plus its small forward offset, rather

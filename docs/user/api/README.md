@@ -22,7 +22,7 @@ Registered by the GDExtension, and available as global types on device.
 | [XrealHandTracker](xreal_hand_tracker.md) | [`Node`](https://docs.godotengine.org/en/stable/classes/class_node.html) | Node that publishes XREAL hand tracking to Godot's `XRServer` as two `XRHandTracker`s, `/user/hand_tracker/left` and `/user/hand_tracker/right`. … |
 | [XrealHeadTracker](xreal_head_tracker.md) | [`Node3D`](https://docs.godotengine.org/en/stable/classes/class_node3d.html) | Scene node that drives its own transform from the native XREAL head pose each frame. … |
 | [XrealSystem](xreal_system.md) | [`RefCounted`](https://docs.godotengine.org/en/stable/classes/class_refcounted.html) | SDK information and control surface for the XREAL glasses. |
-| [XrealXrInterface](xreal_xr_interface.md) | [`XrInterfaceExtension`](https://docs.godotengine.org/en/stable/classes/class_xrinterfaceextension.html) | An opt-in `XRInterfaceExtension` that enters Godot's standard two-view render path. |
+| [XrealXrInterface](xreal_xr_interface.md) | [`XrInterfaceExtension`](https://docs.godotengine.org/en/stable/classes/class_xrinterfaceextension.html) | The XREAL `XRInterfaceExtension` used by standard Godot XR scene nodes. |
 
 ## Feature components
 
@@ -43,6 +43,7 @@ Drop-in scenes under `addons/godot_xreal/features/`: instance one, flip its `ena
 | [XrealStream](xreal_stream.md) | [`Node`](https://docs.godotengine.org/en/stable/classes/class_node.html) | First-person-view streaming as a drop-in feature component. … |
 | [XrealStreamPairing](xreal_stream_pairing.md) | [`Node`](https://docs.godotengine.org/en/stable/classes/class_node.html) | Pairs the FPV stream with XREAL's "StreamingReceiver" PC app through its LAN-discovery protocol, reverse-engineered from the SDK sample (Samples~/Camera Features/FirstPersonStreammingCast) and validated against the real receiver. … |
 | [XrealVideoRecorder](xreal_video_recorder.md) | [`Node`](https://docs.godotengine.org/en/stable/classes/class_node.html) | First-person-view mp4 recording as a drop-in feature component. … |
+| [XrealXRRuntime](xreal_xr_runtime.md) | [`Node3D`](https://docs.godotengine.org/en/stable/classes/class_node3d.html) | Bootstrap that drives an XROrigin3D hierarchy from the XREAL glasses. |
 
 ## Helpers
 
@@ -53,3 +54,4 @@ Supporting GDScript classes in the addon.
 | [MeshSnapshotDock](mesh_snapshot_dock.md) | [`VBoxContainer`](https://docs.godotengine.org/en/stable/classes/class_vboxcontainer.html) | Editor dock: turns a depth-mesh snapshot written on the glasses into something the editor can open, an `ArrayMesh` resource or a .glb. … |
 | [XrealAndroidBridge](xreal_android_bridge.md) | [`Object`](https://docs.godotengine.org/en/stable/classes/class_object.html) | Bootstrap for the XrealBridge Java helper (addons/godot_xreal/android/src/…/XrealBridge.java). … |
 | [XrealDesktopPreview](xreal_desktop_preview.md) | [`Node`](https://docs.godotengine.org/en/stable/classes/class_node.html) | Desktop-only preview: a second OS window showing what the glasses would draw, flown around with mouse-look and WASD. |
+| [XrealXRInputRouter](xreal_xr_input_router.md) | [`Node`](https://docs.godotengine.org/en/stable/classes/class_node.html) | Runtime-neutral bridge between Godot XR controller trackers and InputMap actions. |

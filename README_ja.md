@@ -5,6 +5,10 @@
 `godot-xreal` は [XREAL](https://www.xreal.com/) グラスを駆動する Godot 4 用 GDExtension です（[godot-rust](https://godot-rust.github.io/) による Rust 実装）。
 Unity 版 `com.xreal.xr` SDK を、そのネイティブライブラリを再利用する形で Godot へ移植したものです（動作確認は SDK 3.1.0）。
 
+開発は Godot 標準の XR ワークフローで行います。
+`XROrigin3D` の下に `XRCamera3D` と `XRController3D` を置き、手の関節は `XRHandTracker`、ボタンは InputMap アクションで受け取ります。
+アドオンはこの階層を置き換えず、取り付きます。
+
 > **⚠️ 非公式かつ実験的。**
 > 本プロジェクトは独立したコミュニティ製で、XREAL 社とは無関係であり、同社の承認もサポートも受けていません。
 > 「XREAL」および SDK は各権利者に帰属します。
@@ -33,6 +37,7 @@ XREAL SDK for Unity 3.1.0 のネイティブライブラリを用いて、XREAL 
 
 | 機能 | 状態 | 補足 |
 |---|---|---|
+| **Godot 標準 XR ワークフロー**（`XROrigin3D`、`XRCamera3D`、`XRController3D`、`XRHandTracker`、InputMap） | ✅ | シーンの階層はアプリが所有し、アドオンがそこへ取り付きます。コントローラの入力名は Godot 標準の OpenXR アクション名（`trigger_click`、`grip_click`、`menu_button`、`primary_click`、`trigger`、`grip`、`primary`）です。以下の XREAL 固有機能は本アドオン独自のコンポーネントで提供します。 |
 | **ヘッドトラッキング**（6DoF、回転と位置の world-lock） | ✅ | XR-plugin の表示ポーズ（フル姿勢と並進）でアイカメラを駆動します。 |
 | **トラッキングモード**（6DoF / 3DoF / 0DoF） | ✅ | `xreal/tracking_type`、`XrealSystem.set_tracking_type`、`debug.xreal.tracking_type` で選択します。 |
 | **ステレオ表示**（ヘッドロックの覗き窓） | ✅ | グラス越しにワールド固定の 3D を表示します。既定は Multipass（両眼）です。 |
@@ -51,7 +56,7 @@ XREAL SDK for Unity 3.1.0 のネイティブライブラリを用いて、XREAL 
 | **平面検出**（GDScript へ） | ✅（Air 2 Ultra） | 水平と垂直の平面検出を `XrealSystem.set_plane_detection_mode()` と `poll_planes()`（追加、更新、削除をポーズ、サイズ、alignment 付きで返す）、`get_plane_boundary()` で提供します。`libXREALXRPlugin.so` のフラット C export で動くため追加 AAR は不要で、6DoF が必須です。4 つの AR 機能の C ABI は RE 確定済みです。 |
 | **空間アンカー**（GDScript へ） | ✅（Air 2 Ultra） | ワールドアンカーの作成、永続化、復元を `XrealSystem.acquire_anchor()`、`poll_anchors()`、`save_anchor()`、`load_anchor()`、`estimate_anchor_quality()` などで提供します。フラット C export（`XRTrackedAnchor` レイアウトは実機確定）と同梱の `nr_spatial_anchor.aar` バックエンドで動き、6DoF が必須です。併せて `is_camera_supported()` と `is_hmd_feature_supported()`（SDK のデバイス別判定。Air 2 Ultra は RGB カメラ非搭載）も追加しています。 |
 | **オンスクリーンタッチコントローラ**（スマホ画面） | ✅（デモ） | アプリ層の Godot UI です（`demo/touch_controller.gd`）。カスタマイズ可能なタッチパッドとボタンがシグナルを出し、スマホ振動でハプティクスを返します。スマホにコントローラ、グラスに 3D を表示する画面分離の構成で、ネイティブには依存しません。SDK の `XREALVirtualController` に相当します。 |
-| **スマホ 3D ポインター**（ホスト IMU） | ✅（デモ） | スマホを傾けてグラス内に 3D レイを飛ばします（`demo/phone_pointer.gd`）。姿勢は `XrealSystem.poll_controller()` が露出する NRController の生 IMU（`accel` からピッチとロール、`gyro` からヨー）を GDScript で融合して作ります。本機では NRController の融合ポーズも Godot 内蔵の `Input.get_gyroscope()` も空だったためです。レイキャストで当たったオブジェクトをハイライトし、トリガーで選択します。オンスクリーンの左右手切替でレイの原点を切替え、gyro ドリフトはバイアス学習とデッドゾーンで抑えます。`recenter` で正面をリセットします。 |
+| **スマホコントローラー → Godot XR/Input** | ✅ | `XrealXRRuntime` が NRController の生 IMU とタッチパッドを取得し、`XrealXRInputRouter` が標準 `XRControllerTracker` のポーズへ変換します。グラスの物理キーとアプリ側のスマホ UI ボタンも、同じアドオン内のブリッジから `XRController3D` と `xr_select`/`xr_grab`/`xr_menu` へ届きます。デモは標準ポーズをレイとして表示するだけです。ネイティブの生ボタンビットは、実機で割り当てを確認するまで変換しません。 |
 
 このほか画像トラッキング、マーカートラッキング、深度メッシュ、写真と合成のキャプチャ、FPV 配信も移植済みです。
 深度メッシュは SDK の頂点ごとの意味分類を保持し、グラスで保存したスキャンはエディタ dock で `ArrayMesh` や `.glb` に変換できます。
@@ -148,15 +153,18 @@ GDExtension 部分は素の godot-rust です。
 ## 使い方
 
 1. アドオンを導入し（[プリビルト](#インストールプリビルト) か [ソースからビルド](#ビルドソースから)）、ライブラリを vendoring します。
-2. `addons/godot_xreal/xreal_rig.tscn`（`XrealHeadTracker` + 子 `Camera3D`）をシーンに配置します。`XrealHeadTracker` を追加して子に `Camera3D` を自分で置いても同じです。
-3. 実機では、カメラが頭の動きに追従します（6DoF の回転と位置）。
+2. レンダラーを **Compatibility** にします。グラスへの表示は eye テクスチャを GL のテクスチャ名として XREAL コンポジタへ渡す方式で、これを供給できるコンテキストを持つのがこのレンダラーだけだからです。Forward+ や Mobile でもセッション、ヘッドトラッキング、スマホ側の表示は立ち上がるため、症状はグラスが黒いままという形でしか現れません。
+3. Godot XR の作法どおりにシーンを組みます。`XROrigin3D` の下に `XRCamera3D` とコントローラを、好きな名前で置いてください。階層はアプリ側が所有します。その下に `addons/godot_xreal/features/xreal_xr_runtime.tscn` を追加すると、見つけた階層に自動で取り付きます。初期化コードは不要です。ゼロから始めるなら `addons/godot_xreal/xr_origin.tscn` を配置してください。同じ階層にこのコンポーネントを入れたものです。
 4. PC で確認するときは `addons/godot_xreal/xreal_desktop_preview.tscn` も追加します。デスクトップ実行にはグラス向けの描画先が無いため、このコンポーネントが 2 枚目のウィンドウを開いてそこに 3D を描きます。右ドラッグで見回し、WASD で移動できます。実機では自分を破棄するので、そのまま残せます。操作の一覧は [アドオンの README](addons/godot_xreal/README.md#previewing-the-glasses-view-on-desktop) にあります。
 
-同梱の `demo/main.tscn` が、ボックスのリングでこれを実演します。
+同梱の `demo/main.tscn` が、ボックスのリングとオンスクリーンタッチコントローラでこれを実演します。アドオンの input router が XR 入力を標準のコントローラノードへ公開し、主要ボタンを InputMap の `xr_select`、`xr_grab`、`xr_menu` に変換します。
 
 ```
-XrealHeadTracker (Node3D)   # ネイティブのヘッドポーズで回転 + 位置を駆動
-└── Camera3D                # current = true
+XROrigin3D                     # アプリ側が所有
+├── XRCamera3D
+├── LeftController  (XRController3D, tracker = left_hand)
+├── RightController (XRController3D, tracker = right_hand)
+└── XrealXRRuntime             # XREAL の bootstrap。上の階層に取り付く
 ```
 
 `XrealHeadTracker` の主なメンバは次の2つです。
@@ -277,12 +285,13 @@ godot_xreal.gdextension  GDExtension マニフェスト（Android .so + デス�
 addons/godot_xreal/      インストール可能なアドオン
   plugin.cfg/.gd         EditorPlugin — プロジェクト設定とエディタ dock を登録
   export_plugin.gd       Android エクスポート: manifest・権限・.aar/assets ステージング
-  xreal_rig.tscn         XrealHeadTracker + Camera3D リグ
+  xr_origin.tscn         Godot 標準 XR ノードの共通階層
+  xreal_rig.tscn         旧 XrealHeadTracker + Camera3D リグ
   xreal_desktop_preview.tscn/.gd   デスクトッププレビュー（実機では自分を破棄）
   xreal_android_bridge.gd   XrealBridge Java ヘルパの起動役（PiP、Activity 取得）
-  features/              置くだけで動く機能コンポーネント: カメラ、平面、アンカー、
-                         画像トラッキング、深度メッシュ、ハンド、フォーカス平面、
-                         写真と合成のキャプチャ、配信、録画
+  features/              置くだけで動く機能コンポーネント: XR runtime、カメラ、平面、
+                         アンカー、画像トラッキング、深度メッシュ、ハンド、
+                         フォーカス平面、写真と合成のキャプチャ、配信、録画
   shaders/               各コンポーネントが共有する YCbCr とカメラ+AR 合成シェーダー
   editor/                dock: vendor_import_dock.gd（SDK 取込）, image_db_dock.gd,
                          mesh_snapshot_dock.gd（深度メッシュのスキャン → ArrayMesh/.glb）
@@ -298,7 +307,7 @@ src/                     Rust GDExtension 本体
   system.rs              XrealSystem（RefCounted）+ XrealAR（Node — AR 変化シグナル）
   camera_feed.rs         XrealCameraFeed（CameraFeed）= RGB カメラ
   hand_tracking.rs       XrealHandTracker（Node）→ XRHandTracker
-  xr_interface.rs        XrealXrInterface（XRInterfaceExtension）= オプトインの Vulkan multiview
+  xr_interface.rs        XrealXrInterface = 標準 XR pose 経路 + オプトインの Vulkan multiview
   depth_mesh.rs · metrics.rs · video_encoder.rs · controller_probe.rs
                          AR メッシュ · レンダーメトリクス · FPV H.264 配信 · スマホ IMU ポインタ
   gl.rs / unity_plugin.rs   GLES + Unity ネイティブプラグイン emulation（表示パス）

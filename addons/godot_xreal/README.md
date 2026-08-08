@@ -1,8 +1,9 @@
 # Godot XREAL (addon)
 
-Use XREAL glasses from Godot 4. A native GDExtension (Rust, godot-rust) drives 6DoF head tracking,
-rotation and position, with 3DoF and 0DoF selectable, and drop-in feature sub-scenes cover the rest
-of the SDK surface: camera, planes, anchors, image tracking, meshing, hands, capture, and streaming.
+Use XREAL glasses from Godot 4 through Godot's XR workflow: your `XROrigin3D`, `XRCamera3D`,
+`XRController3D` and `XRHandTracker` nodes, driven by a native GDExtension (Rust, godot-rust). It
+supplies 6DoF head tracking, rotation and position, with 3DoF and 0DoF selectable. Drop-in feature
+sub-scenes add the rest: camera, planes, anchors, image tracking, meshing, capture, and streaming.
 See the repository root for build and RE details.
 
 ## Install
@@ -19,7 +20,7 @@ See the repository root for build and RE details.
 
 | Class | Base | Purpose |
 |---|---|---|
-| `XrealHeadTracker` | `Node3D` | Drives its transform, rotation and position, from the native head pose each frame. Parent a `Camera3D` under it. `is_tracking() -> bool`, `recenter()`. Emits hot-plug signals (`glasses_connected`, `glasses_disconnected`) and hardware-input signals (`key_event`, `key_state_changed`, `wearing_changed`, `brightness_changed`, `volume_changed`, `ec_level_changed`, `glasses_event`) with `KEY_*`, `ACTION_*`, and `KEY_STATE_*` constants. Keep **one per tree**: it owns the stereo eye viewports and the render driver. |
+| `XrealHeadTracker` | `Node3D` | XREAL backend driver. Publishes the native head pose through the primary `XrealXrInterface` for a standard `XRCamera3D`, while retaining its own transform for legacy child-camera rigs. `is_tracking() -> bool`, `recenter()`. Emits the existing hot-plug and device signals for backwards compatibility. Keep **one per tree**: it owns the compositor render driver. |
 | `XrealSystem` | `RefCounted` | SDK info and control: session and tracking state, tracking-type switching, AR-feature availability and config, controller, streaming, metrics, device and camera geometry. A stateless facade over process-global native state, so create as many instances as you like. |
 | `XrealAR` | `Node` | Per-frame poller for the plane, anchor, image, and mesh change streams, re-emitted as signals. Polling consumes the native change queues, so **keep exactly one XrealAR in the tree** (the feature components share one automatically through `XrealShared.get_ar`). |
 | `XrealHandTracker` | `Node` | Registers the XRServer hand trackers `/user/hand_tracker/left` and `/user/hand_tracker/right` (Air 2 Ultra). One per tree suffices (`XrealShared.get_hand_tracker`). |
@@ -27,16 +28,34 @@ See the repository root for build and RE details.
 
 ## Quick start
 
-Drop `addons/godot_xreal/xreal_rig.tscn` (an `XrealHeadTracker` with a `Camera3D`
-child) into your scene, or build it in code:
+Your scene owns the XR hierarchy. Add `addons/godot_xreal/features/xreal_xr_runtime.tscn` under an
+`XROrigin3D` and it attaches to the `XRCamera3D` and `XRController3D` nodes it finds there, matching
+controllers on their `tracker` rather than on node names, so an application may name and nest its own
+however it likes. Set `xr_origin_path` to be explicit. Starting from nothing, instance
+`addons/godot_xreal/xr_origin.tscn`: the same hierarchy with the component already in it.
 
-```gdscript
-var rig := preload("res://addons/godot_xreal/xreal_rig.tscn").instantiate()
-add_child(rig)            # rig is the XrealHeadTracker; the camera looks around with the head
+No initialization script is required either way. The component starts the XREAL runtime, applies its
+boot settings, installs the standard trackers, and publishes the camera it found to the group the
+feature components look the head up in.
 
-var sys := XrealSystem.new()
-print(sys.is_available(), sys.get_plugin_version(), sys.get_device_type())
-```
+Instancing `xr_origin.tscn` makes its controllers part of an instanced scene, so hanging your own
+nodes off them needs **Editable Children** on that instance, from its context menu in the scene
+tree. Without it the editor accepts the node and then drops it on load, with no error anywhere: the
+first sign is something that simply is not there at runtime. Building the hierarchy yourself avoids
+the question entirely.
+
+Other Godot XR addons work against these nodes, since they are the standard ones. A stock
+godot-xr-tools `function_pointer` was checked on device: it found the controller through
+`XRHelpers` and fired on `trigger_click` with nothing modified. Leave that addon's own **plugin**
+disabled though, because enabling it writes `xr/openxr/enabled=true` into your project, which is the
+one setting the glasses path needs left alone. Its scenes and scripts work without the plugin.
+
+Controller pose and raw XR input come from the standard nodes. The runtime polls and fuses the native phone IMU, publishes its touchpad, maps glasses keys, and accepts app-owned phone
+UI controls through `set_controller_button/axis/hand`. `xr_input_router.gd` maps `trigger_click` or
+`primary_click`, `grip_click`, and `menu_button` to the `xr_select`, `xr_grab`, and `xr_menu`
+InputMap actions. The
+raw NRController button bitfield is not mapped because its current-device layout is not yet
+verified. The old `xreal_rig.tscn` remains for existing projects.
 
 The current app `Camera3D` remains the source for its transform, near/far clipping, render layers,
 environment, camera attributes and offsets. Runtime changes are mirrored to both eye cameras;
@@ -53,8 +72,9 @@ their shared plumbing themselves, with no wiring:
 
 - A single shared `XrealAR` poller and `XrealHandTracker` are find-or-created under the tree
   root on first use (groups `xreal_shared_ar` and `xreal_shared_hand_tracker`).
-- The head rig is looked up through the `xreal_head_tracker` group (`xreal_rig.tscn` already
-  joins it; add the group to a custom rig).
+- The standard head is looked up through the `xreal_shared_xr_camera` group
+  (`xr_origin.tscn` already joins it). Legacy `xreal_rig.tscn` projects fall back to the
+  `xreal_head_tracker` group.
 - The live camera feed is discovered through the `xreal_camera_feature` group.
 
 On desktop (editor and PC runs) every component is inert, so scenes stay runnable.
@@ -68,6 +88,7 @@ reason and covers runtime failures too. The demo connects them in `demo/main.gd`
 
 | Scene | World-locked¹ | API | Devices |
 |---|---|---|---|
+| `xreal_xr_runtime.tscn` | under your `XROrigin3D` | autonomous XREAL start-up; attaches to the app's hierarchy (`xr_origin_path` to be explicit); methods `get_xreal_driver()`, `get_xreal_system()`, `recenter()` | all |
 | `xreal_camera.tscn` | no | `set_enabled(on) -> bool`, `get_feed()`, `is_feed_live()`, signals `feed_changed(feed)` and `active_changed(active)`; export `enabled` (the feed only, so draw it yourself) | RGB camera = One Series |
 | `xreal_planes.tscn` | yes | `set_enabled(on) -> bool`; exports `enabled`, `switch_to_6dof` (plane detection needs 6DoF) | 6DoF devices |
 | `xreal_anchors.tscn` | yes | `set_enabled(on) -> bool`, `place_at_fingertip()` (pinch also places); exports `enabled`, `save_file` (Guid persistence) | Air 2 Ultra |
@@ -102,6 +123,16 @@ async, so their real state comes back through `active_changed`.
 
 ### Project settings
 
+Start with the renderer. `renderer/rendering_method` has to be `gl_compatibility`, for the mobile
+override as well: the glasses path hands its eye-viewport textures to the XREAL compositor as GL
+texture names, and only that renderer gives Godot the context those names live in. Nothing errors
+out under Forward+ or Mobile. The session starts, head tracking runs, the phone display draws, and
+the glasses simply stay black, which makes it an expensive setting to get wrong. Vulkan reaches the
+glasses only through the opt-in vk_bridge, behind the Android property
+`debug.xreal.vulkan_glasses=1`.
+
+This addon targets XREAL glasses only.
+
 With the plugin enabled, `xreal/tracking_type` appears in *Project > Project Settings*
 (SDK default / 6DoF / 3DoF / 0DoF, applied at boot). It is read at runtime with the same
 default, so a project without it saved behaves identically.
@@ -118,9 +149,10 @@ the controller.
 both eyes in one scene pass through Godot's XR multiview instead of two viewports. Enabling it
 requires two XR settings. Set `xr/shaders/enabled=true` in *Project Settings* (an advanced
 setting), and set **XR Mode** to `OpenXR` in the Android export preset; without them the exporter
-strips the XR shaders and 3D stops rendering. Keep `xr/openxr/enabled=false`, as this repo's `project.godot`
-does explicitly: the OpenXR runtime itself stays off, the preset flag only preserves the shaders. The Compatibility renderer ignores the setting and keeps the regular
-two-viewport path. The Android property `debug.xreal.xr_multiview` (0/1) overrides the setting for
+strips the XR shaders and 3D stops rendering. Leave `xr/openxr/enabled` at its `false` default for
+this path: the preset flag only preserves the shaders, and the OpenXR runtime itself stays off.
+The Compatibility renderer ignores the setting and keeps the
+regular two-viewport path. The Android property `debug.xreal.xr_multiview` (0/1) overrides the setting for
 same-APK A/B comparison. Dynamic render scale does not apply to this path; `xreal/render_scale` is
 sampled once at startup.
 
@@ -142,13 +174,20 @@ alone is not enough; that is what `XrealShared.is_native_runtime()` does.
 On device the phone's root viewport draws your 2D UI and the extension's eye viewports draw the 3D
 world. `xreal/disable_host_viewport_3d` defaults to `true`, preventing that shared world from also
 being drawn as a hidden third pass on the phone. Turn it off only when the phone intentionally
-shows a 3D mirror. A PC run has no eye viewports, so the setting is not applied there; the 3D half
-otherwise has nowhere to go, and a full-screen phone UI hides whatever the root viewport drew.
+shows a 3D mirror.
+
+A PC run has no eye viewports, and `xreal_xr_runtime.tscn` marks its `XRCamera3D` current, so the
+root viewport would draw the world behind a full-screen phone UI that hides it. The same setting
+therefore applies on desktop as well, but only once the preview window below is in the scene, since
+the 3D then has somewhere else to go. Without a preview the root viewport is the only view the app
+has, so it keeps drawing. Only the drawing is switched off either way, never `current`.
 
 Add `addons/godot_xreal/xreal_desktop_preview.tscn` to your scene to get it back. It opens a second
-window onto the same 3D world, and it frees itself on device, so a shipped scene can keep it. Parent
-head-locked content to its `head` node, the desktop stand-in for the `XrealHeadTracker`;
-`XrealShared.find_preview_head(get_tree())` returns it, as `find_head_tracker` returns the real one.
+window onto the same 3D world, and it frees itself on device, so a shipped scene can keep it.
+For the XREAL desktop backend, `XrealShared.find_tracking_head(get_tree())` returns this preview's
+flycam `head` before the identity runtime camera. On device it prefers the standard `XRCamera3D`,
+with the legacy `XrealHeadTracker` as a fallback. Use it for backend-neutral
+head-locked content.
 
 | Input | Action |
 | --- | --- |

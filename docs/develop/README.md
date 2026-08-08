@@ -19,6 +19,7 @@ user-facing documentation, including the generated class reference, lives in
 |---|---|
 | [reverse-engineering.md](reference/reverse-engineering.md) | XREAL native ABI RE notes, the source of truth for `src/ffi.rs` and `src/native.rs`. Includes the direct-NR-path probe log. |
 | [native-api-reference.md](reference/native-api-reference.md) | RE'd native functions ↔ GDScript bindings table (Japanese). Which symbols are callable, which are probe-only. |
+| [godot-xr-backend.md](reference/godot-xr-backend.md) | XREAL と OpenXR で同じ標準 Godot XR シーンを使う backend 設計。runtime scene と head、controller、hand、Input の公開経路、互換性の境界。 |
 | [multiview-shader-authoring.md](reference/multiview-shader-authoring.md) | What breaks in shaders under true multiview (Japanese). Godot needs no Unity-style `unity_StereoEyeIndex` boilerplate — spatial shaders get per-view matrices for free — but CPU-supplied camera uniforms, 3DGS/gsplat's own view-proj, and `CompositorEffect`s that skip the `get_view_count()` loop all render mono or right-eye-blank. Includes the `VIEW_INDEX` diagnostic material for the PoC's Go/No-Go item 1. |
 
 ## plans/: feature design and implementation plans

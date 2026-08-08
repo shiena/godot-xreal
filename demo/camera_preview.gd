@@ -6,10 +6,10 @@ extends Node3D
 ## because a CameraTexture on a script-fed feed only shows Godot's placeholder. The shader is the
 ## addon's spatial YCbCr->RGB one.
 ##
-## The quad is reparented under the head tracker (xreal_head_tracker group) once it exists, so it
-## follows the gaze (head-locked) and the eye SubViewports draw it (shared world). It stays inert
-## off device and while the camera is off: the panel keeps hidden, since a not-yet-fed shader
-## would show pink.
+## The quad is reparented under the common XRCamera3D once it exists, so it follows the gaze
+## (head-locked) on every XR backend. Legacy rigs remain supported through XrealShared's fallback.
+## It stays inert off device and while the camera is off: the panel keeps hidden, since a
+## not-yet-fed shader would show pink.
 
 ## Show the head-locked preview quad. Turn off to keep the shared camera feed running with no preview.
 @export var show_preview := true
@@ -37,10 +37,10 @@ func _process(_delta: float) -> void:
 		if _panel.visible:
 			_panel.visible = false
 		return
-	# Head-lock: reparent the quad under the tracker (spawned at runtime) so it follows the gaze.
-	var tracker := XrealShared.find_head_tracker(get_tree())
-	if tracker and _panel.get_parent() != tracker:
-		_panel.reparent(tracker, false)
+	# Head-lock to the common XR camera, including any XROrigin3D world-space adjustment.
+	var head := XrealShared.find_tracking_head(get_tree())
+	if head and _panel.get_parent() != head:
+		_panel.reparent(head, false)
 	# The XrealCameraFeed keeps these ImageTextures updated in place; re-set them each frame so a
 	# camera off->on (a fresh feed with new textures) rewires cleanly.
 	var mat: ShaderMaterial = _panel.material_override

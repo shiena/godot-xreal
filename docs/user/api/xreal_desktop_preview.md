@@ -15,7 +15,7 @@ On device the two displays split the work: the phone's root viewport draws the t
 
 A `Window` IS a `Viewport`, so pointing its [`Viewport.world_3d`](https://docs.godotengine.org/en/stable/classes/class_viewport.html) at the root's renders the same 3D world from a second camera, not a copy of the scene. [`Camera3D.current`](https://docs.godotengine.org/en/stable/classes/class_camera3d.html) is per-viewport, so this leaves the root viewport's own rendering exactly as it was.
 
-Head-locked content (a cursor, a HUD quad) can be parented to [`head`](#property-head), which stands in for the XrealHeadTracker. Find it from anywhere with [`XrealShared.find_preview_head()`](xreal_shared.md#method-find_preview_head).
+Head-locked content (a cursor, a HUD quad) can be parented to [`head`](#property-head), the desktop stand-in for the common XRCamera3D. On the XREAL desktop backend, [`XrealShared.find_tracking_head()`](xreal_shared.md#method-find_tracking_head) selects this flycam before the inactive runtime camera; on device and OpenXR it prefers the standard runtime camera.
 
 Controls: right-drag looks, WASD/QE moves (Shift sprints), R returns the flycam to the origin, and Tab hands the window's mouse and keys to the app, which then receives them through [`app_input`](#signal-app_input) and drives whatever it likes with them. Tab hands them back.
 
@@ -45,7 +45,7 @@ Whether the flycam currently owns the window's mouse and keys. Tab toggles it.
 
 ### head: Node3D
 
-Stand-in for the XrealHeadTracker: parent head-locked content here. Null on device and until _ready has run.
+Desktop stand-in for the common XR head: parent head-locked content here. Null on device and until _ready has run.
 
 <a id="property-look_sensitivity"></a>
 
