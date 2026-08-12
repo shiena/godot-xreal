@@ -37,14 +37,21 @@ const SCALE_CHANGE_COOLDOWN_SECONDS: f64 = 1.0;
 /// along head-local X.
 pub(crate) const HALF_IPD: f32 = 0.0315;
 
-/// Resolve the per-eye 3D render scale from `xreal/render_scale`. Supported backends render the
-/// SubViewport at the reduced size and upscale directly into the XREAL eye texture; the fallback
-/// keeps a full-size output and uses Godot's bilinear 3D scaling.
+/// Resolve the per-eye 3D render scale. Supported backends render the SubViewport at the reduced
+/// size and upscale directly into the XREAL eye texture; the fallback keeps a full-size output and
+/// uses Godot's bilinear 3D scaling.
 ///
-/// There is no longer an Android-property override, so changing the scale means editing the project
-/// setting and re-exporting. On the XR multiview path this value is also read once, at rig creation,
-/// and [`DynamicScaleController`] does not run there.
+/// `adb shell setprop debug.xreal.render_scale <percent>` overrides `xreal/render_scale`, so the
+/// scale can be swept on a device without re-exporting. Sharpness and frame rate move in opposite
+/// directions here and only the wearer can judge the result, which is why it is worth being able to
+/// change between launches.
+///
+/// Set it **before** the app starts. On the XR multiview path this value is read once, at rig
+/// creation, and [`DynamicScaleController`] does not run there.
 pub(crate) fn eye_render_scale() -> f32 {
+    if let Some(percent) = crate::session::android_prop_i32(b"debug.xreal.render_scale\0") {
+        return (percent as f32 / 100.0).clamp(MIN_RENDER_SCALE, 1.0);
+    }
     let ps = ProjectSettings::singleton();
     if ps.has_setting("xreal/render_scale") {
         ps.get_setting_with_override("xreal/render_scale")

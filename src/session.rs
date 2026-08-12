@@ -31,6 +31,35 @@ use godot::builtin::Quaternion;
 use crate::ffi::{NrPose, TrackingType, UserDefinedSettings};
 use crate::native::XrealNative;
 
+/// Read a NUL-terminated Android system property as an `i32`. It returns `None` off Android, and
+/// when the property is unset or unparseable.
+///
+/// This is how a value can be changed on a device without re-exporting, which matters for the ones
+/// worth sweeping while wearing the glasses. Only [`crate::node::eye_render_scale`] uses it; the
+/// bring-up kill switches that used to live here went away with the Vulkan path they gated.
+pub fn android_prop_i32(key: &[u8]) -> Option<i32> {
+    #[cfg(target_os = "android")]
+    {
+        let mut buf = [0u8; 92]; // PROP_VALUE_MAX
+        let n = unsafe {
+            libc::__system_property_get(
+                key.as_ptr() as *const libc::c_char,
+                buf.as_mut_ptr() as *mut libc::c_char,
+            )
+        };
+        if n > 0 {
+            if let Ok(s) = std::str::from_utf8(&buf[..n as usize]) {
+                if let Ok(v) = s.trim().parse::<i32>() {
+                    return Some(v);
+                }
+            }
+        }
+    }
+    #[cfg(not(target_os = "android"))]
+    let _ = key;
+    None
+}
+
 /// Explicit head-tracking-mode override set from GDScript through `XrealSystem.set_tracking_type`.
 /// `-1` means unset, falling through to the system property and then the default. It must be set
 /// **before** the session bootstraps, for instance in an autoload `_ready`, before the XR rig
