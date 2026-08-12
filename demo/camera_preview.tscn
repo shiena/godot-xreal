@@ -5,9 +5,10 @@
 
 ; Head-locked camera preview: a 16:9 quad ~1/3 of the view at 2 m depth (the eye cameras see
 ; roughly +/-0.8 x +/-0.45 m there), with the YCbCr->RGB shader (orientation and the R/B swap are
-; baked in as device-calibrated constants). The eye cameras invert Y (pose handedness (x,-y,z,w)),
-; so on the glasses buffer +X is right but -Y is up: hence +x, -y for "top-right". Hidden until the
-; first camera frame wires the Y/CbCr textures, so the not-yet-fed shader never shows as pink.
+; baked in as device-calibrated constants). The panel used to sit at -y for the top right, back when
+; the eye image was mirrored vertically on its way to the compositor (fixed in src/gl.rs and
+; src/vk_bridge.rs); with the image upright, +x and +y are right and up. Hidden until the first
+; camera frame wires the Y/CbCr textures, so the not-yet-fed shader never shows as pink.
 [sub_resource type="QuadMesh" id="QuadMesh_campanel"]
 size = Vector2(0.5333, 0.3)
 
@@ -18,7 +19,7 @@ shader = ExtResource("2_ycbcr")
 script = ExtResource("1_script")
 
 [node name="PreviewPanel" type="MeshInstance3D" parent="."]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.48, -0.3, -2)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.48, 0.3, -2)
 visible = false
 mesh = SubResource("QuadMesh_campanel")
 material_override = SubResource("ShaderMaterial_campanel")

@@ -93,12 +93,14 @@ func update_imu(accel: Vector3, gyro: Vector3, dt: float, head_transform: Transf
 
 	if not _have_ref:
 		return
-	# Relative rotation from the recenter pose, re-expressed in Godot's frame. Yaw came out correct
-	# but pitch inverted, so flip the pitch (X euler) and keep yaw and roll.
+	# Relative rotation from the recenter pose, re-expressed in Godot's frame. The pitch used to be
+	# negated here, because tilting the phone up sent the beam down. That was the eye image arriving
+	# mirrored vertically (fixed in src/gl.rs and src/vk_bridge.rs): the beam was going the right way
+	# and the view was upside-down. With the image upright, pitch is direct, as in xr_input_router.gd.
 	var rel := _ref * _q
 	var to_godot := Basis(Vector3(1, 0, 0), Vector3(0, 0, -1), Vector3(0, 1, 0))
 	var e := (to_godot * Basis(rel) * to_godot.transposed()).get_euler()
-	_apply_aim(Basis.from_euler(Vector3(-e.x, e.y, e.z)), head_transform)
+	_apply_aim(Basis.from_euler(e), head_transform)
 
 ## Aim the beam directly instead of from the IMU, for a host that has no phone sensors: the desktop
 ## preview drives it from the mouse. [param aim_basis] is the beam's orientation in world space, so

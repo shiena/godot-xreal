@@ -1,4 +1,4 @@
-[gd_scene load_steps=8 format=3 uid="uid://ardemoscene1"]
+[gd_scene load_steps=15 format=3 uid="uid://ardemoscene1"]
 
 [ext_resource type="Script" uid="uid://d3eet4asknvow" path="res://demo/ar_scene.gd" id="1_ar"]
 [ext_resource type="Script" uid="uid://dn5lfmr5kgaik" path="res://demo/phone_pointer.gd" id="2_pointer"]
@@ -21,6 +21,28 @@ size = Vector3(0.18, 0.18, 0.18)
 
 [sub_resource type="StandardMaterial3D" id="CursorMat"]
 albedo_color = Color(0.3, 0.85, 1, 1)
+
+[sub_resource type="BoxMesh" id="BoxMesh_mast"]
+size = Vector3(0.025, 0.42, 0.025)
+
+[sub_resource type="BoxMesh" id="BoxMesh_cap"]
+size = Vector3(0.09, 0.09, 0.09)
+
+[sub_resource type="BoxMesh" id="BoxMesh_arm"]
+size = Vector3(0.26, 0.025, 0.025)
+
+[sub_resource type="BoxMesh" id="BoxMesh_base"]
+size = Vector3(0.22, 0.035, 0.22)
+
+[sub_resource type="StandardMaterial3D" id="MatUp"]
+albedo_color = Color(1, 1, 1, 1)
+
+; Amber, not red: the ring box straight ahead is red, and the arm crosses it.
+[sub_resource type="StandardMaterial3D" id="MatRight"]
+albedo_color = Color(1, 0.82, 0.1, 1)
+
+[sub_resource type="StandardMaterial3D" id="MatDown"]
+albedo_color = Color(0.2, 0.45, 1, 1)
 
 [node name="ARScene" type="Node3D"]
 script = ExtResource("1_ar")
@@ -158,3 +180,46 @@ material_override = SubResource("CursorMat")
 [node name="PhonePointer" type="Node3D" parent="."]
 visible = false
 script = ExtResource("2_pointer")
+
+; Orientation marker. The ring above is all at y = 0 and identical left to right, so a vertically
+; mirrored eye image looks exactly like a correct one through it - which is how the port ran
+; upside-down for a long time (docs/develop/reference/eye-image-orientation.md). This marker cannot
+; hide either mirror: the white cap tops the mast, the blue slab sits at its foot, and the red arm
+; reaches to the wearer's RIGHT. Upside-down puts the slab above the cap; a left-right mirror puts
+; the red arm and its label on the left. Both read at a glance, with no head movement to interpret.
+;
+; It sits 1.8 m ahead and spans about -10 to +7 degrees horizontally and -8 to +13 vertically, so
+; the whole marker stays inside the narrowest XREAL field of view (Aura, ~+/-20 horizontally)
+; without the wearer turning their head. It is offset to the left of the forward axis to clear the
+; head-locked touch cursor, which sits dead centre at 2 m.
+[node name="Orientation" type="Node3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.3, 0, -1.8)
+
+[node name="Mast" type="MeshInstance3D" parent="Orientation"]
+mesh = SubResource("BoxMesh_mast")
+material_override = SubResource("MatUp")
+
+[node name="Cap" type="MeshInstance3D" parent="Orientation"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.255, 0)
+mesh = SubResource("BoxMesh_cap")
+material_override = SubResource("MatUp")
+
+[node name="Arm" type="MeshInstance3D" parent="Orientation"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.14, 0.2, 0)
+mesh = SubResource("BoxMesh_arm")
+material_override = SubResource("MatRight")
+
+[node name="Base" type="MeshInstance3D" parent="Orientation"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.23, 0)
+mesh = SubResource("BoxMesh_base")
+material_override = SubResource("MatDown")
+
+[node name="UpLabel" type="Label3D" parent="Orientation"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.36, 0)
+pixel_size = 0.0025
+text = "UP"
+
+[node name="RightLabel" type="Label3D" parent="Orientation"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.4, 0.2, 0)
+pixel_size = 0.0025
+text = "RIGHT"
