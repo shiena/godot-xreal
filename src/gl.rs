@@ -397,14 +397,18 @@ unsafe fn scratch_fbo(g: &Gl, slot: usize) -> u32 {
 /// Allocate a 2D `GL_RGB10_A2` texture of the given size and return its GL name, or `None` on
 /// failure. It backs the Multipass per-eye swapchain textures.
 ///
-/// `_srgb` is intentionally ignored: the eye texture has to be a UNORM format and NOT sRGB-typed,
-/// confirmed on device 2026-07-17. Godot's `gl_compatibility` renderer outputs display-ready,
-/// sRGB-encoded values, and the XREAL compositor passthrough-samples the eye texture and writes the
-/// sampled value to the display without re-encoding. An A/B test allocating the eye texture as
-/// `GL_SRGB8_ALPHA8`, the same bytes but sRGB-typed, came out about 26% too dark, because the
-/// compositor applies a sample-time sRGB-to-linear decode. Unity's port uses an sRGB-typed target
-/// because it renders in *linear* space, whereas our display-ready values must not be decoded. See
-/// `docs/develop/archive/multiview-investigation.md`, the 2026-07-17 color-space test.
+/// `_srgb` is intentionally ignored: the eye texture has to be a UNORM format and NOT sRGB-typed.
+/// Godot's `gl_compatibility` renderer outputs display-ready, sRGB-encoded values, and with
+/// `color_space: 0` in `InitUserDefinedSettings` the compositor passthrough-samples the eye texture
+/// and writes the sampled value to the display without re-encoding. Unity's port uses an sRGB-typed
+/// target because it renders in *linear* space and declares `color_space: 1`.
+///
+/// That pairing is the whole point: the format here and the declared colour space in
+/// `session.rs` have to agree, and neither is meaningful alone. The 2026-07-17 A/B that read
+/// `GL_SRGB8_ALPHA8` as "about 26% too dark" was run while we still declared Linear, so the
+/// baseline it was compared against was itself an image encoded twice, and the sRGB-typed variant
+/// it rejected was the accurate one. See `docs/develop/archive/multiview-investigation.md` for the
+/// original test, and `session.rs` for the measurement that settled it.
 ///
 /// **`GL_RGB10_A2`**, a UNORM format like the previous `GL_RGBA8`, deliberately matches Godot's
 /// `gl_compatibility` 3D render-target format, probed as `0x8059` on device 2026-07-21; see
