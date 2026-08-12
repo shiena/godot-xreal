@@ -37,9 +37,13 @@ const SCALE_CHANGE_COOLDOWN_SECONDS: f64 = 1.0;
 /// along head-local X.
 pub(crate) const HALF_IPD: f32 = 0.0315;
 
-/// Resolve the per-eye 3D render scale. Supported backends render the SubViewport at the reduced
-/// size and upscale directly into the XREAL eye texture; the fallback keeps a full-size output and
-/// uses Godot's bilinear 3D scaling. The Android property overrides the persisted project setting.
+/// Resolve the per-eye 3D render scale from `xreal/render_scale`. Supported backends render the
+/// SubViewport at the reduced size and upscale directly into the XREAL eye texture; the fallback
+/// keeps a full-size output and uses Godot's bilinear 3D scaling.
+///
+/// There is no longer an Android-property override, so changing the scale means editing the project
+/// setting and re-exporting. On the XR multiview path this value is also read once, at rig creation,
+/// and [`DynamicScaleController`] does not run there.
 pub(crate) fn eye_render_scale() -> f32 {
     let ps = ProjectSettings::singleton();
     if ps.has_setting("xreal/render_scale") {
