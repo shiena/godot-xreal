@@ -933,45 +933,13 @@ pub fn blit_texture(src: u32, src_w: i32, src_h: i32, dst: u32, dst_w: i32, dst_
         return;
     }
     unsafe {
-        // Preferred path: with identical formats, as probed, ONE exact copy runs with no FBO or state
-        // churn.
-        if let Some(copy_image_sub_data) = g.copy_image_sub_data {
-            if src_w == dst_w
-                && src_h == dst_h
-                && probed_src_format(g, src) == GL_RGB10_A2 as u32
-                && !DIRECT_COPY_2D_BROKEN.load(Ordering::Relaxed)
-            {
-                while (g.get_error)() != 0 {}
-                copy_image_sub_data(
-                    src,
-                    GL_TEXTURE_2D,
-                    0,
-                    0,
-                    0,
-                    0,
-                    dst,
-                    GL_TEXTURE_2D,
-                    0,
-                    0,
-                    0,
-                    0,
-                    dst_w,
-                    dst_h,
-                    1,
-                );
-                let err = (g.get_error)();
-                if BLIT2D_LOG.fetch_add(1, Ordering::Relaxed) < 8 {
-                    godot::global::godot_print!(
-                        "[xreal] direct_copy_2d dst={dst} src={src} {dst_w}x{dst_h}: gl_err={err}"
-                    );
-                }
-                if err == 0 {
-                    return;
-                }
-                // It failed, so remember that and fall through to the blit below.
-                DIRECT_COPY_2D_BROKEN.store(true, Ordering::Relaxed);
-            }
-        }
+        // `glCopyImageSubData` was the preferred path here: with identical formats it is ONE exact
+        // copy with no FBO or state churn. It cannot be used any more, because the eye image has to
+        // be mirrored vertically on the way across (the compositor reads it with the opposite
+        // vertical origin) and a texel-for-texel copy cannot transform coordinates. The blit below
+        // costs an FBO bind and a completeness check per eye, which measured as noise next to the
+        // fill it performs.
+        let _ = &DIRECT_COPY_2D_BROKEN;
 
         let mut prev_draw: i32 = 0;
         let mut prev_read: i32 = 0;
@@ -1008,17 +976,23 @@ pub fn blit_texture(src: u32, src_w: i32, src_h: i32, dst: u32, dst_w: i32, dst_
             if scissor_was_on {
                 (g.disable)(GL_SCISSOR_TEST);
             }
-            // Straight copy (no Y-flip): the SubViewport render target and the eye texture share
-            // GL bottom-left origin, matching blit_default_framebuffer (flipping showed upside-down).
+            // Y-flip: the destination's Y bounds are swapped, so the blit mirrors vertically.
+            // Godot renders with its origin at the top-left while the XREAL compositor reads the
+            // eye texture bottom-left, and a straight copy put the sky under the ground on device.
+            //
+            // This used to be a straight copy, on the reading that both share GL's bottom-left
+            // origin. That was never verifiable against demo/, whose content is a ring of boxes
+            // all at y = 0: the mirrored image is indistinguishable from the correct one. A scene
+            // with a horizon settled it.
             (g.blit_framebuffer)(
                 0,
                 0,
                 src_w,
                 src_h,
                 0,
-                0,
-                dst_w,
                 dst_h,
+                dst_w,
+                0,
                 GL_COLOR_BUFFER_BIT,
                 GL_LINEAR as u32,
             );
@@ -1056,7 +1030,8 @@ pub fn blit_texture(src: u32, src_w: i32, src_h: i32, dst: u32, dst_w: i32, dst_
 /// Blit Godot's just-rendered window content, the default framebuffer or back buffer, fbo 0, into
 /// an eye texture. Godot's root viewport renders direct to screen, so it has no sampleable
 /// offscreen texture and `texture_get_native_handle` returns 0; reading fbo 0 gets its pixels
-/// instead. It is a straight copy, with no Y-flip.
+/// instead. The blit mirrors vertically, since the compositor reads the eye texture with the
+/// opposite vertical origin.
 pub fn blit_default_framebuffer(dst: u32, src_w: i32, src_h: i32, dst_w: i32, dst_h: i32) {
     let Some(g) = gl() else { return };
     if dst == 0 {
@@ -1088,17 +1063,17 @@ pub fn blit_default_framebuffer(dst: u32, src_w: i32, src_h: i32, dst_w: i32, ds
             if scissor_was_on {
                 (g.disable)(GL_SCISSOR_TEST);
             }
-            // Straight copy (no Y-flip): fbo 0 and the eye texture share GL bottom-left origin, so
-            // flipping made it upside-down on the glasses.
+            // Y-flip, for the same reason as fill_texture: the compositor reads the eye texture
+            // with the opposite vertical origin, so the destination's Y bounds are swapped.
             (g.blit_framebuffer)(
                 0,
                 0,
                 src_w,
                 src_h,
                 0,
-                0,
-                dst_w,
                 dst_h,
+                dst_w,
+                0,
                 GL_COLOR_BUFFER_BIT,
                 GL_LINEAR as u32,
             );

@@ -83,6 +83,7 @@ const VK_FORMAT_R8G8B8A8_SRGB: u32 = 43;
 const VK_FORMAT_FEATURE_BLIT_SRC_BIT: u32 = 0x0000_0400;
 const VK_FORMAT_FEATURE_BLIT_DST_BIT: u32 = 0x0000_0800;
 const VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT: u32 = 0x0000_1000;
+const VK_FILTER_NEAREST: u32 = 0;
 const VK_FILTER_LINEAR: u32 = 1;
 
 fn supports_linear_rgba8_blit(features: u32) -> bool {
@@ -594,6 +595,8 @@ static FENCE_PENDING: AtomicBool = AtomicBool::new(false);
 static SRC_LOGGED: AtomicBool = AtomicBool::new(false);
 /// One-shot direct scale-blit log gate.
 static SCALE_BLIT_LOGGED: AtomicBool = AtomicBool::new(false);
+/// The raw-copy fallback cannot mirror the eye image, so say once that the view is upside-down.
+static COPY_FALLBACK_LOGGED: AtomicBool = AtomicBool::new(false);
 
 impl EyeSource {
     const ZERO: EyeSource = EyeSource {
@@ -1487,11 +1490,20 @@ pub fn fill_eyes(targets: &[(u32, usize)]) -> u32 {
             };
             let src = sources[eye.min(1)];
             let same_size = src.width == bundle.width && src.height == bundle.height;
-            // Linear blitting an sRGB-typed source into the UNORM bridge image would decode its
-            // color values, unlike the established raw-copy path. The node detects that source
-            // and rebuilds a full-size viewport; keep this guard here as the last safe fallback.
-            let blit_ok = !same_size && !src.srgb && api.linear_blit_rgba8;
-            let fill_ok = src.valid && src.vk_image != 0 && (same_size || blit_ok);
+            // Blit, not copy, even at equal size. Godot's render target has its origin at the
+            // top-left and the XREAL compositor reads the eye texture bottom-left, so the image
+            // has to be mirrored vertically on the way across; `vkCmdCopyImage` moves raw bytes
+            // and cannot transform coordinates, while a blit expresses the flip by swapping the
+            // destination's Y bounds. At equal size the filter is NEAREST, so every pixel arrives
+            // with the value the copy would have delivered, only mirrored.
+            //
+            // Blitting an sRGB-typed source into the UNORM bridge image would decode its color
+            // values, unlike the raw copy, so that one case stays on the copy path. The node
+            // detects such a source and rebuilds a full-size viewport, so this is a last-resort
+            // fallback; it cannot flip, and `COPY_FALLBACK_LOGGED` says so once.
+            let blit_ok =
+                !src.srgb && api.cmd_blit_image.is_some() && (same_size || api.linear_blit_rgba8);
+            let fill_ok = src.valid && src.vk_image != 0 && (blit_ok || same_size);
 
             // Acquire the slot from the foreign (GL/compositor) side. First use discards.
             let old_layout = if bundle.first_use {
@@ -1579,7 +1591,17 @@ pub fn fill_eyes(targets: &[(u32, usize)]) -> u32 {
                     1,
                     &src_in,
                 );
-                if same_size {
+                if !blit_ok {
+                    // sRGB-typed source only: the copy cannot mirror, so this path renders
+                    // upside-down. The node normally rebuilds such a source at full size.
+                    if !COPY_FALLBACK_LOGGED.swap(true, Ordering::Relaxed) {
+                        godot::global::godot_warn!(
+                            "[xreal] vk_bridge: raw copy fallback (srgb={}, blit={}); the eye \
+                             image cannot be Y-flipped and will render upside-down",
+                            src.srgb,
+                            api.cmd_blit_image.is_some()
+                        );
+                    }
                     let region = VkImageCopy {
                         src_subresource: source_layers,
                         src_offset: VkOffset3D { x: 0, y: 0, z: 0 },
@@ -1603,11 +1625,12 @@ pub fn fill_eyes(targets: &[(u32, usize)]) -> u32 {
                 } else {
                     if !SCALE_BLIT_LOGGED.swap(true, Ordering::Relaxed) {
                         godot::global::godot_print!(
-                            "[xreal] vk_bridge: direct linear scale blit {}x{} -> {}x{}",
+                            "[xreal] vk_bridge: Y-flip blit {}x{} -> {}x{} ({})",
                             src.width,
                             src.height,
                             bundle.width,
-                            bundle.height
+                            bundle.height,
+                            if same_size { "nearest" } else { "linear" }
                         );
                     }
                     let region = VkImageBlit {
@@ -1621,11 +1644,22 @@ pub fn fill_eyes(targets: &[(u32, usize)]) -> u32 {
                             },
                         ],
                         dst_subresource: COLOR_LAYERS,
+                        // Y-flip: the destination's Y bounds are swapped so the blit mirrors
+                        // vertically. Godot's render target has its origin at the top-left, the
+                        // XREAL compositor reads the eye texture bottom-left, and copying straight
+                        // across put the sky under the ground on device. demo/ never showed it:
+                        // its content is a ring of boxes all at y = 0, so the mirrored image is
+                        // indistinguishable from the correct one. A scene with a horizon is what
+                        // made it visible.
                         dst_offsets: [
-                            VkOffset3D { x: 0, y: 0, z: 0 },
+                            VkOffset3D {
+                                x: 0,
+                                y: bundle.height,
+                                z: 0,
+                            },
                             VkOffset3D {
                                 x: bundle.width,
-                                y: bundle.height,
+                                y: 0,
                                 z: 1,
                             },
                         ],
@@ -1638,7 +1672,13 @@ pub fn fill_eyes(targets: &[(u32, usize)]) -> u32 {
                         VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                         1,
                         &region,
-                        VK_FILTER_LINEAR,
+                        // Equal size means no resampling is wanted: NEAREST keeps every pixel
+                        // exactly as the copy path delivered it.
+                        if same_size {
+                            VK_FILTER_NEAREST
+                        } else {
+                            VK_FILTER_LINEAR
+                        },
                     );
                 }
                 let src_out = VkImageMemoryBarrier {
