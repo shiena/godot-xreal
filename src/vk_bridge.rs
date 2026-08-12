@@ -640,6 +640,20 @@ pub fn active() -> bool {
     glasses_enabled() && bridge_ready()
 }
 
+/// Whether the eye image reaching the compositor is mirrored vertically.
+///
+/// True on the Vulkan path, whose blit flips Y to reconcile Godot's top-left render target with
+/// the bottom-left origin the SDK reads the shared GL texture at. The GL path has no such mismatch
+/// and submits the image as rendered.
+///
+/// The head pose has to agree with this. The compositor reprojects each submitted frame onto the
+/// latest pose, so mirroring the image also mirrors the direction that reprojection pulls, on
+/// exactly the axes a vertical mirror reverses: pitch and roll, with yaw untouched. See
+/// `XrealHeadTracker::display_rotation`.
+pub fn mirrors_eye_image() -> bool {
+    glasses_enabled()
+}
+
 /// Whether the bridge machinery (Vulkan side, command pool, fence) is initialized and healthy.
 /// This is the encoder path's gate: it holds in encoder-only mode too, where the glasses kill
 /// switch is off. Cheap and thread-safe (a load, no init), so the render-thread tick may call
@@ -1644,13 +1658,19 @@ pub fn fill_eyes(targets: &[(u32, usize)]) -> u32 {
                             },
                         ],
                         dst_subresource: COLOR_LAYERS,
-                        // Y-flip: the destination's Y bounds are swapped so the blit mirrors
-                        // vertically. Godot's render target has its origin at the top-left, the
-                        // XREAL compositor reads the eye texture bottom-left, and copying straight
-                        // across put the sky under the ground on device. demo/ never showed it:
-                        // its content is a ring of boxes all at y = 0, so the mirrored image is
-                        // indistinguishable from the correct one. A scene with a horizon is what
-                        // made it visible.
+                        // Y-flip, Vulkan only. Godot's Vulkan render target has its origin at the
+                        // top-left; the image reaches the SDK as a GL texture sharing the same
+                        // allocation through OPAQUE_FD, and GL reads it bottom-left. The GL path has
+                        // no such mismatch and copies straight across.
+                        //
+                        // Correct this here rather than in the head pose. Negating the pose's pitch
+                        // also makes the view look right way up, but it then runs opposite to the
+                        // compositor's reprojection, and the two add instead of cancelling: the view
+                        // swings about twice as far as the head does.
+                        //
+                        // Note that `screencap -d <glasses display>` reads the compositor's buffer
+                        // rather than the optics, so screenshots look vertically flipped relative to
+                        // the wearer's view. Judge orientation on device.
                         dst_offsets: [
                             VkOffset3D {
                                 x: 0,

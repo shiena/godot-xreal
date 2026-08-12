@@ -1,84 +1,78 @@
-# Eye-image orientation: the vertical mirror, and why demo/ could not show it
+# Eye-image orientation and the head pose are one setting, not two
 
-**Fixed 2026-08-12.** Every eye image handed to the XREAL compositor was mirrored vertically, on
-all four paths (GL Multipass, GL fbo-0, Vulkan bridge at native scale, Vulkan bridge scaled). The
-scene rendered upside-down on the glasses. Head tracking was correct throughout: look left and the
-view went left, so only the vertical axis was wrong.
+**Settled on device 2026-08-12.** The Vulkan path submits a vertically mirrored eye image, and the
+head pose has to be mirrored to match. Neither can be chosen on its own: the compositor reprojects
+every submitted frame onto the latest head pose, so mirroring the image also mirrors the direction
+that reprojection pulls.
 
-## Why it survived this long
+A vertical mirror reverses exactly two axes, **pitch and roll**, and leaves **yaw** alone. That is
+the whole rule.
 
-`demo/ar_scene.tscn` is a ring of boxes, **all at y = 0**, inside a black see-through environment.
-A vertical mirror of that content is indistinguishable from the correct image: the same boxes sit
-at the same screen positions. Nothing in the demo has a top or a bottom.
-
-The mirror was noticed, understood as a property of the buffer, and worked around instead of
-fixed. `demo/phone_pointer.gd` carried this comment:
-
-> On the glasses buffer +Y reads as down, so a positive Y puts the origin at the bottom.
-
-and `addons/godot_xreal/xr_input_router.gd` set `hand_offset = Vector3(0.28, 0.32, -0.3)`, calling
-the sign "device-verified". It was verified — against a mirrored image. The pointer beam did come
-out at hand height, because the mirror flipped the offset along with everything else.
-
-`src/gl.rs` recorded the opposite conclusion in a code comment:
-
-> Straight copy (no Y-flip): fbo 0 and the eye texture share GL bottom-left origin, so flipping
-> made it upside-down on the glasses.
-
-Flipping *did* look wrong at the time, because the reference for "right" was a scene with no
-vertical structure. The first app with a horizon (a planetarium: sky above, ground below) settled
-it in one screenshot.
-
-## The mechanism
-
-Godot renders with its origin at the top-left. The XREAL compositor reads the eye texture with the
-opposite vertical origin. Handing the image across unchanged mirrors it.
-
-## The fix, path by path
-
-| Path | Was | Now |
+| submission path | eye image | head pose quaternion |
 |---|---|---|
-| GL Multipass (`gl.rs::blit_texture`) | `glCopyImageSubData` when formats and sizes matched, `glBlitFramebuffer` otherwise | always `glBlitFramebuffer` with the destination's Y bounds swapped |
-| GL fbo 0 (`gl.rs::blit_default_framebuffer`) | `glBlitFramebuffer`, no flip | destination Y bounds swapped |
-| Vulkan, equal size (`vk_bridge.rs`) | `vkCmdCopyImage` | `vkCmdBlitImage`, `VK_FILTER_NEAREST`, `dst_offsets` Y swapped |
-| Vulkan, scaled (`vk_bridge.rs`) | `vkCmdBlitImage`, `VK_FILTER_LINEAR`, no flip | same, `dst_offsets` Y swapped |
+| GL (Compatibility) | as rendered | `(x, -y, z, w)` |
+| Vulkan bridge | mirrored vertically | `(-x, -y, -z, w)` |
 
-**Texel-for-texel copies had to go.** `glCopyImageSubData` and `vkCmdCopyImage` move bytes and
-cannot transform coordinates, so neither can express a mirror. Both were the fast path for the
-equal-size case; both are now blits. At equal size the filter is NEAREST, so the pixels are
-identical to what the copy delivered — only their rows are reversed.
+`XrealHeadTracker::display_rotation` picks between them with `vk_bridge::mirrors_eye_image()`.
 
-One case still cannot flip: an sRGB-typed Vulkan source, where blitting into the UNORM bridge
-image would decode the color values. That path keeps the raw copy and renders upside-down; it
-warns once (`COPY_FALLBACK_LOGGED`). The node normally detects such a source and rebuilds a
-full-size viewport, so it should not be reachable in practice.
+## Why the Vulkan path mirrors at all
 
-`hand_offset` in `xr_input_router.gd` and `demo/phone_pointer.gd` went from `+0.32` to `-0.32`,
-since Y now means what it says.
+Godot's Vulkan render target has its origin at the top-left. The image reaches the SDK as a GL
+texture over the same allocation (OPAQUE_FD), and GL reads it bottom-left. The blit in
+`vk_bridge.rs` swaps the destination's Y bounds to reconcile the two. The GL path has no such
+mismatch and copies straight across.
 
-## Cost (Beam Pro, Adreno 710, 1574x907 -> 1968x1134 per eye)
+## The failure modes, and how to tell them apart
 
-| Renderer | Before | After |
-|---|---|---|
-| Vulkan + XR multiview | 57 fps | **57 fps** |
-| Vulkan + Multipass | 51 fps | 41 fps |
+Each symptom below points at exactly one mistake. They were all observed on device while getting
+this right.
 
-The flip is free under multiview, which blits once for both views, and costs about 2.4 ms per eye
-under Multipass. Adreno's blit slows down when the destination rows are written in reverse order,
-which is the tile-locality penalty. If Multipass ever needs that back, the escalation is a
-fullscreen sampling pass that flips in the shader (the `fill v2` option from
-[`vulkan-path-plan.md`](../plans/vulkan-path-plan.md)) rather than a return to the raw copy.
+| symptom | cause |
+|---|---|
+| View is upside-down, head tracking otherwise correct | image mirrored, pose not (or the reverse) |
+| Looking up moves the view down | pitch inverted relative to the image |
+| One axis swings about **twice as far** as the head, in the wrong direction | that axis is flipped in the pose but not in the image: the app's rotation and the compositor's reprojection add instead of cancelling |
+| Yaw correct, pitch and roll both wrong | the image/pose pairing is inconsistent - a vertical mirror is exactly those two axes |
 
-## What to check when this area changes
+The doubling is the useful signal. A wrong sign that only *looks* wrong still tracks 1:1 with the
+head; a wrong sign that fights the reprojection tracks at 2:1. If an axis overshoots, the image and
+the pose disagree about it.
 
-Render something with an unambiguous top and bottom — a horizon, a floor, text — and photograph or
-screenshot the glasses display:
+## Screenshots cannot settle this
 
-```powershell
-adb shell dumpsys SurfaceFlinger --display-id
-adb shell screencap -p -d <glasses id> /sdcard/g.png
-adb pull /sdcard/g.png
-```
+`adb shell screencap -p -d <glasses display>` reads the compositor's buffer, not the optics, and
+comes out **vertically flipped relative to what the wearer sees**. Judging orientation from a
+screenshot inverts the answer. It remains the right tool for left/right questions (it is how the
+Multiview black-right-eye work was verified, side by side) and for asking whether content is being
+drawn at all.
 
-The screenshot is the compositor's own buffer, so it shows exactly what the wearer sees. A ring of
-boxes at one height proves nothing.
+Judge orientation on device, with a wearer, on content that has an unmistakable top and bottom.
+
+## Why demo/ could not catch any of this
+
+`demo/ar_scene.tscn` is a ring of boxes, **all at y = 0**, in a black see-through environment. A
+vertical mirror of that content is indistinguishable from the correct image, and a pitch that
+tracks backwards is hard to notice with nothing above or below to move against. The port ran this
+way for a long time, and the mirror was even noticed and worked around rather than fixed:
+`demo/phone_pointer.gd` carried "the glasses buffer reads +Y as down, so a positive Y puts the
+origin at the bottom", and `xr_input_router.gd`'s `hand_offset` was calibrated against that
+mirrored view.
+
+The first application with a horizon (a planetarium: sky above, ground below) exposed all of it.
+
+**When touching this area, test with content that has a top and a bottom.**
+
+## Related: two other places the same day
+
+Both were found while chasing the above and are independent of it.
+
+- **6DoF position had its Y negated** (`src/node.rs`). The comment called it "the same
+  NRSDK-to-Godot Y-flip as the rotation", but the rotation performs no Y flip - `(x,y,z,w) ->
+  (-x,-y,z,w)` mirrors Z, the left-handed-to-right-handed change. Lifting the glasses 0.78 m off the
+  desk logged `pos.y = -0.776`: the head sank as it rose, so putting them on dropped the viewpoint
+  under the floor.
+- **`get_transform_for_view` discarded its `cam_transform`** (`src/xr_interface.rs`). Godot's
+  contract is `cam_transform` composed with the tracking-space pose; dropping it pinned the
+  multiview path to the tracking origin, so moving `XROrigin3D` did nothing. The multiview rig's
+  camera also sits inside a SubViewport, inheriting no transform of its own, so `node.rs` now places
+  it at the origin's world transform - that is what Godot reads back as `cam_transform`.

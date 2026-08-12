@@ -414,13 +414,22 @@ impl INode3D for XrealHeadTracker {
                     // recenter is delegated to the SDK, where session.recenter calls
                     // NativePerception::Recenter and shifts this pose source and the layer together.
                     self.base_mut().set_quaternion(rotation);
-                    // 6DoF position: the 4x4 pose's translation row, raw[12..15] as x, y and z, with the
-                    // same NRSDK-to-Godot Y-flip as the rotation. It is in metres, 1:1 with Godot. The position only
-                    // world-locks because the per-frame updateType-0 UpdateHMDState call keeps the SDK's dynamic pose
-                    // cache at InputManager+0x60 live; without it the compositor cancels the translation
-                    // (device-verified 2026-07-18, see docs/develop/archive/codex-6dof-crash-analysis.md).
+                    // 6DoF position: the 4x4 pose's translation row, raw[12..15] as x, y and z, in
+                    // metres, 1:1 with Godot and with no axis flipped.
+                    //
+                    // The Y used to be negated here, described as "the same NRSDK-to-Godot Y-flip as
+                    // the rotation". The rotation performs no such flip: (x,y,z,w) -> (-x,-y,z,w)
+                    // mirrors Z, which is the left-handed-to-right-handed change, and leaves Y
+                    // alone. Negating the position's Y made the head sink as it rose: lifting the
+                    // glasses 0.78 m off the desk logged pos.y = -0.776, so putting them on dropped
+                    // the viewpoint under the floor.
+                    //
+                    // The position only world-locks because the per-frame updateType-0 UpdateHMDState
+                    // call keeps the SDK's dynamic pose cache at InputManager+0x60 live; without it
+                    // the compositor cancels the translation (device-verified 2026-07-18, see
+                    // docs/develop/archive/codex-6dof-crash-analysis.md).
                     self.base_mut()
-                        .set_position(Vector3::new(raw[12], -raw[13], raw[14]));
+                        .set_position(Vector3::new(raw[12], raw[13], raw[14]));
                     let euler = rotation.get_euler() * (180.0 / std::f32::consts::PI);
                     // Calibration log: the extracted Godot euler plus the raw 4x4 rows. Move the head in a known way,
                     // where a nod is pitch on X, a turn is yaw on Y and a tilt is roll on Z, then check each axis and
@@ -679,9 +688,26 @@ impl XrealHeadTracker {
             .as_ref()
             .map(|camera| camera.get_fov())
             .unwrap_or(FALLBACK_EYE_VERTICAL_FOV);
+        // Where the application put its rig. This node is parented under XROrigin3D, so the
+        // parent's world transform is that origin, which is exactly what a standard XR scene
+        // composes the tracking-space pose against.
+        let origin_transform = self
+            .base()
+            .get_parent()
+            .and_then(|parent| parent.try_cast::<Node3D>().ok())
+            .map(|node| node.get_global_transform())
+            .unwrap_or_default();
         if let (Some(source), Some(rig)) = (source_camera.as_ref(), self.xr_multiview_rig.as_mut())
         {
             sync_eye_camera_parameters(source, &mut rig.camera);
+            // Godot passes the current camera's world transform to get_transform_for_view as its
+            // `cam_transform`, and that camera is this rig's, sitting inside a SubViewport where it
+            // inherits nothing. Placing it at the origin's world transform is what carries the
+            // application's rig into the view; leaving it at identity rendered every scene from the
+            // tracking origin regardless of where XROrigin3D had been moved.
+            if rig.camera.get_global_transform() != origin_transform {
+                rig.camera.set_global_transform(origin_transform);
+            }
             // The XR camera's clipping planes are what Godot hands to get_projection_for_view as
             // z_near/z_far, so follow the app camera the way the multipass eye cameras do.
             let near = source.get_near();
@@ -755,12 +781,24 @@ impl XrealHeadTracker {
             let s = (1.0 + m22 - m00 - m11).sqrt() * 2.0; // s = 4z
             ((m02 + m20) / s, (m12 + m21) / s, 0.25 * s, (m10 - m01) / s)
         };
-        // NRSDK to Godot handedness, device-calibrated with a wearer against the DISP calibration log.
-        // With (-x,-y,z,w) the roll (Z) and yaw (Y) were correct but the PITCH (X) came out inverted, and
-        // nodding down clipped the box's bottom instead of its top. Keep pitch un-negated: (x,-y,z,w)
-        // makes nod on pitch/X, turn on yaw/Y and tilt on roll/Z all track world-locked in the right
+        // NRSDK to Godot handedness, device-calibrated with a wearer against the DISP calibration log:
+        // nod tracks pitch/X, turn tracks yaw/Y and tilt tracks roll/Z, all world-locked in the right
         // direction.
-        Some(Quaternion::new(x, -y, z, w).normalized())
+        //
+        // NRSDK to Godot handedness, device-calibrated with a wearer: nod tracks pitch/X, turn
+        // tracks yaw/Y and tilt tracks roll/Z, all world-locked in the right direction.
+        //
+        // `(x,-y,z,w)` is the pairing for an image submitted as rendered, which is the GL path.
+        //
+        // The Vulkan path mirrors the eye image vertically (see vk_bridge), and the pose has to
+        // agree with it. The compositor reprojects each submitted frame onto the latest head pose,
+        // so mirroring the image also mirrors the direction that reprojection pulls, on exactly the
+        // axes a vertical mirror reverses: pitch and roll, leaving yaw alone. Mirror the image
+        // without the pose and the view swings about twice as far as the head on those two axes and
+        // in the wrong direction; do both and they cancel.
+        let mirrored = crate::vk_bridge::mirrors_eye_image();
+        let (qx, qz) = if mirrored { (-x, -z) } else { (x, z) };
+        Some(Quaternion::new(qx, -y, qz, w).normalized())
     }
 
     /// Poll the JNI glasses hot-plug counters and re-emit any new events as signals. It is called on

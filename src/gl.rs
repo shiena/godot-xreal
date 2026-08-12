@@ -915,7 +915,7 @@ pub fn fill_texture(tex: u32, r: f32, g_: f32, b: f32) {
 }
 
 /// Copy `src`, sized `src_w` by `src_h`, into `dst`, sized `dst_w` by `dst_h`, as a straight copy
-/// with no Y-flip, since both share the GL bottom-left origin; see the body comment.
+/// with no Y-flip; see the body comment.
 ///
 /// It fills a Multipass eye texture from Godot's rendered SubViewport each frame. Preferred path:
 /// because [`alloc_texture`] allocates the eye texture in `GL_RGB10_A2`, the SubViewport's own
@@ -976,23 +976,22 @@ pub fn blit_texture(src: u32, src_w: i32, src_h: i32, dst: u32, dst_w: i32, dst_
             if scissor_was_on {
                 (g.disable)(GL_SCISSOR_TEST);
             }
-            // Y-flip: the destination's Y bounds are swapped, so the blit mirrors vertically.
-            // Godot renders with its origin at the top-left while the XREAL compositor reads the
-            // eye texture bottom-left, and a straight copy put the sky under the ground on device.
+            // Straight copy, no Y-flip. Mirroring here was tried while chasing an upside-down view
+            // and is the wrong tool: a vertical mirror preserves yaw but reverses pitch and roll, so
+            // head tracking starts fighting the wearer. The inversion was in the head pose
+            // conversion instead (see display_rotation in node.rs).
             //
-            // This used to be a straight copy, on the reading that both share GL's bottom-left
-            // origin. That was never verifiable against demo/, whose content is a ring of boxes
-            // all at y = 0: the mirrored image is indistinguishable from the correct one. A scene
-            // with a horizon settled it.
+            // Note that `screencap -d <glasses display>` reads the compositor's buffer rather than
+            // the optics, so screenshots look vertically flipped relative to the wearer's view.
             (g.blit_framebuffer)(
                 0,
                 0,
                 src_w,
                 src_h,
                 0,
-                dst_h,
-                dst_w,
                 0,
+                dst_w,
+                dst_h,
                 GL_COLOR_BUFFER_BIT,
                 GL_LINEAR as u32,
             );
@@ -1030,8 +1029,7 @@ pub fn blit_texture(src: u32, src_w: i32, src_h: i32, dst: u32, dst_w: i32, dst_
 /// Blit Godot's just-rendered window content, the default framebuffer or back buffer, fbo 0, into
 /// an eye texture. Godot's root viewport renders direct to screen, so it has no sampleable
 /// offscreen texture and `texture_get_native_handle` returns 0; reading fbo 0 gets its pixels
-/// instead. The blit mirrors vertically, since the compositor reads the eye texture with the
-/// opposite vertical origin.
+/// instead. It is a straight copy, with no Y-flip.
 pub fn blit_default_framebuffer(dst: u32, src_w: i32, src_h: i32, dst_w: i32, dst_h: i32) {
     let Some(g) = gl() else { return };
     if dst == 0 {
@@ -1063,17 +1061,16 @@ pub fn blit_default_framebuffer(dst: u32, src_w: i32, src_h: i32, dst_w: i32, ds
             if scissor_was_on {
                 (g.disable)(GL_SCISSOR_TEST);
             }
-            // Y-flip, for the same reason as fill_texture: the compositor reads the eye texture
-            // with the opposite vertical origin, so the destination's Y bounds are swapped.
+            // Straight copy, no Y-flip, for the same reason as fill_texture.
             (g.blit_framebuffer)(
                 0,
                 0,
                 src_w,
                 src_h,
                 0,
-                dst_h,
-                dst_w,
                 0,
+                dst_w,
+                dst_h,
                 GL_COLOR_BUFFER_BIT,
                 GL_LINEAR as u32,
             );

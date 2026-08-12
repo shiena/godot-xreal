@@ -157,7 +157,15 @@ impl IXrInterfaceExtension for XrealXrInterface {
             .camera_transform
     }
 
-    fn get_transform_for_view(&mut self, view: u32, _cam_transform: Transform3D) -> Transform3D {
+    /// The eye's transform, as Godot's XR contract defines it: `cam_transform` composed with the
+    /// tracking-space pose and then the per-eye offset.
+    ///
+    /// `cam_transform` is the world transform of the viewport's current camera, which in a standard
+    /// XR scene is where XROrigin3D has been placed. Dropping it, as this once did, pinned the view
+    /// to the tracking origin: an application that stands the player on a rooftop 1.6 m up still
+    /// rendered from floor level. Composing it is what makes moving XROrigin3D move the view, the
+    /// same way it does on the multipass path.
+    fn get_transform_for_view(&mut self, view: u32, cam_transform: Transform3D) -> Transform3D {
         let state = *view_state().lock().expect("XR view-state mutex");
         let projection = crate::unity_plugin::stereo_projection();
         let eye = projection[(view as usize).min(1)];
@@ -168,7 +176,9 @@ impl IXrInterfaceExtension for XrealXrInterface {
         } else {
             HALF_IPD
         };
-        state.camera_transform * Transform3D::new(Basis::IDENTITY, Vector3::new(eye_x, 0.0, 0.0))
+        cam_transform
+            * state.camera_transform
+            * Transform3D::new(Basis::IDENTITY, Vector3::new(eye_x, 0.0, 0.0))
     }
 
     fn get_projection_for_view(

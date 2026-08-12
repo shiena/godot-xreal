@@ -160,7 +160,10 @@ func _update_phone_pose(
 	var phone_to_godot := Basis(
 		Vector3(1, 0, 0), Vector3(0, 0, -1), Vector3(0, 1, 0))
 	var euler := (phone_to_godot * Basis(relative) * phone_to_godot.transposed()).get_euler()
-	var aim_basis := Basis.from_euler(Vector3(-euler.x, euler.y, euler.z))
+	# The pitch used to be negated here, because tilting the phone up sent the beam down. That was
+	# the eye image arriving mirrored vertically (fixed in src/gl.rs and src/vk_bridge.rs): the beam
+	# was going the right way and the view was upside-down. With the image upright, pitch is direct.
+	var aim_basis := Basis.from_euler(euler)
 	var offset := hand_offset
 	offset.x = absf(offset.x) * (
 		1.0 if _active_hand == XRPositionalTracker.TRACKER_HAND_RIGHT else -1.0)
