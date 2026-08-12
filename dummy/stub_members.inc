@@ -205,13 +205,17 @@ static const StubConst _c_XrealSystem[] = {
   {"MESH_LABEL_DOOR",10},
   {"MESH_LABEL_TABLE",11},
 };
+static const StubArg _a_XrealXrInterface__get_transform_for_view[] = {{2,"","view"},{18,"","cam_transform"},};
+static const StubMethod _m_XrealXrInterface[] = {
+  {"_get_transform_for_view",18,"",2,_a_XrealXrInterface__get_transform_for_view},
+};
 static const StubMembers stub_members[] = {
   {"XrealAR",0,0,_s_XrealAR,13,0,0},
   {"XrealCameraFeed",_m_XrealCameraFeed,5,0,0,0,0},
   {"XrealHandTracker",0,0,0,0,0,0},
   {"XrealHeadTracker",_m_XrealHeadTracker,4,_s_XrealHeadTracker,10,_c_XrealHeadTracker,9},
   {"XrealSystem",_m_XrealSystem,71,0,0,_c_XrealSystem,26},
-  {"XrealXrInterface",0,0,0,0,0,0},
+  {"XrealXrInterface",_m_XrealXrInterface,1,0,0,0,0},
 };
 enum { STUB_MEMBERS_COUNT = sizeof(stub_members) / sizeof(stub_members[0]) };
-#define STUB_SN_POOL 555
+#define STUB_SN_POOL 563
