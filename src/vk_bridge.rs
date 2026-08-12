@@ -640,20 +640,6 @@ pub fn active() -> bool {
     glasses_enabled() && bridge_ready()
 }
 
-/// Whether the eye image reaching the compositor is mirrored vertically.
-///
-/// True on the Vulkan path, whose blit flips Y to reconcile Godot's top-left render target with
-/// the bottom-left origin the SDK reads the shared GL texture at. The GL path has no such mismatch
-/// and submits the image as rendered.
-///
-/// The head pose has to agree with this. The compositor reprojects each submitted frame onto the
-/// latest pose, so mirroring the image also mirrors the direction that reprojection pulls, on
-/// exactly the axes a vertical mirror reverses: pitch and roll, with yaw untouched. See
-/// `XrealHeadTracker::display_rotation`.
-pub fn mirrors_eye_image() -> bool {
-    glasses_enabled()
-}
-
 /// Whether the bridge machinery (Vulkan side, command pool, fence) is initialized and healthy.
 /// This is the encoder path's gate: it holds in encoder-only mode too, where the glasses kill
 /// switch is off. Cheap and thread-safe (a load, no init), so the render-thread tick may call

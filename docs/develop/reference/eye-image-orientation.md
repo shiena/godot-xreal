@@ -1,26 +1,37 @@
 # Eye-image orientation and the head pose are one setting, not two
 
-**Settled on device 2026-08-12.** The Vulkan path submits a vertically mirrored eye image, and the
-head pose has to be mirrored to match. Neither can be chosen on its own: the compositor reprojects
-every submitted frame onto the latest head pose, so mirroring the image also mirrors the direction
-that reprojection pulls.
+**Settled on device 2026-08-12 for Vulkan, 2026-08-13 for GL.** Every submission path sends a
+vertically mirrored eye image, and the head pose has to be mirrored to match. Neither can be chosen
+on its own: the compositor reprojects every submitted frame onto the latest head pose, so mirroring
+the image also mirrors the direction that reprojection pulls.
 
 A vertical mirror reverses exactly two axes, **pitch and roll**, and leaves **yaw** alone. That is
 the whole rule.
 
 | submission path | eye image | head pose quaternion |
 |---|---|---|
-| GL (Compatibility) | as rendered | `(x, -y, z, w)` |
+| GL (Compatibility), Multipass | mirrored vertically | `(-x, -y, -z, w)` |
 | Vulkan bridge | mirrored vertically | `(-x, -y, -z, w)` |
+| GL Multiview | **unmirrored**, see below | `(-x, -y, -z, w)`, so it mismatches |
 
-`XrealHeadTracker::display_rotation` picks between them with `vk_bridge::mirrors_eye_image()`.
+`XrealHeadTracker::display_rotation` returns the mirrored pairing unconditionally.
 
-## Why the Vulkan path mirrors at all
+## Why the image is mirrored at all
 
-Godot's Vulkan render target has its origin at the top-left. The image reaches the SDK as a GL
-texture over the same allocation (OPAQUE_FD), and GL reads it bottom-left. The blit in
-`vk_bridge.rs` swaps the destination's Y bounds to reconcile the two. The GL path has no such
-mismatch and copies straight across.
+Godot renders with its origin at the top-left and the SDK reads the eye texture bottom-left, so an
+image handed across unchanged arrives upside-down. Each path reconciles that where it copies: the
+Vulkan bridge swaps the destination's Y bounds in `vk_bridge.rs`, and GL does the same in
+`blit_texture` and `blit_default_framebuffer`.
+
+`ddf2823` briefly exempted GL, reasoning that both sides are GL there so no mismatch exists, and
+that the inversion belonged in the head pose instead. Both halves were wrong. A straight copy still
+arrives upside-down on device (2026-08-13, Compatibility/Multipass), and `(x,-y,z,w)` is a rotation,
+which cannot produce a mirror.
+
+GL Multiview is the one path that does not mirror. Filling a `GL_TEXTURE_2D_ARRAY` layer needs
+`glCopyImageSubData`, because `glBlitFramebuffer` into a layer > 0 attachment is a silent no-op on
+the Adreno driver, and a texel-for-texel copy cannot transform coordinates. Mirroring it means
+mirroring into the scratch 2D texture first, which is not done.
 
 ## The failure modes, and how to tell them apart
 
@@ -59,6 +70,9 @@ origin at the bottom", and `xr_input_router.gd`'s `hand_offset` was calibrated a
 mirrored view.
 
 The first application with a horizon (a planetarium: sky above, ground below) exposed all of it.
+`demo/ar_scene.tscn` now carries an orientation marker of its own: a mast with a white cap, a blue
+slab at its foot, an amber arm reaching to the wearer's right, and `UP` and `RIGHT` labels whose
+glyphs reverse under a mirror. That is what caught the GL path on 2026-08-13.
 
 **When touching this area, test with content that has a top and a bottom.**
 
