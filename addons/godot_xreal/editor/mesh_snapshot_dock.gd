@@ -39,7 +39,7 @@ var _snapshot_edit: LineEdit
 var _output_edit: LineEdit
 var _res_check: CheckBox
 var _glb_check: CheckBox
-var _canonical_check: CheckBox
+var _legacy_flip_check: CheckBox
 var _status: RichTextLabel
 var _file_dialog: EditorFileDialog
 var _materials := {}  # class id (-1 = unclassified) -> the one material shared by every surface of it
@@ -113,17 +113,16 @@ func _build_ui() -> void:
 	formats.add_child(_glb_check)
 	add_child(formats)
 
-	# On by default, because every consumer of a converted scan outside the glasses, this viewport,
-	# Blender, a collision shape, wants a canonical mesh. Untick it only to reproduce the runtime's
-	# own space, for instance to lay a converted scan over the live overlay in the running app.
-	_canonical_check = CheckBox.new()
-	_canonical_check.text = "Godot space (flip Y)"
-	_canonical_check.button_pressed = true
-	_canonical_check.tooltip_text = ("A snapshot is written in the runtime's mirrored space (the eye "
-		+ "viewports render with an inverted Y), so it opens upside down everywhere else. This "
-		+ "negates Y, which also turns the triangles the right way round. Untick to keep the "
-		+ "runtime's space.")
-	add_child(_canonical_check)
+	# Off by default: the runtime writes canonical Godot space now. Only a snapshot saved before the
+	# mesh conversion stopped negating Y needs this, and nothing else does.
+	_legacy_flip_check = CheckBox.new()
+	_legacy_flip_check.text = "Legacy snapshot (flip Y)"
+	_legacy_flip_check.button_pressed = false
+	_legacy_flip_check.tooltip_text = ("Snapshots used to come out mirrored, because the mesh "
+		+ "conversion negated Y to compensate for an eye image that itself arrived mirrored. Both "
+		+ "are fixed, so leave this off. Tick it only for a snapshot saved before that, which would "
+		+ "otherwise open upside down and inside out.")
+	add_child(_legacy_flip_check)
 
 	var convert := Button.new()
 	convert.text = "Convert"
@@ -235,7 +234,7 @@ func _build_mesh(doc: Dictionary) -> ArrayMesh:
 	for entry in doc.get("blocks", []):
 		var block: Dictionary = entry
 		var id: String = block.get("id", "")
-		var flip := _canonical_check.button_pressed
+		var flip := _legacy_flip_check.button_pressed
 		var verts := _to_vector3_array(block.get("vertices", ""), flip)
 		var indices := _to_index_array(block.get("indices", ""), flip)
 		if verts.is_empty() or indices.is_empty():
@@ -392,15 +391,15 @@ static func _label_name(label: int) -> String:
 static func _from_base64(encoded: String) -> PackedByteArray:
 	return PackedByteArray() if encoded.is_empty() else Marshalls.base64_to_raw(encoded)
 
-## Base64 float32 triples back to points, negating Y when `flip` asks for canonical Godot space.
+## Base64 float32 triples back to points, negating Y for a legacy snapshot.
 ##
-## A snapshot is written in the RUNTIME's space, not a canonical Godot one: the port's eye
-## SubViewports render with an inverted Y, and the whole conversion chain compensates by negating Y
-## on top of the canonical Unity(LH) -> Godot(RH) negate-Z (see docs/develop/plans/coordinate-systems-notes.md
-## and mesh_block_to_dict in src/system.rs). That is a mirror, so what looks right through the
-## glasses opens upside down and left-right swapped anywhere else: in this editor's viewport, in a
-## .glb in Blender, or against physics. Negating Y here undoes it, which is device-verified against a
-## real scan: the floor's vertices sit at y = +1.12 and the ceiling's at y = -1.45 as written.
+## Snapshots are written in canonical Godot space. They were not always: the mesh conversion used to
+## negate Y on top of the canonical Unity(LH) -> Godot(RH) negate-Z, compensating for an eye image
+## the port then submitted mirrored vertically (see mesh_block_to_dict in src/system.rs and
+## docs/develop/plans/coordinate-systems-notes.md). That made the file a mirror of the scan, so it
+## opened upside down and left-right swapped anywhere outside the glasses: in this editor's
+## viewport, in a .glb in Blender, or against physics. One such file measured the floor's vertices
+## at y = +1.12 and the ceiling's at y = -1.45. Negating Y here undoes it, for those files only.
 func _to_vector3_array(encoded: String, flip: bool) -> PackedVector3Array:
 	var floats := _from_base64(encoded).to_float32_array()
 	var out := PackedVector3Array()

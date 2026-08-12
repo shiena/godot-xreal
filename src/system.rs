@@ -1171,32 +1171,45 @@ fn image_to_dict(im: &crate::native::ImageSample) -> VarDictionary {
 
 /// A depth-mesh block → a GDScript `Dictionary`.
 ///
-/// Unlike the poses, mesh vertices come out of `MeshBlockInfo` in **raw NR space** (the SDK's
-/// `AcquireMesh` is what negates Z on the way into Unity), so the flip is one step short of the pose
-/// path: raw → Unity is `(x, y, -z)` and Unity → this port's Godot is `(x, -y, -z)`, which composes to
-/// `(x, -y, z)`.
+/// Positions and normals pass through unchanged. Unlike the poses, mesh vertices come out of
+/// `MeshBlockInfo` in **raw NR space** (the SDK's `AcquireMesh` is what negates Z on the way into
+/// Unity), so raw → Unity is `(x, y, -z)`, and the canonical Unity → Godot is `(x, y, -z)` again.
+/// The two negations cancel: raw already IS Godot space.
 ///
-/// The indices go through untouched. They used to be emitted reversed, on the reasoning that our
-/// space is a 180-degree rotation about X of Unity's and so keeps Unity's clockwise-front winding.
-/// The step that reasoning misses is that the input is raw, not Unity: `(x, -y, z)` applied to raw
-/// has determinant -1, so the conversion has ALREADY swapped each triangle's front and back, and
-/// reversing on top of that swaps it a second time. Device-measured over two real scans, comparing
-/// every triangle's counter-clockwise normal against the SDK's own vertex normals: reversed, 74,026
-/// of 74,036 and 97,380 of 97,390 triangles faced away from their normals; verbatim, all but ten of
-/// each face the right way. The overlay draws CULL_DISABLED, which is why nothing on the glasses
-/// ever showed it.
+/// This used to emit `(x, -y, z)`. The extra Y came from the port's own Unity → Godot step reading
+/// `(x, -y, -z)` instead of the canonical `(x, y, -z)`, and
+/// `docs/develop/plans/coordinate-systems-notes.md` had already identified that Y as a rendering
+/// artifact rather than a coordinate fundamental, attributing it to the eye image this port then
+/// submitted mirrored vertically. That mirror is gone (7b49a5c, ddf2823), so its compensation goes
+/// with it.
+///
+/// The indices now reverse, which follows from the same change. They were emitted verbatim because
+/// `(x, -y, z)` has determinant -1: the conversion itself swapped each triangle's front and back,
+/// so verbatim came out right. That was device-measured over two real scans against the SDK's own
+/// vertex normals - reversed, 74,026 of 74,036 and 97,380 of 97,390 triangles faced away from their
+/// normals; verbatim, all but ten of each faced the right way - which says raw's own winding faces
+/// AWAY from raw's normals. With the mirror gone the conversion swaps nothing, so the reversal has
+/// to happen here instead.
+///
+/// **Not yet device-verified.** Judge it on a scan with a floor and a ceiling: the floor's vertices
+/// should read negative Y and the ceiling's positive (they came out the other way round while the
+/// Y was negated), and every triangle should face its own normal. The runtime overlay draws
+/// CULL_DISABLED, so nothing on the glasses will show a winding mistake; a .glb in Blender will.
 fn mesh_block_to_dict(b: &crate::depth_mesh::MeshBlock) -> VarDictionary {
     let mut verts = PackedVector3Array::new();
     for v in &b.vertices {
-        verts.push(Vector3::new(v[0], -v[1], v[2]));
+        verts.push(Vector3::new(v[0], v[1], v[2]));
     }
     let mut norms = PackedVector3Array::new();
     for n in &b.normals {
-        norms.push(Vector3::new(n[0], -n[1], n[2]));
+        norms.push(Vector3::new(n[0], n[1], n[2]));
     }
+    // A trailing partial triangle cannot be drawn, so it is dropped rather than emitted unreversed.
     let mut idx = PackedInt32Array::new();
-    for &i in &b.indices {
-        idx.push(i as i32);
+    for tri in b.indices.chunks_exact(3) {
+        idx.push(tri[2] as i32);
+        idx.push(tri[1] as i32);
+        idx.push(tri[0] as i32);
     }
     let mut d = VarDictionary::new();
     d.set(
