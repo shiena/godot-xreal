@@ -14,10 +14,13 @@ extends Node3D
 @export var gravity_gain := 0.06
 ## Ray length (m).
 @export var ray_length := 6.0
-## Where the beam originates relative to the head. On the glasses buffer +Y reads as down, so a
-## positive Y puts the origin at the bottom. The X sign picks the hand (negative = left, the
-## default), and `set_hand` flips it.
-@export var hand_offset := Vector3(-0.28, 0.32, -0.3)
+## Where the beam originates relative to the head. Negative Y puts the origin below the head, at
+## hand height. The X sign picks the hand (negative = left, the default), and `set_hand` flips it.
+##
+## This used to read +0.32, back when the eye image was mirrored vertically on its way to the
+## compositor (fixed in src/gl.rs and src/vk_bridge.rs); the mirror inverted every vertical offset
+## along with the scene.
+@export var hand_offset := Vector3(-0.28, -0.32, -0.3)
 ## Gyro drift suppression: a rate (rad/s, after bias) below this counts as noise. Then the bias
 ## learn rate.
 @export var gyro_deadzone := 0.012

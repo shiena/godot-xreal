@@ -19,10 +19,14 @@ const INPUT_ACTIONS := {
 	&"menu_button": &"xr_menu",
 }
 
-## Phone-controller origin relative to the tracked head, in metres. Device-verified: the glasses
-## buffer reads +Y as down (the head pose carries the eye-buffer Y handedness), so the positive Y
-## puts the origin below the head, at hand height. X is a magnitude; set_active_hand picks its sign.
-@export var hand_offset := Vector3(0.28, 0.32, -0.3)
+## Phone-controller origin relative to the tracked head, in metres. Negative Y puts the origin
+## below the head, at hand height. X is a magnitude; set_active_hand picks its sign.
+##
+## This used to read +0.32, on the finding that "the glasses buffer reads +Y as down". That was
+## the eye image being mirrored vertically on its way to the compositor (fixed in src/gl.rs and
+## src/vk_bridge.rs), which inverted every vertical offset along with the scene. With the image
+## upright, Y means what it says.
+@export var hand_offset := Vector3(0.28, -0.32, -0.3)
 ## Complementary-filter gain used to correct phone pitch and roll from gravity.
 @export_range(0.0, 1.0, 0.01) var gravity_gain := 0.06
 ## Gyroscope rates below this threshold are treated as resting noise.
@@ -156,7 +160,10 @@ func _update_phone_pose(
 	var phone_to_godot := Basis(
 		Vector3(1, 0, 0), Vector3(0, 0, -1), Vector3(0, 1, 0))
 	var euler := (phone_to_godot * Basis(relative) * phone_to_godot.transposed()).get_euler()
-	var aim_basis := Basis.from_euler(Vector3(-euler.x, euler.y, euler.z))
+	# The pitch used to be negated here, because tilting the phone up sent the beam down. That was
+	# the eye image arriving mirrored vertically (fixed in src/gl.rs and src/vk_bridge.rs): the beam
+	# was going the right way and the view was upside-down. With the image upright, pitch is direct.
+	var aim_basis := Basis.from_euler(euler)
 	var offset := hand_offset
 	offset.x = absf(offset.x) * (
 		1.0 if _active_hand == XRPositionalTracker.TRACKER_HAND_RIGHT else -1.0)

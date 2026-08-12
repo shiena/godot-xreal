@@ -397,14 +397,18 @@ unsafe fn scratch_fbo(g: &Gl, slot: usize) -> u32 {
 /// Allocate a 2D `GL_RGB10_A2` texture of the given size and return its GL name, or `None` on
 /// failure. It backs the Multipass per-eye swapchain textures.
 ///
-/// `_srgb` is intentionally ignored: the eye texture has to be a UNORM format and NOT sRGB-typed,
-/// confirmed on device 2026-07-17. Godot's `gl_compatibility` renderer outputs display-ready,
-/// sRGB-encoded values, and the XREAL compositor passthrough-samples the eye texture and writes the
-/// sampled value to the display without re-encoding. An A/B test allocating the eye texture as
-/// `GL_SRGB8_ALPHA8`, the same bytes but sRGB-typed, came out about 26% too dark, because the
-/// compositor applies a sample-time sRGB-to-linear decode. Unity's port uses an sRGB-typed target
-/// because it renders in *linear* space, whereas our display-ready values must not be decoded. See
-/// `docs/develop/archive/multiview-investigation.md`, the 2026-07-17 color-space test.
+/// `_srgb` is intentionally ignored: the eye texture has to be a UNORM format and NOT sRGB-typed.
+/// Godot's `gl_compatibility` renderer outputs display-ready, sRGB-encoded values, and with
+/// `color_space: 0` in `InitUserDefinedSettings` the compositor passthrough-samples the eye texture
+/// and writes the sampled value to the display without re-encoding. Unity's port uses an sRGB-typed
+/// target because it renders in *linear* space and declares `color_space: 1`.
+///
+/// That pairing is the whole point: the format here and the declared colour space in
+/// `session.rs` have to agree, and neither is meaningful alone. The 2026-07-17 A/B that read
+/// `GL_SRGB8_ALPHA8` as "about 26% too dark" was run while we still declared Linear, so the
+/// baseline it was compared against was itself an image encoded twice, and the sRGB-typed variant
+/// it rejected was the accurate one. See `docs/develop/archive/multiview-investigation.md` for the
+/// original test, and `session.rs` for the measurement that settled it.
 ///
 /// **`GL_RGB10_A2`**, a UNORM format like the previous `GL_RGBA8`, deliberately matches Godot's
 /// `gl_compatibility` 3D render-target format, probed as `0x8059` on device 2026-07-21; see
@@ -915,7 +919,7 @@ pub fn fill_texture(tex: u32, r: f32, g_: f32, b: f32) {
 }
 
 /// Copy `src`, sized `src_w` by `src_h`, into `dst`, sized `dst_w` by `dst_h`, as a straight copy
-/// with no Y-flip, since both share the GL bottom-left origin; see the body comment.
+/// with no Y-flip; see the body comment.
 ///
 /// It fills a Multipass eye texture from Godot's rendered SubViewport each frame. Preferred path:
 /// because [`alloc_texture`] allocates the eye texture in `GL_RGB10_A2`, the SubViewport's own
@@ -933,45 +937,13 @@ pub fn blit_texture(src: u32, src_w: i32, src_h: i32, dst: u32, dst_w: i32, dst_
         return;
     }
     unsafe {
-        // Preferred path: with identical formats, as probed, ONE exact copy runs with no FBO or state
-        // churn.
-        if let Some(copy_image_sub_data) = g.copy_image_sub_data {
-            if src_w == dst_w
-                && src_h == dst_h
-                && probed_src_format(g, src) == GL_RGB10_A2 as u32
-                && !DIRECT_COPY_2D_BROKEN.load(Ordering::Relaxed)
-            {
-                while (g.get_error)() != 0 {}
-                copy_image_sub_data(
-                    src,
-                    GL_TEXTURE_2D,
-                    0,
-                    0,
-                    0,
-                    0,
-                    dst,
-                    GL_TEXTURE_2D,
-                    0,
-                    0,
-                    0,
-                    0,
-                    dst_w,
-                    dst_h,
-                    1,
-                );
-                let err = (g.get_error)();
-                if BLIT2D_LOG.fetch_add(1, Ordering::Relaxed) < 8 {
-                    godot::global::godot_print!(
-                        "[xreal] direct_copy_2d dst={dst} src={src} {dst_w}x{dst_h}: gl_err={err}"
-                    );
-                }
-                if err == 0 {
-                    return;
-                }
-                // It failed, so remember that and fall through to the blit below.
-                DIRECT_COPY_2D_BROKEN.store(true, Ordering::Relaxed);
-            }
-        }
+        // `glCopyImageSubData` was the preferred path here: with identical formats it is ONE exact
+        // copy with no FBO or state churn. It cannot be used any more, because the eye image has to
+        // be mirrored vertically on the way across (the compositor reads it with the opposite
+        // vertical origin) and a texel-for-texel copy cannot transform coordinates. The blit below
+        // costs an FBO bind and a completeness check per eye, which measured as noise next to the
+        // fill it performs.
+        let _ = &DIRECT_COPY_2D_BROKEN;
 
         let mut prev_draw: i32 = 0;
         let mut prev_read: i32 = 0;
@@ -1008,8 +980,13 @@ pub fn blit_texture(src: u32, src_w: i32, src_h: i32, dst: u32, dst_w: i32, dst_
             if scissor_was_on {
                 (g.disable)(GL_SCISSOR_TEST);
             }
-            // Straight copy (no Y-flip): the SubViewport render target and the eye texture share
-            // GL bottom-left origin, matching blit_default_framebuffer (flipping showed upside-down).
+            // Straight copy, no Y-flip. Mirroring here was tried while chasing an upside-down view
+            // and is the wrong tool: a vertical mirror preserves yaw but reverses pitch and roll, so
+            // head tracking starts fighting the wearer. The inversion was in the head pose
+            // conversion instead (see display_rotation in node.rs).
+            //
+            // Note that `screencap -d <glasses display>` reads the compositor's buffer rather than
+            // the optics, so screenshots look vertically flipped relative to the wearer's view.
             (g.blit_framebuffer)(
                 0,
                 0,
@@ -1088,8 +1065,7 @@ pub fn blit_default_framebuffer(dst: u32, src_w: i32, src_h: i32, dst_w: i32, ds
             if scissor_was_on {
                 (g.disable)(GL_SCISSOR_TEST);
             }
-            // Straight copy (no Y-flip): fbo 0 and the eye texture share GL bottom-left origin, so
-            // flipping made it upside-down on the glasses.
+            // Straight copy, no Y-flip, for the same reason as fill_texture.
             (g.blit_framebuffer)(
                 0,
                 0,

@@ -330,7 +330,18 @@ impl XrealSession {
             godot::global::godot_print!("[xreal] native error callback registered");
         }
 
-        // Color space: Unity ColorSpace.Linear == 1; stereo/input default to 0.
+        // Color space: Unity's ColorSpace, where Gamma is 0 and Linear is 1. It tells the SDK what
+        // the eye textures hold, and the compositor converts on that basis.
+        //
+        // Gamma is the honest answer for Godot. Godot's tonemap pass encodes linear to sRGB before
+        // it writes the render target, so the bytes handed across are already display-ready.
+        // Declaring Linear made the compositor encode them a second time, which lifts the darks
+        // enormously and washes the colours out. Measured against a known UI colour: Godot writes
+        // (46, 34, 13) and the glasses showed (118, 101, 72), against srgb_encode's (118, 102, 64).
+        //
+        // A Unity project set to Linear renders into linear eye textures, which is why the
+        // reference app passes 1. Godot's own XR path relies on an sRGB-typed swapchain instead,
+        // and we hand the SDK a UNORM texture, so the encode has to stay Godot's.
         //
         // XREAL One/One Pro starts perception through the 6DoF path in the Unity
         // reference app; we follow the same path so the head-tracker gets both
@@ -344,7 +355,7 @@ impl XrealSession {
              tracking_type = {tracking_mode} (0=6DoF, 1=3DoF, 2=0DoF),              input_source = {input_src} (1=Controller, 3=ControllerAndHands)"
         );
         let settings = UserDefinedSettings {
-            color_space: 1,
+            color_space: 0,
             // Stereo mode, from stereo_rendering_mode(), defaulting to Multipass, with
             // `debug.xreal.stereo_mode 2` opting into Multiview. 0 is Multipass, per-eye 2D textures, and 2
             // is Multiview, or Single-Pass-Instanced, one 2-layer immutable array texture, which is the
