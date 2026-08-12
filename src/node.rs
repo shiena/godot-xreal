@@ -7,7 +7,7 @@
 //! rig. On desktop the native libraries are absent, so it stays inert.
 
 use godot::classes::sub_viewport::UpdateMode;
-use godot::classes::viewport::Scaling3DMode;
+use godot::classes::viewport::{Msaa, Scaling3DMode};
 use godot::classes::{Camera3D, INode3D, Node3D, ProjectSettings, RenderingServer, SubViewport};
 use godot::prelude::*;
 
@@ -53,6 +53,36 @@ pub(crate) fn eye_render_scale() -> f32 {
     } else {
         1.0
     }
+}
+
+/// Carry the project's 3D image-quality settings onto a SubViewport we created in code.
+///
+/// Godot applies `rendering/anti_aliasing/quality/*` to the root viewport only; a `SubViewport`
+/// built at runtime starts from the class defaults, which have both debanding and MSAA off. On a
+/// headset that renders through the root viewport (`use_xr`) the project settings simply apply, so
+/// the same scene comes out smoother there than it does here — the giveaway is banding in wide, dim
+/// gradients such as a night sky, where debanding is the dither that hides the 8-bit steps the
+/// tonemap pass leaves behind. Reading the settings rather than hardcoding keeps the eye render
+/// looking like the project asked for.
+fn apply_project_viewport_quality(viewport: &mut Gd<SubViewport>) {
+    let ps = ProjectSettings::singleton();
+    let debanding = ps
+        .get_setting_with_override("rendering/anti_aliasing/quality/use_debanding")
+        .try_to::<bool>()
+        .unwrap_or(false);
+    viewport.set_use_debanding(debanding);
+
+    let msaa = ps
+        .get_setting_with_override("rendering/anti_aliasing/quality/msaa_3d")
+        .try_to::<i64>()
+        .unwrap_or(0);
+    let msaa = match msaa {
+        1 => Msaa::MSAA_2X,
+        2 => Msaa::MSAA_4X,
+        3 => Msaa::MSAA_8X,
+        _ => Msaa::DISABLED,
+    };
+    viewport.set_msaa_3d(msaa);
 }
 
 /// Whether this project opts into the Vulkan-only Godot XR multiview proof of concept.
@@ -571,6 +601,7 @@ impl XrealHeadTracker {
         }
         xr_viewport.set_update_mode(UpdateMode::ALWAYS);
         xr_viewport.set_use_xr(true);
+        apply_project_viewport_quality(&mut xr_viewport);
 
         let mut xr_camera = Camera3D::new_alloc();
         xr_camera.set_name("XrealMultiviewCamera");
@@ -906,6 +937,7 @@ impl XrealHeadTracker {
             }
             sv.set_update_mode(UpdateMode::ALWAYS);
             sv.set_world_3d(&world);
+            apply_project_viewport_quality(&mut sv);
             let mut cam = Camera3D::new_alloc();
             cam.set_fov(FALLBACK_EYE_VERTICAL_FOV);
             cam.set_near(DEFAULT_NEAR);
