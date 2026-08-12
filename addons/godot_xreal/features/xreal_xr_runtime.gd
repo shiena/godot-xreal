@@ -167,7 +167,6 @@ func _initialize_xreal() -> void:
 func _apply_xreal_boot_settings() -> void:
 	var settings := {
 		&"xreal/tracking_type": &"set_tracking_type",
-		&"xreal/stereo_mode": &"set_stereo_mode",
 		&"xreal/input_source": &"set_input_source",
 	}
 	for setting_name in settings:

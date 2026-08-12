@@ -13,7 +13,7 @@
 #   ./scripts/build.sh                        # build only (cargo ndk, release)
 #   ./scripts/build.sh --extract <com.xreal.xr.tar.gz>  # vendor the XREAL runtime libs from the SDK
 #   ./scripts/build.sh --all                  # build + export + install + run
-#   ./scripts/build.sh --all --stereo 0 --tracking 0   # + set device props first
+#   ./scripts/build.sh --all --tracking 0   # + set the tracking device prop first
 #   ./scripts/build.sh --export --install --run        # reuse the current .so
 #   ./scripts/build.sh --run --logcat         # relaunch and stream [xreal] logs
 #   ./scripts/build.sh --install --run --release-apk
@@ -37,7 +37,7 @@ ACTIVITY="$PKG/com.godot.game.GodotAppLauncher"
 
 do_build=0; do_export=0; do_install=0; do_run=0; do_logcat=0
 release_apk=0; cargo_debug=0; run_checks=0
-stereo=-1; tracking=-1; extract=""
+tracking=-1; extract=""
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -51,7 +51,6 @@ while [ $# -gt 0 ]; do
         --cargo-debug) cargo_debug=1 ;;
         --checks)      run_checks=1 ;;
         --extract)     extract="$2"; shift ;;
-        --stereo)      stereo="$2"; shift ;;
         --tracking)    tracking="$2"; shift ;;
         --device)      DEVICE="$2"; shift ;;
         -h|--help)     sed -n '2,26p' "$0"; exit 0 ;;
@@ -186,7 +185,6 @@ fi
 # ---------------------------------------------------------------- run (launch) ---
 if [ "$do_run" -eq 1 ]; then
     [ -n "$DEVICE" ] && "$ADB" connect "$DEVICE" >/dev/null 2>&1
-    [ "$stereo" -ge 0 ]   && { adbx shell setprop debug.xreal.stereo_mode "$stereo";     say "setprop debug.xreal.stereo_mode $stereo"; }
     [ "$tracking" -ge 0 ] && { adbx shell setprop debug.xreal.tracking_type "$tracking"; say "setprop debug.xreal.tracking_type $tracking"; }
     # Force-stop first: relaunching a not-fully-dead instance leaves the XR display registration
     # stuck ("graphics-thread callbacks registered as null") and the glasses stay black.

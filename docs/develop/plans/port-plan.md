@@ -85,14 +85,16 @@ running on an XREAL-compatible host (phone / Beam) with the glasses on USB-C.
   (`docs/develop/archive/codex-headlock-analysis.md`). Recommended config: **6DoF + Multipass + DISP pose**.
 
 ### Phase 4 (post-MVP) — stereo / distortion / IPD — stereo ✅, rest shelved
-- Stereo ships as **two `SubViewport`s + Multipass** (per-eye cameras) by default. Multiview
-  **works opt-in** since 2026-07-17 (`setprop debug.xreal.stereo_mode 2`, read by
-  `stereo_rendering_mode()`): the black right eye was Adreno GLES layer-copy quirks — not the
-  compositor rejecting a client `GL_TEXTURE_2D_ARRAY` as
-  `docs/develop/archive/codex-righteye-analysis.md` hypothesized — handled in `src/gl.rs`; since
-  2026-07-21 each eye is ONE direct `glCopyImageSubData` into the `GL_RGB10_A2` array (same copy
-  cost as Multipass). No rendering-load gain over Multipass (the rig still draws two
-  SubViewports), so Multipass stays the default.
+- Stereo ships as **two `SubViewport`s + Multipass** (per-eye cameras) on both renderers, and that
+  is now the only mode this port asks the SDK for. The SDK's own Multiview
+  (`setprop debug.xreal.stereo_mode 2`) worked from 2026-07-17 — the black right eye had been
+  Adreno GLES layer-copy quirks, not the compositor rejecting a client `GL_TEXTURE_2D_ARRAY` as
+  `docs/develop/archive/codex-righteye-analysis.md` hypothesized — but it never bought anything:
+  the rig still drew two SubViewports and then copied each into an array layer. It was removed on
+  2026-08-13, along with `xreal/stereo_mode`, `XrealSystem.set_stereo_mode` and the layer-copy code
+  in `src/gl.rs`. The layer copy also could not mirror the eye image, which the GL orientation fix
+  requires. Real single-pass multiview needs the ENGINE to draw both eyes at once, which is
+  `xreal/xr_multiview_poc` on the Vulkan Mobile renderer.
 - An `XRInterfaceExtension` was not required to make stereo submission work. It is now used as the
   standard Godot XR pose provider while the proven compositor path remains intact; hand tracking
   likewise integrates through `XRHandTracker`/`XRServer`.

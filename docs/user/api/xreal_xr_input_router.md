@@ -32,9 +32,11 @@ Gyroscope rates below this threshold are treated as resting noise.
 
 <a id="property-hand_offset"></a>
 
-### hand_offset: Vector3 = Vector3(0.28, 0.32, -0.3)
+### hand_offset: Vector3 = Vector3(0.28, -0.32, -0.3)
 
-Phone-controller origin relative to the tracked head, in metres. Device-verified: the glasses buffer reads +Y as down (the head pose carries the eye-buffer Y handedness), so the positive Y puts the origin below the head, at hand height. X is a magnitude; set_active_hand picks its sign.
+Phone-controller origin relative to the tracked head, in metres. Negative Y puts the origin below the head, at hand height. X is a magnitude; set_active_hand picks its sign.
+
+This used to read +0.32, on the finding that "the glasses buffer reads +Y as down". That was the eye image being mirrored vertically on its way to the compositor (fixed in src/gl.rs and src/vk_bridge.rs), which inverted every vertical offset along with the scene. With the image upright, Y means what it says.
 
 <a id="property-left_controller"></a>
 

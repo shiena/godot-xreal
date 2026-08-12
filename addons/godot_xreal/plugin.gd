@@ -53,16 +53,6 @@ const PROJECT_SETTINGS: Array[Dictionary] = [
 		"default": -1,
 	},
 	{
-		# Stereo rendering mode applied at boot. "SDK Default" (-1) leaves the
-		# `debug.xreal.stereo_mode` system property, and the native default of Multipass, in charge.
-		# Multiview is single-pass-instanced but buys no GPU on this rig, so Multipass is recommended.
-		"name": "xreal/stereo_mode",
-		"type": TYPE_INT,
-		"hint": PROPERTY_HINT_ENUM,
-		"hint_string": "SDK Default:-1,Multipass:0,Multiview:2",
-		"default": -1,
-	},
-	{
 		# Per-eye internal 3D resolution. The compositor-facing texture remains 1968x1134, while
 		# Godot renders 3D at this scale and bilinearly upscales it. 0.75 renders 44% fewer pixels.
 		# This is also the quality ceiling when xreal/dynamic_render_scale is enabled.
@@ -81,9 +71,11 @@ const PROJECT_SETTINGS: Array[Dictionary] = [
 		"default": false,
 	},
 	{
-		# Experimental Vulkan path: render the root XR viewport once with two views through an
-		# XRInterfaceExtension, then copy its two array layers into the existing XREAL eye targets.
-		# GLES keeps using the established two-SubViewport path.
+		# Vulkan Mobile only: render the root XR viewport once with two views through an
+		# XRInterfaceExtension, then copy its two array layers into the XREAL eye targets. On the
+		# Compatibility (GL) renderer it is ignored with a warning and the established
+		# two-SubViewport Multipass path runs instead, because GL has no engine-level multiview
+		# here. Multipass works on both renderers and stays the default.
 		"name": "xreal/xr_multiview_poc",
 		"type": TYPE_BOOL,
 		"default": false,

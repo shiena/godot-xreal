@@ -83,17 +83,6 @@ fn input_source() -> i32 {
     android_prop_i32(b"debug.xreal.input_source\0").unwrap_or(1)
 }
 
-/// Explicit stereo-rendering-mode override set from GDScript through `XrealSystem.set_stereo_mode`.
-/// `-1` means unset, falling through to the system property and then the Multipass default. It must
-/// be set **before** the session bootstraps, because it is read once at
-/// `InitUserDefinedSettings`.
-static STEREO_MODE_OVERRIDE: AtomicI32 = AtomicI32::new(-1);
-
-/// Set the stereo-mode override from GDScript. See [`stereo_rendering_mode`].
-pub fn set_stereo_mode_override(mode: i32) {
-    STEREO_MODE_OVERRIDE.store(mode, Ordering::Relaxed);
-}
-
 /// Read a NUL-terminated Android system property as an `i32`. It returns `None` off Android, and
 /// when the property is unset or unparseable.
 pub fn android_prop_i32(key: &[u8]) -> Option<i32> {
@@ -117,40 +106,6 @@ pub fn android_prop_i32(key: &[u8]) -> Option<i32> {
     #[cfg(not(target_os = "android"))]
     let _ = key;
     None
-}
-
-/// Stereo rendering mode for `InitUserDefinedSettings`, resolved **once at bootstrap** in priority
-/// order: the GDScript override `XrealSystem.set_stereo_mode`, which is how the ProjectSetting
-/// `xreal/stereo_mode` is applied, then `adb shell setprop debug.xreal.stereo_mode 2`, then the
-/// default. That default is **Multipass** (`0`), the complete shipping path. **Multiview** (`2`,
-/// single-pass-instanced) is a working option, and any other value falls back to Multipass.
-///
-/// Multiview **now renders correctly**, both eyes, as of 2026-07-17. The long-standing black right
-/// eye was NOT the NR compositor: the old "libnr_api can't sample layer 1" conclusion was wrong,
-/// and a solid-colour layer probe proved the compositor presents layer 1 fine. The real causes were
-/// two Adreno GLES driver quirks in how we filled the array layers, both fixed in
-/// `src/gl.rs::blit_texture_to_layer`. First, `glBlitFramebuffer` into a layer > 0 attachment is a
-/// silent no-op, which gave the black right eye. Second, a direct `glCopyImageSubData` from the
-/// non-RGBA8 SubViewport scrambles colours. The fix blits into an RGBA8 scratch, correcting the
-/// format, then `glCopyImageSubData`s that into the layer.
-///
-/// The default stays Multipass only because Multiview buys **zero** GPU here: our rig draws two
-/// Godot SubViewports every frame in both modes, and the single-pass-instanced win needs the
-/// *engine* to draw both eyes in one pass. See `docs/develop/archive/multiview-investigation.md`.
-fn stereo_rendering_mode() -> i32 {
-    // 1) The explicit override from the GDScript API, which carries the `xreal/stereo_mode`
-    // ProjectSetting.
-    let ovr = STEREO_MODE_OVERRIDE.load(Ordering::Relaxed);
-    if ovr >= 0 {
-        return if ovr == 2 { 2 } else { 0 };
-    }
-    // 2) The debug property, otherwise the default. Opt into Multiview only on an explicit 2:
-    // everything else, whether unset, off Android or any other value, stays on the default Multipass
-    // path.
-    match android_prop_i32(b"debug.xreal.stereo_mode\0") {
-        Some(2) => 2,
-        _ => 0,
-    }
 }
 
 /// Head-tracking mode for `InitUserDefinedSettings`, resolved **once at session bootstrap** in
@@ -347,21 +302,23 @@ impl XrealSession {
         // reference app; we follow the same path so the head-tracker gets both
         // rotation and position. Keep this aligned with Unity's InitUserDefinedSettings
         // log before falling back to narrower tracking modes.
-        let stereo_mode = stereo_rendering_mode();
         let tracking_mode = tracking_mode();
         let input_src = input_source();
         godot::global::godot_print!(
-            "[xreal] stereo_rendering_mode = {stereo_mode} (0=Multipass, 2=Multiview), \
-             tracking_type = {tracking_mode} (0=6DoF, 1=3DoF, 2=0DoF),              input_source = {input_src} (1=Controller, 3=ControllerAndHands)"
+            "[xreal] tracking_type = {tracking_mode} (0=6DoF, 1=3DoF, 2=0DoF), \
+             input_source = {input_src} (1=Controller, 3=ControllerAndHands)"
         );
         let settings = UserDefinedSettings {
             color_space: 0,
-            // Stereo mode, from stereo_rendering_mode(), defaulting to Multipass, with
-            // `debug.xreal.stereo_mode 2` opting into Multiview. 0 is Multipass, per-eye 2D textures, and 2
-            // is Multiview, or Single-Pass-Instanced, one 2-layer immutable array texture, which is the
-            // reference app's StereoRendering: 2. See that function and
-            // docs/develop/archive/multiview-investigation.md.
-            stereo_rendering_mode: stereo_mode,
+            // Multipass, per-eye 2D textures. The SDK's Multiview (2, single-pass-instanced, one
+            // 2-layer array texture) was reachable through `xreal/stereo_mode` and
+            // `debug.xreal.stereo_mode 2` until it was removed: this rig draws two Godot
+            // SubViewports either way, so the SDK's mode changed only how they were handed over,
+            // never how many passes Godot ran. It measured as exactly Multipass, and the layer copy
+            // it required could not mirror the eye image. Real single-pass multiview needs the
+            // ENGINE to draw both eyes at once, which is `xreal/xr_multiview_poc` on the Vulkan
+            // Mobile renderer. See docs/develop/archive/multiview-investigation.md.
+            stereo_rendering_mode: 0,
             tracking_type: tracking_mode,
             support_mono_mode: 0,
             unity_activity: activity,

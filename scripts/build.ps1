@@ -12,7 +12,7 @@
 #   .\scripts\build.ps1                       # build only (cargo ndk, release)
 #   .\scripts\build.ps1 -Extract <com.xreal.xr.tar.gz>  # vendor the XREAL runtime libs from the SDK
 #   .\scripts\build.ps1 -All                  # build + export + install + run
-#   .\scripts\build.ps1 -All -StereoMode 0 -TrackingType 0   # + set device props first
+#   .\scripts\build.ps1 -All -TrackingType 0  # + set the tracking device prop first
 #   .\scripts\build.ps1 -Export -Install -Run # reuse the current .so
 #   .\scripts\build.ps1 -Run -Logcat          # relaunch and stream [xreal] logs
 #   .\scripts\build.ps1 -Install -Run -ReleaseApk
@@ -32,7 +32,6 @@ param(
     [switch]$ReleaseApk,     # export a release-keystore APK (default: debug keystore)
     [switch]$CargoDebug,     # cargo debug profile (default: release)
     [switch]$Checks,         # run cargo fmt --check + clippy before building (off by default)
-    [int]$StereoMode = -1,   # -1 = leave device prop; 0 = Multipass, 2 = Multiview
     [int]$TrackingType = -1, # -1 = leave device prop; 0 = 6DoF, 1 = 3DoF, 2 = 0DoF
     [string]$Device  = $(if ($env:XREAL_DEVICE) { $env:XREAL_DEVICE } else { '192.168.0.4:5555' }),
     [string]$Godot   = $(if ($env:GODOT) { $env:GODOT } else { 'godot' }),  # a Godot 4.7-stable binary on PATH
@@ -179,7 +178,6 @@ if ($Install) {
 # ---------------------------------------------------------------- Run (launch) ---
 if ($Run) {
     if ($Device) { & $Adb connect $Device | Out-Null }
-    if ($StereoMode   -ge 0) { Adbx shell setprop debug.xreal.stereo_mode   $StereoMode;   Say "setprop debug.xreal.stereo_mode $StereoMode" }
     if ($TrackingType -ge 0) { Adbx shell setprop debug.xreal.tracking_type $TrackingType; Say "setprop debug.xreal.tracking_type $TrackingType" }
     # Force-stop first: relaunching a not-fully-dead instance leaves the XR display registration
     # stuck ("graphics-thread callbacks registered as null"), so the glasses stay black.

@@ -10,9 +10,8 @@ the whole rule.
 
 | submission path | eye image | head pose quaternion |
 |---|---|---|
-| GL (Compatibility), Multipass | mirrored vertically | `(-x, -y, -z, w)` |
+| GL (Compatibility) | mirrored vertically | `(-x, -y, -z, w)` |
 | Vulkan bridge | mirrored vertically | `(-x, -y, -z, w)` |
-| GL Multiview | **unmirrored**, see below | `(-x, -y, -z, w)`, so it mismatches |
 
 `XrealHeadTracker::display_rotation` returns the mirrored pairing unconditionally.
 
@@ -28,10 +27,12 @@ that the inversion belonged in the head pose instead. Both halves were wrong. A 
 arrives upside-down on device (2026-08-13, Compatibility/Multipass), and `(x,-y,z,w)` is a rotation,
 which cannot produce a mirror.
 
-GL Multiview is the one path that does not mirror. Filling a `GL_TEXTURE_2D_ARRAY` layer needs
-`glCopyImageSubData`, because `glBlitFramebuffer` into a layer > 0 attachment is a silent no-op on
-the Adreno driver, and a texel-for-texel copy cannot transform coordinates. Mirroring it means
-mirroring into the scratch 2D texture first, which is not done.
+One path could not be fixed and was removed instead: the SDK's own Multiview, once reachable on GL
+through `xreal/stereo_mode`. Filling a `GL_TEXTURE_2D_ARRAY` layer needs `glCopyImageSubData`,
+because `glBlitFramebuffer` into a layer > 0 attachment is a silent no-op on the Adreno driver, and
+a texel-for-texel copy cannot transform coordinates. It bought no GPU either, since the rig drew two
+SubViewports either way, so it went rather than growing a mirrored scratch copy. Multipass is now
+the only mode this port asks the SDK for, on both renderers.
 
 ## The failure modes, and how to tell them apart
 

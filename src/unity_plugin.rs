@@ -182,14 +182,9 @@ struct XrTexture {
     gl_id: u32,
     width: i32,
     height: i32,
-    /// Number of array layers: 1 for a plain `GL_TEXTURE_2D` in multipass, 2 for a
-    /// `GL_TEXTURE_2D_ARRAY` in Multiview, or Single-Pass-Instanced, which holds both eyes in one
-    /// texture.
-    layers: i32,
-    /// The `color_format` and `flags` the SDK passed to `CreateTexture`. `QueryTextureDesc` has to echo
-    /// them back, especially for the Multiview 2-layer array: reporting a 1-layer, flags-0 descriptor
-    /// for a 2-layer object mis-registers the NR swapchain, so layer 1 never gets our content and the
-    /// right eye shows a fixed cleared gray. See docs/develop/archive/codex-righteye-analysis.md.
+    /// The `color_format` and `flags` the SDK passed to `CreateTexture`. `QueryTextureDesc` has to
+    /// echo them back: a descriptor that does not match what was created mis-registers the NR
+    /// swapchain. See docs/develop/archive/codex-righteye-analysis.md.
     color_format: u32,
     flags: u32,
     /// Whether WE allocated `gl_id`, which is the engine-allocated GLES path with `desc.color == 0`,
@@ -268,13 +263,13 @@ pub fn set_godot_source_size(width: i32, height: i32) {
 }
 
 /// Look up an engine texture by its `UnityXRRenderTextureId`, returning `(gl_id, width, height)`.
-fn xr_texture_for(id: u32) -> Option<(u32, i32, i32, i32)> {
+fn xr_texture_for(id: u32) -> Option<(u32, i32, i32)> {
     XR_TEXTURES
         .lock()
         .expect("xr textures mutex")
         .iter()
         .find(|t| t.id == id)
-        .map(|t| (t.gl_id, t.width, t.height, t.layers))
+        .map(|t| (t.gl_id, t.width, t.height))
 }
 
 #[repr(C)]
@@ -756,15 +751,17 @@ extern "C" fn xr_create_texture(
     let width = desc.width as i32;
     let height = desc.height as i32;
     let srgb = (desc.flags & 0x10) != 0;
-    // `textureArrayLength >= 2` = the SDK's Multiview / Single-Pass-Instanced path: it wants ONE
-    // 2-layer array texture (both eyes), which it binds as a layered multiview framebuffer. A plain
-    // 2D texture there causes `GL_INVALID_FRAMEBUFFER_OPERATION` → black. `layers == 1` is the
-    // multipass path (a normal 2D texture per eye).
-    let layers = if desc.texture_array_length >= 2 {
-        desc.texture_array_length as i32
-    } else {
-        1
-    };
+    // `textureArrayLength >= 2` was the SDK's Multiview / Single-Pass-Instanced path: ONE 2-layer
+    // array texture holding both eyes, bound as a layered multiview framebuffer. This port is
+    // Multipass-only now - InitUserDefinedSettings pins stereo_rendering_mode to 0 - so the SDK
+    // should never ask, and nothing here can fill a layer any more. Fail closed if it does.
+    if desc.texture_array_length >= 2 {
+        godot::global::godot_warn!(
+            "[xreal] CreateTexture asked for a {}-layer array texture; this port is Multipass-only",
+            desc.texture_array_length
+        );
+        return 1;
+    }
     // If the SDK passed an existing native texture (color != 0), CreateBuffer took the
     // the `[DM+0x10]==0x15` path, where GetSwapChainBuffers leads to CreateTexture(color=that
     // buffer). The SDK owns and registers that swapchain texture and expects the engine to render
@@ -777,27 +774,16 @@ extern "C" fn xr_create_texture(
         // Vulkan bridge path (vulkan-path-plan.md stage 2): the engine-allocated slot becomes an
         // AHB bundle whose EGLImage-backed GL name the SDK receives as usual. The private EGL
         // context is current here, because the only route in is the Vulkan tick's
-        // ensure_gfx_thread_started(). Multiview arrays are GL-only; fail closed on them.
-        if layers >= 2 || !crate::vk_bridge::active() {
+        // ensure_gfx_thread_started().
+        if !crate::vk_bridge::active() {
             godot::global::godot_warn!(
-                "[xreal] CreateTexture under Vulkan refused (layers={layers}, bridge_active={})",
-                crate::vk_bridge::active()
+                "[xreal] CreateTexture under Vulkan refused: bridge inactive"
             );
             return 1;
         }
         match crate::vk_bridge::create_eye_texture(width, height) {
             Some(t) => t,
             None => return 1,
-        }
-    } else if layers >= 2 {
-        match crate::gl::alloc_texture_array(width, height, layers, srgb) {
-            Some(t) => t,
-            None => {
-                godot::global::godot_warn!(
-                    "[xreal] CreateTexture array {width}x{height}x{layers} failed (GL alloc)"
-                );
-                return 1;
-            }
         }
     } else {
         match crate::gl::alloc_texture(width, height, srgb) {
@@ -818,11 +804,10 @@ extern "C" fn xr_create_texture(
             gl_id,
             width,
             height,
-            layers,
             color_format: desc.color_format,
             flags: desc.flags,
-            // color == 0 → we allocated the GL texture (alloc_texture / alloc_texture_array) and
-            // own it; color != 0 → the SDK handed us its own swapchain texture, which it frees.
+            // color == 0 → we allocated the GL texture (alloc_texture) and own it; color != 0 →
+            // the SDK handed us its own swapchain texture, which it frees.
             // Vulkan-bridge slots are owned by vk_bridge (a full AHB bundle, not just a GL name),
             // so they stay owned=false here and xr_destroy_texture routes them to the bridge.
             owned: desc.color == 0 && crate::gl::renderer_is_gl(),
@@ -868,13 +853,12 @@ extern "C" fn xr_query_texture_desc(
     };
     if XR_QUERY_LOG.fetch_add(1, Ordering::Relaxed) < 8 {
         godot::global::godot_print!(
-            "[xreal] QueryTextureDesc tid={} id={tex_id} -> gl_tex={} {}x{} layers={} flags={} \
+            "[xreal] QueryTextureDesc tid={} id={tex_id} -> gl_tex={} {}x{} flags={} \
              color_format={} (SetSwapChainBuffers is registering our texture)",
             current_tid(),
             entry.gl_id,
             entry.width,
             entry.height,
-            entry.layers,
             entry.flags,
             entry.color_format
         );
@@ -891,7 +875,8 @@ extern "C" fn xr_query_texture_desc(
             depth: 0,
             width: entry.width as u32,
             height: entry.height as u32,
-            texture_array_length: entry.layers as u32,
+            // Always 1: Multipass, a plain 2D texture per eye. xr_create_texture refuses anything else.
+            texture_array_length: 1,
             flags: entry.flags,
         };
     }
@@ -1678,24 +1663,14 @@ fn run_frame_tick_with(backend: FillBackend) {
         if tex_id == 0 {
             continue;
         }
-        if let Some((gl_tex, dw, dh, layers)) = xr_texture_for(tex_id) {
+        if let Some((gl_tex, dw, dh)) = xr_texture_for(tex_id) {
             if backend == FillBackend::Vulkan {
-                // Multipass only on this backend (xr_create_texture refuses Multiview arrays
-                // under Vulkan), so gl_tex is a bridge-owned 2D slot.
+                // gl_tex is a bridge-owned 2D slot; the bridge fills it in one submission below.
                 let _ = (dw, dh);
                 vk_targets.push((gl_tex, eye.min(1)));
                 continue;
             }
-            if layers >= 2 {
-                // Multiview / single-pass-instanced: ONE array texture, both eyes in its layers
-                // (layer 0 = left, layer 1 = right). renderPassesCount is 1 here.
-                for layer in 0..layers.min(2) {
-                    let src = eye_src[layer as usize];
-                    if src != 0 && have_size {
-                        crate::gl::blit_texture_to_layer(src, src_w, src_h, gl_tex, layer, dw, dh);
-                    }
-                }
-            } else {
+            {
                 let src = eye_src[eye.min(1)];
                 if src != 0 && have_size {
                     // Real stereo: this eye's offscreen SubViewport texture.
