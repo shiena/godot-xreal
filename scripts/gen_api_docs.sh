@@ -53,6 +53,13 @@ case "$ver" in
 	*) echo "Godot must be 4.7 ('$godot --version' = '$ver'). Pass godot=<path>, or set GODOT." >&2; exit 1 ;;
 esac
 
+# Import first. --doctool walks the project's imported script list, which does not exist until the
+# project has been opened once: in a fresh clone or a NEW GIT WORKTREE there is no .godot/, so
+# doctool finds nothing under res://addons/godot_xreal, writes no GDScript XML, and the renderer
+# then deletes all fifteen of those pages as stale (seen 2026-08-13 in a new worktree). The import
+# is incremental, so on an already-imported tree it costs about a second.
+"$godot" --headless --path "$root" --import
+
 # --gdscript-docs documents every script it finds; src/api_docs.rs drops the editor-only ones.
 "$godot" --headless --path "$root" --doctool "$xml_dir" --gdscript-docs res://addons/godot_xreal
 

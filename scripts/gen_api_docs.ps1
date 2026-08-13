@@ -53,6 +53,14 @@ try {
 		throw "Godot must be 4.7 ('$Godot --version' = '$ver'). Pass -Godot <path> / godot=<path>, or set `$env:GODOT."
 	}
 
+	# Import first. --doctool walks the project's imported script list, which does not exist until
+	# the project has been opened once: in a fresh clone or a NEW GIT WORKTREE there is no .godot/,
+	# so doctool finds nothing under res://addons/godot_xreal, writes no GDScript XML, and the
+	# renderer then deletes all fifteen of those pages as stale (seen 2026-08-13 in a new worktree).
+	# The import is incremental, so on an already-imported tree it costs about a second.
+	$out = & $Godot --headless --path $root --import 2>&1 | Out-String
+	if ($LASTEXITCODE -ne 0) { Write-Host $out; throw "godot --import failed" }
+
 	# --gdscript-docs documents every script it finds, and src/api_docs.rs drops the editor-only ones.
 	# Pipe the output through a cmdlet, Out-String, rather than simply assigning it: the Windows Godot
 	# build is a GUI-subsystem binary, so a bare call, even `$out = & godot …`, hands control back
