@@ -21,11 +21,6 @@ const INPUT_ACTIONS := {
 
 ## Phone-controller origin relative to the tracked head, in metres. Negative Y puts the origin
 ## below the head, at hand height. X is a magnitude; set_active_hand picks its sign.
-##
-## This used to read +0.32, on the finding that "the glasses buffer reads +Y as down". That was
-## the eye image being mirrored vertically on its way to the compositor (fixed in src/gl.rs and
-## src/vk_bridge.rs), which inverted every vertical offset along with the scene. With the image
-## upright, Y means what it says.
 @export var hand_offset := Vector3(0.28, -0.32, -0.3)
 ## Complementary-filter gain used to correct phone pitch and roll from gravity.
 @export_range(0.0, 1.0, 0.01) var gravity_gain := 0.06
