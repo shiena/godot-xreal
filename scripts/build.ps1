@@ -12,7 +12,7 @@
 #   .\scripts\build.ps1                       # build only (cargo ndk, release)
 #   .\scripts\build.ps1 -Extract <com.xreal.xr.tar.gz>  # vendor the XREAL runtime libs from the SDK
 #   .\scripts\build.ps1 -All                  # build + export + install + run
-#   .\scripts\build.ps1 -All -StereoMode 0 -TrackingType 0   # + set device props first
+#   .\scripts\build.ps1 -All -TrackingType 0  # + set the tracking device prop first
 #   .\scripts\build.ps1 -Export -Install -Run # reuse the current .so
 #   .\scripts\build.ps1 -Run -Logcat          # relaunch and stream [xreal] logs
 #   .\scripts\build.ps1 -Install -Run -ReleaseApk
@@ -32,7 +32,6 @@ param(
     [switch]$ReleaseApk,     # export a release-keystore APK (default: debug keystore)
     [switch]$CargoDebug,     # cargo debug profile (default: release)
     [switch]$Checks,         # run cargo fmt --check + clippy before building (off by default)
-    [int]$StereoMode = -1,   # -1 = leave device prop; 0 = Multipass, 2 = Multiview
     [int]$TrackingType = -1, # -1 = leave device prop; 0 = 6DoF, 1 = 3DoF, 2 = 0DoF
     [string]$Device  = $(if ($env:XREAL_DEVICE) { $env:XREAL_DEVICE } else { '192.168.0.4:5555' }),
     [string]$Godot   = $(if ($env:GODOT) { $env:GODOT } else { 'godot' }),  # a Godot 4.7-stable binary on PATH
@@ -142,6 +141,13 @@ if ($Export) {
 
     $outDir = Split-Path -Parent $ApkOut
     New-Item -ItemType Directory -Force $outDir | Out-Null
+    # Remove any previous APK BEFORE exporting. Godot has been seen to report "Exported" and exit 0
+    # while leaving the destination untouched: gradle rebuilt the APK (its intermediates were all
+    # fresh) but the copy to $ApkOut never happened. The existence+size check below then passed on
+    # the stale file, so a build with none of the session's changes shipped to the device and was
+    # tested as if it were new (2026-08-13, cost an hour of chasing a "fix that did not work").
+    # Deleting first turns that silent staleness into a visible failure.
+    Remove-Item $ApkOut -Force -ErrorAction SilentlyContinue
     $exportFlag = if ($ReleaseApk) { '--export-release' } else { '--export-debug' }
 
     # Use the NON-console Godot binary here (Godot_..._win64.exe, not *_console.exe). The console
@@ -149,6 +155,7 @@ if ($Export) {
     # a resident Gradle daemon behind, so the console binary hangs after writing the APK. The
     # non-console binary exits normally (~20-30s). See godot-android-export-hang-repro.
     Say "Godot export ($exportFlag `"$Preset`") -> $ApkOut"
+    $started = Get-Date
     # Quote every argument: -ArgumentList joins with spaces WITHOUT quoting, so a preset name
     # containing a space ("Android Vulkan") would otherwise split into preset + bogus output path.
     $proc = Start-Process -FilePath $Godot -PassThru -WindowStyle Hidden -ArgumentList (
@@ -159,8 +166,14 @@ if ($Export) {
         Stop-Process -Id $proc.Id -Force
         Die "APK export did not finish in 180s. A *console* Godot binary hangs here after a Gradle export (Gradle daemon stuck in its Job Object); use the non-console binary."
     }
-    if (-not (Test-Path $ApkOut) -or (Get-Item $ApkOut).Length -lt 1MB) {
+    # Freshness is part of the check, not just existence and size: see the Remove-Item above for the
+    # failure this catches. build.sh's twin polls on the same condition (mtime >= start).
+    $apk = Get-Item $ApkOut -ErrorAction SilentlyContinue
+    if (-not $apk -or $apk.Length -lt 1MB) {
         Die "APK export finished (exit $($proc.ExitCode)) but $ApkOut is missing or too small. Check the export preset / keystore."
+    }
+    if ($apk.LastWriteTime -lt $started) {
+        Die "APK export finished (exit $($proc.ExitCode)) but $ApkOut was last written $($apk.LastWriteTime), before this export started. Godot did not update it, so the file is from an earlier build."
     }
     Ok ("Exported: {0} ({1:N0} bytes)" -f $ApkOut, (Get-Item $ApkOut).Length)
 }
@@ -179,7 +192,6 @@ if ($Install) {
 # ---------------------------------------------------------------- Run (launch) ---
 if ($Run) {
     if ($Device) { & $Adb connect $Device | Out-Null }
-    if ($StereoMode   -ge 0) { Adbx shell setprop debug.xreal.stereo_mode   $StereoMode;   Say "setprop debug.xreal.stereo_mode $StereoMode" }
     if ($TrackingType -ge 0) { Adbx shell setprop debug.xreal.tracking_type $TrackingType; Say "setprop debug.xreal.tracking_type $TrackingType" }
     # Force-stop first: relaunching a not-fully-dead instance leaves the XR display registration
     # stuck ("graphics-thread callbacks registered as null"), so the glasses stay black.

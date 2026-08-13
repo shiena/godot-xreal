@@ -151,8 +151,8 @@ requires two XR settings. Set `xr/shaders/enabled=true` in *Project Settings* (a
 setting), and set **XR Mode** to `OpenXR` in the Android export preset; without them the exporter
 strips the XR shaders and 3D stops rendering. Leave `xr/openxr/enabled` at its `false` default for
 this path: the preset flag only preserves the shaders, and the OpenXR runtime itself stays off.
-The Compatibility renderer ignores the setting and keeps the
-regular two-viewport path. The Android property `debug.xreal.xr_multiview` (0/1) overrides the setting for
+The Compatibility renderer ignores the setting, logs a warning and keeps
+the regular two-viewport Multipass path, which is fully supported there. The Android property `debug.xreal.xr_multiview` (0/1) overrides the setting for
 same-APK A/B comparison. Dynamic render scale does not apply to this path; `xreal/render_scale` is
 sampled once at startup.
 

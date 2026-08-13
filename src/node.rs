@@ -812,24 +812,26 @@ impl XrealHeadTracker {
             let s = (1.0 + m22 - m00 - m11).sqrt() * 2.0; // s = 4z
             ((m02 + m20) / s, (m12 + m21) / s, 0.25 * s, (m10 - m01) / s)
         };
-        // NRSDK to Godot handedness, device-calibrated with a wearer against the DISP calibration log:
-        // nod tracks pitch/X, turn tracks yaw/Y and tilt tracks roll/Z, all world-locked in the right
-        // direction.
+        // NRSDK to Godot handedness, device-calibrated with a wearer against the DISP calibration
+        // log: nod tracks pitch/X, turn tracks yaw/Y and tilt tracks roll/Z, all world-locked in
+        // the right direction.
         //
-        // NRSDK to Godot handedness, device-calibrated with a wearer: nod tracks pitch/X, turn
-        // tracks yaw/Y and tilt tracks roll/Z, all world-locked in the right direction.
+        // Every submission path mirrors the eye image vertically - the Vulkan bridge in its blit,
+        // GL in `blit_texture` and `blit_default_framebuffer` - because the compositor reads the eye
+        // texture with the opposite vertical origin from the one Godot renders into. So the pose is
+        // always the mirrored pairing, `(-x,-y,-z,w)`.
         //
-        // `(x,-y,z,w)` is the pairing for an image submitted as rendered, which is the GL path.
+        // The image and the pose are one setting. The compositor reprojects each submitted frame
+        // onto the latest head pose, so mirroring the image also mirrors the direction that
+        // reprojection pulls, on exactly the axes a vertical mirror reverses: pitch and roll,
+        // leaving yaw alone. Mirror the image without the pose and the view swings about twice as
+        // far as the head on those two axes and in the wrong direction; do both and they cancel.
         //
-        // The Vulkan path mirrors the eye image vertically (see vk_bridge), and the pose has to
-        // agree with it. The compositor reprojects each submitted frame onto the latest head pose,
-        // so mirroring the image also mirrors the direction that reprojection pulls, on exactly the
-        // axes a vertical mirror reverses: pitch and roll, leaving yaw alone. Mirror the image
-        // without the pose and the view swings about twice as far as the head on those two axes and
-        // in the wrong direction; do both and they cancel.
-        let mirrored = crate::vk_bridge::mirrors_eye_image();
-        let (qx, qz) = if mirrored { (-x, -z) } else { (x, z) };
-        Some(Quaternion::new(qx, -y, qz, w).normalized())
+        // This read `(x,-y,z,w)` on the GL path between ddf2823 and now, on the reasoning that GL
+        // submits its image as rendered. It does not: device-confirmed 2026-08-13 on
+        // Compatibility/Multipass, a straight copy arrives upside-down, and no rotation undoes a
+        // mirror.
+        Some(Quaternion::new(-x, -y, -z, w).normalized())
     }
 
     /// Poll the JNI glasses hot-plug counters and re-emit any new events as signals. It is called on

@@ -392,12 +392,6 @@ Enable/disable depth meshing (`NativePerception::SetMeshingEnabled`). Returns wh
 
 Enable plane detection (`PLANE_HORIZONTAL | PLANE_VERTICAL` flags). Needs a live 6DoF session; returns the SDK bool (false when unavailable). Call after `is_session_started()`.
 
-<a id="method-set_stereo_mode"></a>
-
-### set_stereo_mode(mode: int)
-
-Select the stereo rendering mode applied when the native session **bootstraps**, a startup selector: `0` is Multipass, both eyes, the default shipping path, and `2` is Multiview, single-pass-instanced. **Call it before the session starts**, for instance in an autoload `_ready`, before the XR rig enters the tree, because it is read once at `InitUserDefinedSettings`. It is equivalent to the ProjectSetting `xreal/stereo_mode` or to `adb shell setprop debug.xreal.stereo_mode <n>`. Multiview buys nothing on this two-SubViewport rig (see docs/develop/archive/multiview-investigation.md), so Multipass stays the recommended default.
-
 <a id="method-set_tracking_type"></a>
 
 ### set_tracking_type(mode: int)

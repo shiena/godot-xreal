@@ -70,7 +70,7 @@ support `-Check` / `--check` to verify that the committed output is in sync:
 .\scripts\build.ps1 -Extract <…>\com.xreal.xr.tar.gz   # vendor the XREAL runtime libs (once)
 .\scripts\build.ps1                       # build only (cargo ndk, release)
 .\scripts\build.ps1 -All                  # build + export + install + run
-.\scripts\build.ps1 -All -StereoMode 0 -TrackingType 0
+.\scripts\build.ps1 -All -TrackingType 0
 .\scripts\build.ps1 -Export -Install -Run # reuse the current .so
 .\scripts\build.ps1 -Run -Logcat          # relaunch and stream [xreal] logs
 ```
@@ -80,7 +80,7 @@ support `-Check` / `--check` to verify that the committed output is in sync:
 ./scripts/build.sh --extract <…>/com.xreal.xr.tar.gz  # vendor the XREAL runtime libs (once)
 ./scripts/build.sh                        # build only
 ./scripts/build.sh --all                  # build + export + install + run
-./scripts/build.sh --all --stereo 0 --tracking 0
+./scripts/build.sh --all --tracking 0
 ./scripts/build.sh --export --install --run
 ./scripts/build.sh --run --logcat
 ```
@@ -96,7 +96,6 @@ install + run.
 | `-Build` `-Export` `-Install` `-Run` `-Logcat` | `--build` `--export` `--install` `--run` `--logcat` | pick stages |
 | `-Extract <path>` | `--extract <path>` | vendor the XREAL runtime libs from `com.xreal.xr.tar.gz` (or the extracted `package/` dir) through `vendor_xreal_libs.ps1` |
 | `-All` | `--all` | build + export + install + run |
-| `-StereoMode <n>` | `--stereo <n>` | set `debug.xreal.stereo_mode` before launch (0 = Multipass, 2 = Multiview) |
 | `-TrackingType <n>` | `--tracking <n>` | set `debug.xreal.tracking_type` before launch (0 = 6DoF, 1 = 3DoF, 2 = 0DoF) |
 | `-ReleaseApk` | `--release-apk` | export with the release keystore (default: debug keystore) |
 | `-CargoDebug` | `--cargo-debug` | cargo debug profile (default: release) |
@@ -110,4 +109,4 @@ Env overrides: `GODOT`, `ADB`, `XREAL_DEVICE`, `APK_OUT`, `EXPORT_PRESET`.
 - The APK exports to `../godot-build/godot-xreal.apk` (matches the export preset).
 - The export runs headless and is **polled to completion** (fresh mtime + stable size + a valid ZIP
   EOCD) before the Godot process is killed, because killing mid-write corrupts the APK.
-- The recommended runtime config is **6DoF + Multipass**: `-All -StereoMode 0 -TrackingType 0`.
+- The recommended runtime config is **6DoF**: `-All -TrackingType 0`. Stereo is always Multipass.

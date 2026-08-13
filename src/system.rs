@@ -847,19 +847,6 @@ impl XrealSystem {
         }
     }
 
-    /// Select the stereo rendering mode applied when the native session **bootstraps**, a startup
-    /// selector: `0` is Multipass, both eyes, the default shipping path, and `2` is Multiview,
-    /// single-pass-instanced. **Call it before the session starts**, for instance in an autoload
-    /// `_ready`, before the XR rig enters the tree, because it is read once at
-    /// `InitUserDefinedSettings`. It is equivalent to the ProjectSetting `xreal/stereo_mode` or to
-    /// `adb shell setprop debug.xreal.stereo_mode <n>`. Multiview buys nothing on this
-    /// two-SubViewport rig (see docs/develop/archive/multiview-investigation.md), so Multipass stays the
-    /// recommended default.
-    #[func]
-    fn set_stereo_mode(&self, mode: i64) {
-        session::set_stereo_mode_override(mode as i32);
-    }
-
     /// Point the compositor's reprojection plane at `point`, with surface `normal`, both in
     /// **head-local Godot space**: the head tracker's own frame, not the world. Returns whether the
     /// call reached the SDK.

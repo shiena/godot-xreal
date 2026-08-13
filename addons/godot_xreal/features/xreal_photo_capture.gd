@@ -73,7 +73,9 @@ func capture_photo() -> String:
 	if img == null:
 		_fail("[xreal-capture] readback failed")
 		return ""
-	img.flip_y()  # SubViewport read-back is bottom-up (GL origin), so flip to upright before saving
+	# No flip; the SubViewport read-back is upright. This called img.flip_y(), which was cancelling
+	# the camera texture's own upside-down content rather than a read-back quirk. That is handled in
+	# xreal_ycbcr_2d.gdshader's V flip now. See xreal_blend_capture.gd for the device check.
 	# Local date-time in the name (photo_YYYYMMDD_HHMMSS.jpg) so the file reads naturally in the
 	# gallery: "2026-07-20T14:25:30" becomes "20260720_142530".
 	var stamp := Time.get_datetime_string_from_system().replace("-", "").replace(":", "").replace("T", "_")

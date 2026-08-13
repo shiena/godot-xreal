@@ -153,7 +153,11 @@ func capture_blended() -> String:
 	if img == null:
 		_fail("[xreal-blend] readback failed")
 		return ""
-	img.flip_y()  # SubViewport read-back is bottom-up (GL origin), so flip to upright before saving
+	# No flip. This called img.flip_y(), described as correcting a bottom-up SubViewport read-back,
+	# but the read-back is upright: what it actually cancelled was the camera texture's own
+	# upside-down content, and it turned the AR layer over in the process (device-checked
+	# 2026-08-13, a blend photo with the camera upright and the holograms inverted). The camera's
+	# orientation is handled where it belongs now, in xreal_blend_2d.gdshader's V flip.
 	# Local date-time in the name (blend_YYYYMMDD_HHMMSS.jpg) so the file reads naturally in the
 	# gallery: "2026-07-20T14:25:30" becomes "20260720_142530".
 	var stamp := Time.get_datetime_string_from_system().replace("-", "").replace(":", "").replace("T", "_")

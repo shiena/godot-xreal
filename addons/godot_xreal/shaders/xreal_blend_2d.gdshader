@@ -17,8 +17,12 @@ uniform bool green_background = false;
 uniform vec3 green_key : source_color = vec3(0.0, 1.0, 0.0);
 
 void fragment() {
-	float y = texture(y_texture, UV).r;
-	vec2 ch = texture(cbcr_texture, UV).rg;
+	// V flip on the CAMERA samplers only: the SDK's buffer is bottom-up while Godot samples
+	// top-down (see xreal_ycbcr.gdshader). ar_texture is a Godot SubViewport and is already
+	// upright, so it keeps UV.
+	vec2 cam_uv = vec2(UV.x, 1.0 - UV.y);
+	float y = texture(y_texture, cam_uv).r;
+	vec2 ch = texture(cbcr_texture, cam_uv).rg;
 	float u = ch.r; // Cb
 	float v = ch.g; // Cr
 	float r = y + 1.40220 * v - 0.70110;

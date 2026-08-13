@@ -45,8 +45,6 @@ var _extension_loaded := false
 var _ar_diag_frames := 0
 var _phone_pointer: Node3D
 var _cursor_mat: StandardMaterial3D
-# Which way "up" is for the touchpad cursor; see _setup_touch_controller.
-var _cursor_y_sign := -1.0
 # Desktop only: the phone pointer has no IMU to follow off device, so the preview window's mouse
 # aims it instead, once Tab has handed the mouse over. Angles in degrees, zeroed by R.
 const PREVIEW_POINTER_SENSITIVITY := 0.15
@@ -154,11 +152,6 @@ func _setup_touch_controller() -> void:
 	if head:
 		_cursor.reparent(head, false)
 		_cursor_mat = _cursor.material_override as StandardMaterial3D
-		# The XREAL eye cameras invert Y (pose handedness), so the touchpad's "up" maps to -y there.
-		# Nothing else does: OpenXR renders through Godot's standard path and the preview window
-		# uses a plain camera, so both keep +y. This tracks the eye buffers, not the head choice
-		# above, which is why it tests the XREAL driver alone.
-		_cursor_y_sign = -1.0 if _tracker else 1.0
 	else:
 		_cursor.queue_free()
 		_cursor = null
@@ -179,9 +172,6 @@ func _setup_desktop_pointer() -> void:
 	_preview.app_input.connect(_on_preview_app_input)
 	_preview.flycam_active_changed.connect(_on_preview_flycam_changed)
 	_setup_phone_pointer()
-	# The beam origin's +Y reads as DOWN through the eye cameras but as up in the preview window, so
-	# flip it to keep the beam starting below the view on both.
-	_phone_pointer.hand_offset.y = -absf(_phone_pointer.hand_offset.y)
 
 ## Tab moved control of the preview window's mouse. Capture it while the app is aiming, so a long
 ## sweep does not run out of desk, and give it back when the flycam takes over.
@@ -207,7 +197,7 @@ func _on_preview_app_input(event: InputEvent) -> void:
 func _on_tc_touchpad(value: Vector2) -> void:
 	_xr_runtime.set_controller_axis(value)
 	if _cursor:
-		_cursor.position = Vector3(value.x * 0.8, value.y * 0.5 * _cursor_y_sign, -2.0)
+		_cursor.position = Vector3(value.x * 0.8, value.y * 0.5, -2.0)
 
 func _on_tc_touchpad_released() -> void:
 	_xr_runtime.set_controller_axis(Vector2.ZERO, false)

@@ -41,7 +41,19 @@ struct Encoder {
     /// Whether to inject periodic `request-sync` (the IDR workaround; see [`maybe_request_idr`]),
     /// resolved by [`resolve_idr_hack`] at start.
     idr_hack: bool,
+    /// Frame size, so [`submit_frame`] can size its flip scratch to match.
+    width: i32,
+    height: i32,
 }
+
+/// Scratch texture for [`submit_frame`]'s vertical flip, as `(gl_name, width, height)`, or a zero
+/// name before the first frame.
+///
+/// It outlives the encoder deliberately. Allocating and deleting a GL object needs the render
+/// thread's EGL context, which `submit_frame` has and `stop` does not, so this is created, resized
+/// and freed only from `submit_frame`. A stop-then-start at the same resolution reuses it; a
+/// different resolution frees the old one on the next frame.
+static FLIP_SCRATCH: Mutex<(u32, i32, i32)> = Mutex::new((0, 0, 0));
 
 // --- Periodic-IDR workaround (docs/develop/archive/codex-idr-analysis.md) -----------------------------
 //
@@ -447,6 +459,8 @@ unsafe fn start_native(config: &EncoderConfig) -> Option<Encoder> {
             destroy,
             handle,
             idr_hack: config.idr_hack,
+            width,
+            height,
         })
     }
 }
@@ -457,6 +471,17 @@ unsafe fn start_native(config: &EncoderConfig) -> Option<Encoder> {
 /// nanoseconds. **Render thread only.** It returns the encoder status: `0` for ok, `-1` when not
 /// streaming, `-2` under the Vulkan renderer, whose components publish through
 /// `stream_publish_viewport` instead (the integer here would be a `VkImage`, never a GL name).
+/// The frame is flipped vertically on the way in. The encoder reads the texture with GL's vertical
+/// origin, the opposite of the one Godot's `get_image()` read-back uses, so a viewport handed over
+/// as rendered comes out upside down. Device-checked 2026-08-13: the stream and the recording were
+/// both inverted with left and right correct, while the very same composite saved through
+/// `get_image()` was upright.
+///
+/// The flip lives here rather than at any producer because each producer has more than one source.
+/// `xreal_stream.gd` and `xreal_video_recorder.gd` both submit the blend composite when the camera
+/// is on and the bare AR viewport when it is off, and that AR viewport carries the alpha that
+/// `with_alpha` streams need, which routing it through a composite pass would flatten. One flip
+/// here covers every combination.
 pub fn submit_frame(gl_texture_id: usize, timestamp: u64) -> i32 {
     if !crate::gl::renderer_is_gl() {
         return -2;
@@ -464,12 +489,44 @@ pub fn submit_frame(gl_texture_id: usize, timestamp: u64) -> i32 {
     let guard = ENCODER.lock().expect("encoder mutex");
     match guard.as_ref() {
         Some(enc) => {
-            let status = unsafe { (enc.update_surface)(enc.handle, gl_texture_id, timestamp) };
+            let src = gl_texture_id as u32;
+            let tex = flip_scratch(enc.width, enc.height).map_or(src, |dst| {
+                // blit_texture mirrors vertically, the same reconciliation the eye path needs.
+                crate::gl::blit_texture(src, enc.width, enc.height, dst, enc.width, enc.height);
+                dst
+            });
+            let status = unsafe { (enc.update_surface)(enc.handle, tex as usize, timestamp) };
             maybe_request_idr(enc.handle, enc.idr_hack);
             status
         }
         None => -1,
     }
+}
+
+/// The flip scratch at `width` by `height`, allocating or resizing it as needed, or `None` when
+/// allocation fails (the caller then submits the frame unflipped rather than dropping it).
+///
+/// **Render thread only**, like its one caller: it creates and deletes GL objects.
+fn flip_scratch(width: i32, height: i32) -> Option<u32> {
+    let mut scratch = FLIP_SCRATCH.lock().expect("flip scratch mutex");
+    if scratch.0 != 0 && (scratch.1 != width || scratch.2 != height) {
+        crate::gl::delete_texture(scratch.0);
+        *scratch = (0, 0, 0);
+    }
+    if scratch.0 == 0 {
+        match crate::gl::alloc_texture(width, height, false) {
+            Some(tex) => *scratch = (tex, width, height),
+            None => {
+                static WARNED: AtomicU32 = AtomicU32::new(0);
+                if WARNED.fetch_add(1, Ordering::Relaxed) < 3 {
+                    godot::global::godot_warn!(
+                        "[xreal] FPV flip scratch alloc failed ({width}x{height}); submitting unflipped"
+                    );
+                }
+            }
+        }
+    }
+    (scratch.0 != 0).then_some(scratch.0)
 }
 
 /// Stop and destroy the encoder. Idempotent. Under Vulkan this only *requests* the stop; the
@@ -486,6 +543,8 @@ pub fn stop() {
             (enc.stop)(enc.handle);
             (enc.destroy)(enc.handle);
         }
+        // FLIP_SCRATCH is deliberately left alone here: freeing a GL object needs the render
+        // thread's context, which this does not have. submit_frame owns its whole lifetime.
         godot::global::godot_print!("[xreal] FPV stream stopped");
     }
 }
