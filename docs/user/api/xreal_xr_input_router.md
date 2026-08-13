@@ -36,8 +36,6 @@ Gyroscope rates below this threshold are treated as resting noise.
 
 Phone-controller origin relative to the tracked head, in metres. Negative Y puts the origin below the head, at hand height. X is a magnitude; set_active_hand picks its sign.
 
-This used to read +0.32, on the finding that "the glasses buffer reads +Y as down". That was the eye image being mirrored vertically on its way to the compositor (fixed in src/gl.rs and src/vk_bridge.rs), which inverted every vertical offset along with the scene. With the image upright, Y means what it says.
-
 <a id="property-left_controller"></a>
 
 ### left_controller: XRController3D
