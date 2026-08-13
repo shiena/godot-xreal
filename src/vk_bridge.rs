@@ -597,6 +597,8 @@ static SRC_LOGGED: AtomicBool = AtomicBool::new(false);
 static SCALE_BLIT_LOGGED: AtomicBool = AtomicBool::new(false);
 /// The raw-copy fallback cannot mirror the eye image, so say once that the view is upside-down.
 static COPY_FALLBACK_LOGGED: AtomicBool = AtomicBool::new(false);
+/// The same, for the encoder copy in [`record_encoder_copy`].
+static ENC_COPY_FALLBACK_LOGGED: AtomicBool = AtomicBool::new(false);
 
 impl EyeSource {
     const ZERO: EyeSource = EyeSource {
@@ -1270,26 +1272,83 @@ unsafe fn record_encoder_copy(api: &VkApi) -> bool {
         1,
         &src_in,
     );
-    let region = VkImageCopy {
-        src_subresource: source_layers,
-        src_offset: VkOffset3D { x: 0, y: 0, z: 0 },
-        dst_subresource: COLOR_LAYERS,
-        dst_offset: VkOffset3D { x: 0, y: 0, z: 0 },
-        extent: VkExtent3D {
-            width: target.width as u32,
-            height: target.height as u32,
-            depth: 1,
-        },
-    };
-    (api.cmd_copy_image)(
-        api.command_buffer,
-        src.vk_image,
-        VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-        target.vk_image,
-        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-        1,
-        &region,
-    );
+    // Y-flip, for the same reason the eye copy needs one: Godot's Vulkan render target has its
+    // origin at the top-left while the encoder reads the shared GL texture bottom-left, so a
+    // straight copy is encoded upside-down. Device-confirmed 2026-08-13: the mp4 from the Vulkan
+    // build came out inverted while the GL build, which flips in video_encoder::submit_frame, was
+    // upright. vkCmdCopyImage cannot transform coordinates, so the mirror rides on
+    // vkCmdBlitImage's dst_offsets.
+    //
+    // The bundle is always built at the source's size (see above), so no resampling is wanted and
+    // NEAREST keeps every pixel as the copy path delivered it. An sRGB-typed source stays on the
+    // raw copy, because blitting it into the UNORM bundle would decode its colour values; that
+    // path cannot mirror and says so once.
+    let blit_ok = !src.srgb && api.cmd_blit_image.is_some();
+    if blit_ok {
+        let region = VkImageBlit {
+            src_subresource: source_layers,
+            src_offsets: [
+                VkOffset3D { x: 0, y: 0, z: 0 },
+                VkOffset3D {
+                    x: src.width,
+                    y: src.height,
+                    z: 1,
+                },
+            ],
+            dst_subresource: COLOR_LAYERS,
+            dst_offsets: [
+                VkOffset3D {
+                    x: 0,
+                    y: target.height,
+                    z: 0,
+                },
+                VkOffset3D {
+                    x: target.width,
+                    y: 0,
+                    z: 1,
+                },
+            ],
+        };
+        (api.cmd_blit_image.expect("blit_ok requires vkCmdBlitImage"))(
+            api.command_buffer,
+            src.vk_image,
+            VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+            target.vk_image,
+            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+            1,
+            &region,
+            VK_FILTER_NEAREST,
+        );
+    } else {
+        if !ENC_COPY_FALLBACK_LOGGED.swap(true, Ordering::Relaxed) {
+            godot::global::godot_warn!(
+                "[xreal] vk_bridge: encoder raw copy fallback (srgb={}, blit={}); the recording \
+                 and stream will be upside-down",
+                src.srgb,
+                api.cmd_blit_image.is_some()
+            );
+        }
+        let region = VkImageCopy {
+            src_subresource: source_layers,
+            src_offset: VkOffset3D { x: 0, y: 0, z: 0 },
+            dst_subresource: COLOR_LAYERS,
+            dst_offset: VkOffset3D { x: 0, y: 0, z: 0 },
+            extent: VkExtent3D {
+                width: target.width as u32,
+                height: target.height as u32,
+                depth: 1,
+            },
+        };
+        (api.cmd_copy_image)(
+            api.command_buffer,
+            src.vk_image,
+            VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+            target.vk_image,
+            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+            1,
+            &region,
+        );
+    }
     let src_out = VkImageMemoryBarrier {
         s_type: VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
         p_next: std::ptr::null(),
