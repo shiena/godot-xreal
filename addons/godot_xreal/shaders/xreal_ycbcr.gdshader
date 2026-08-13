@@ -21,9 +21,18 @@ vec3 srgb_to_linear(vec3 c) {
 	return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(vec3(0.04045), c));
 }
 
+// The SDK hands its camera buffer over bottom-up, Unity's texture origin, while Godot samples
+// top-down. Every consumer of these two textures flips V here rather than at upload, because
+// camera_feed.rs has three upload routes into them - a GL PBO path, an Image path and a Vulkan
+// path - and two of those are deliberately straight copies with no per-row work.
+vec2 camera_uv(vec2 uv) {
+	return vec2(uv.x, 1.0 - uv.y);
+}
+
 void fragment() {
-	float y = texture(y_texture, UV).r;
-	vec2 ch = texture(cbcr_texture, UV).rg;
+	vec2 cam_uv = camera_uv(UV);
+	float y = texture(y_texture, cam_uv).r;
+	vec2 ch = texture(cbcr_texture, cam_uv).rg;
 	float u = ch.r; // Cb
 	float v = ch.g; // Cr
 

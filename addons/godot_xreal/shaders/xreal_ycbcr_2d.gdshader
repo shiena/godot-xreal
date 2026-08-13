@@ -9,8 +9,10 @@ uniform sampler2D y_texture : filter_linear;
 uniform sampler2D cbcr_texture : filter_linear;
 
 void fragment() {
-	float y = texture(y_texture, UV).r;
-	vec2 ch = texture(cbcr_texture, UV).rg;
+	// V flip: the SDK's buffer is bottom-up, Godot samples top-down. See xreal_ycbcr.gdshader.
+	vec2 cam_uv = vec2(UV.x, 1.0 - UV.y);
+	float y = texture(y_texture, cam_uv).r;
+	vec2 ch = texture(cbcr_texture, cam_uv).rg;
 	float u = ch.r; // Cb
 	float v = ch.g; // Cr
 	float r = y + 1.40220 * v - 0.70110;
