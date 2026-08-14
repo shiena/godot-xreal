@@ -226,17 +226,30 @@ pub fn ensure_enabled() {
     }
 }
 
-/// Convert a Unity-space `Pose` to a Godot `Transform3D` for this port's display space.
+/// Convert a Unity-space `Pose` to a Godot `Transform3D`.
 ///
-/// It takes two steps. First, Unity is left-handed with +Z forward and Godot is right-handed with
-/// -Z forward, so Z is negated. Second, this port's eye cameras render with an inverted Y, a pose
-/// handedness of `(x,-y,z,w)` that the head rig and phone pointer compensate for the same way, so Y
-/// is negated as well. The net result is a position of `(x, -y, -z)` and a quaternion of
-/// `(x, -y, -z, w)`. Device-confirmed on the Air 2 Ultra: without the Y negation the hand rendered
-/// upside-down.
+/// Unity is left-handed with +Z forward and Godot is right-handed with -Z forward, so Z is negated:
+/// a position of `(x, y, -z)` and a quaternion of `(-x, -y, z, w)`. That is the canonical
+/// conversion, the same one `ffi.rs::to_godot_quaternion` applies to planes, anchors and image
+/// tracking.
+///
+/// It used to negate Y on top of that, giving `(x, -y, -z)` and `(x, -y, -z, w)`, on the stated
+/// grounds that "this port's eye cameras render with an inverted Y, a pose handedness of
+/// `(x,-y,z,w)` that the head rig and phone pointer compensate for the same way". Both of those
+/// compensations are gone, both earlier in this branch: the head pose is now `(-x,-y,-z,w)` paired
+/// with a mirrored eye image on every submission path, and the phone pointer's own flip turned out
+/// to be leftover calibration. What was left here is the render-pipeline artifact that
+/// `docs/develop/plans/coordinate-systems-notes.md` identified, and that the depth-mesh commit
+/// removed from `mesh_block_to_dict` for the same reason.
+///
+/// **WIP, not device-verified.** Hand tracking needs an Air 2 Ultra; the One Pro answers
+/// `IsHandTrackingSupported()==false`. The Y negation was device-confirmed there once ("without it
+/// the hand rendered upside-down"), but through the mirrored display that made it necessary, so
+/// that confirmation does not survive the mirror fix. Check it by holding a hand up: the joints should
+/// rise with it rather than sink, and the palm should face the way the real one does.
 fn unity_pose_to_godot(p: &UnityPose) -> Transform3D {
-    let pos = Vector3::new(p.position[0], -p.position[1], -p.position[2]);
-    let rot = Quaternion::new(p.rotation[0], -p.rotation[1], -p.rotation[2], p.rotation[3]);
+    let pos = Vector3::new(p.position[0], p.position[1], -p.position[2]);
+    let rot = Quaternion::new(-p.rotation[0], -p.rotation[1], p.rotation[2], p.rotation[3]);
     Transform3D::new(Basis::from_quaternion(rot), pos)
 }
 
