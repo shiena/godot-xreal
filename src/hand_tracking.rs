@@ -285,10 +285,12 @@ const GODOT_JOINTS: [HandJoint; 26] = [
 
 /// Node that publishes XREAL hand tracking to Godot's `XRServer` as two `XRHandTracker`s,
 /// `/user/hand_tracker/left` and `/user/hand_tracker/right`. Add it to the scene, and then an
-/// `XRHandModifier3D` carrying the matching tracker name animates a hand skeleton, or GDScript
-/// reads the trackers through `XRServer.get_tracker(...)`.
+/// `XRHandModifier3D` carrying the matching tracker name animates a hand skeleton, an `XRNode3D`
+/// carrying it follows the palm and hides itself when the hand is not tracked, or GDScript reads
+/// the trackers through `XRServer.get_tracker(...)`. Same wiring as on an OpenXR headset.
 ///
-/// Hardware-gated to the Air 2 Ultra, and a no-op elsewhere.
+/// Hardware-gated to the Air 2 Ultra. Elsewhere the trackers still register, and simply report no
+/// tracking data, so an app that shows hands only while they are tracked shows none at all.
 #[derive(GodotClass)]
 #[class(base = Node)]
 pub struct XrealHandTracker {
@@ -372,17 +374,45 @@ fn make_tracker(name: &str, hand: TrackerHand) -> Gd<XrHandTracker> {
 
 /// Push one hand's snapshot into its `XrHandTracker`, or clear tracking when the hand is absent or
 /// untracked.
+///
+/// The `"default"` pose carries the palm, which is what Godot's own OpenXR hand tracking publishes
+/// there (`openxr_hand_tracking_extension.cpp`). `XRHandModifier3D` reads the joints, but
+/// `XRNode3D` reads that pose - for its transform AND for `show_when_tracked`, which hides the node
+/// when the pose is invalidated. Publishing it is therefore what lets the standard rig (an
+/// `XRNode3D` holding a hand model whose skeleton carries an `XRHandModifier3D`) behave here
+/// exactly as it does on an OpenXR headset: placed on the real hand while tracked, gone otherwise.
+/// Without it such a rig stays hidden even on an Air 2 Ultra, because the pose never arrives.
 fn feed_tracker(tracker: &mut Gd<XrHandTracker>, snapshot: Option<HandSnapshot>) {
+    use godot::classes::xr_hand_tracker::HandTrackingSource;
+    use godot::classes::xr_pose::TrackingConfidence;
+
     let flags = hand_joint_flags_all();
     match snapshot {
         Some(s) if s.tracked => {
             tracker.set_has_tracking_data(true);
+            tracker.set_hand_tracking_source(HandTrackingSource::UNOBSTRUCTED);
             for (i, joint) in GODOT_JOINTS.iter().enumerate() {
                 tracker.set_hand_joint_transform(*joint, s.joints[i]);
                 tracker.set_hand_joint_flags(*joint, flags);
             }
+            // GODOT_JOINTS[0] is the palm. The SDK gives us no velocities, and it reports a hand as
+            // either tracked or not, so the confidence is the tracked case's HIGH.
+            tracker.set_pose(
+                "default",
+                s.joints[0],
+                Vector3::ZERO,
+                Vector3::ZERO,
+                TrackingConfidence::HIGH,
+            );
         }
-        _ => tracker.set_has_tracking_data(false),
+        _ => {
+            tracker.set_has_tracking_data(false);
+            // NOT_TRACKED covers both a hand the cameras cannot see and glasses without hand
+            // tracking at all: from an app's side those are the same answer, and neither offers a
+            // pose. `invalidate_pose` is what drives XRNode3D's show_when_tracked to hide.
+            tracker.set_hand_tracking_source(HandTrackingSource::NOT_TRACKED);
+            tracker.invalidate_pose("default");
+        }
     }
 }
 
