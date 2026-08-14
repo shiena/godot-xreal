@@ -284,6 +284,15 @@ func set_controller_axis(value: Vector2, active := true) -> void:
 func set_controller_hand(is_right: bool) -> void:
 	input_router.set_active_hand(is_right)
 
+## Let tracked hands aim and click, or stop them. On by default.
+##
+## Turning it off hands every controller back to the phone at once: a hand mid-pinch lets go, and
+## the hand that is not standing in for the phone loses its poses. An app whose UI moves off the
+## glasses, to a phone screen say, wants that. Hands busy holding the phone would otherwise keep
+## pointing a ray at the scene behind it and pinching by accident.
+func set_hand_aim(on: bool) -> void:
+	input_router.hand_aim = on
+
 ## Publish a one-frame app-owned button click through XRController3D and InputMap.
 func pulse_controller_button(input_name: StringName) -> void:
 	input_router.pulse_button(input_name)

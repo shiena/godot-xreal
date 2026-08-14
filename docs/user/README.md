@@ -83,7 +83,14 @@ so `XRController3D` follows the hand instead of the phone, and a thumb-to-index 
 `trigger_click` and so `xr_select`. Gameplay code reads the same nodes and actions it reads on an
 OpenXR headset, and needs no branch. Putting the hand down hands the ray back to the phone.
 The `XRInputRouter` node inside `xreal_xr_runtime.tscn` exports `hand_aim` to turn this off, and
-`shoulder_offset`, `pinch_press_m` and `pinch_release_m` to tune it.
+`shoulder_offset`, `pinch_press_m` and `pinch_release_m` to tune it. To switch it at runtime:
+
+```gdscript
+$XrealXRRuntime.set_hand_aim(false)   # every controller falls back to the phone
+```
+
+An app whose UI moves off the glasses wants that. Hands busy holding a phone keep pointing a ray at
+the scene behind it and pinching by accident, which the phone's own touches then compete with.
 
 ### Wiring up hand models
 
