@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3 uid="uid://xrhandmdlscn1"]
+
+[ext_resource type="Script" uid="uid://xrhandmdlgd01" path="res://addons/godot_xreal/features/xreal_hand_models.gd" id="1_script"]
+
+[node name="XrealHandModels" type="Node3D"]
+script = ExtResource("1_script")
