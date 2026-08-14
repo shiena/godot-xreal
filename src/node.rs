@@ -395,9 +395,10 @@ impl INode3D for XrealHeadTracker {
             });
             RenderingServer::singleton().call_on_render_thread(&callable);
         } else {
-            // Vulkan: the tick runs when the glasses kill switch is on (eye rendering) OR the HW
-            // encoder has work (stage-4 encoder-only mode, glasses off - streaming/recording the
-            // AR view without the eye submission). Either way it needs the bridge machinery up.
+            // Vulkan: the tick drives the eye rendering, and `glasses` holds throughout this arm
+            // (glasses_enabled() is "not GL"), so it alone asks for the tick today. `want_encoder`
+            // stays as the second reason one would be needed - the HW encoder also runs on the
+            // bridge - and either reason needs the bridge machinery up.
             let glasses = crate::vk_bridge::glasses_enabled();
             let want_encoder = crate::video_encoder::is_active();
             if (glasses || want_encoder) && crate::vk_bridge::ensure_init() {

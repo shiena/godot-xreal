@@ -318,8 +318,8 @@ pub fn start(
     };
     if !crate::gl::renderer_is_gl() {
         // The stage-4 Vulkan path needs the bridge machinery (the tick, the private EGL context,
-        // the opaque-fd bundles), but NOT the glasses kill switch: ensure_init brings the bridge
-        // up on demand, so the encoder works in encoder-only mode too (glasses rendering off).
+        // the opaque-fd bundles), but not the eye rendering: ensure_init brings the bridge up on
+        // demand, which is why the encoder gates on bridge_ready() rather than glasses_enabled().
         if !crate::vk_bridge::ensure_init() {
             godot::global::godot_warn!(
                 "[xreal] FPV encoder unavailable: Vulkan bridge failed to initialize"

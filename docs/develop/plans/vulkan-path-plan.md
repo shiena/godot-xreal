@@ -15,7 +15,8 @@ the renderer is Vulkan. A bridge failure still latches BROKEN and degrades to ph
 the remaining safety net. The READMEs now say Mobile is the default. Every stage's design was
 cross-checked against a codex second opinion (the review sections below +
 docs/develop/archive/codex-vulkan-stage*-design.md). Remaining: the libmedia_codec periodic-IDR
-follow-up (stage-4 notes) and encoder-only mode. Stages: phone screen -> glasses rendering ->
+follow-up (stage-4 notes), and a selector for encoder-only mode, whose implementation went with the
+prop that used to select it (stage-4 notes). Stages: phone screen -> glasses rendering ->
 camera rendering -> FPV stream, one commit each.
 
 - **Stage 2 device results (Beam Pro, 2026-07-30)**: 14 opaque-fd eye slots imported and
@@ -254,17 +255,24 @@ Image path never had the GL driver's per-texel tiling cost, so the win is NOT th
      alternatives: a binary patch of the vendored .so (`nop` the intra-refresh `setInt32` at
      0x20DA70 - clean but rewrites a gitignored vendor lib and fights the vendor flow), and the
      receiver-only ceiling (connect the viewer before start).
-   - **Encoder-only mode (Vulkan, glasses kill switch OFF): WIRED.** The bridge machinery is
-     split from the glasses kill switch: `ensure_init()` brings the Vulkan side up on demand,
-     `bridge_ready()` is the encoder's gate, `glasses_enabled()` stays the eye-rendering gate.
-     node.rs registers the tick when glasses OR the encoder wants it; the tick runs
-     `submit_encoder_only()` (encoder-bundle copy alone, no eyes, no SDK compositor) when glasses
-     are off. `get_render_texture_encoder_backend()` returns 2 for any Vulkan renderer with a
-     RenderingDevice. (Needs a live SDK session, i.e. glasses connected, since node.rs's process
+   - **Encoder-only mode (Vulkan, glasses kill switch OFF): WIRED, then removed with the switch.**
+     The bridge machinery is split from the glasses kill switch: `ensure_init()` brings the Vulkan
+     side up on demand, `bridge_ready()` is the encoder's gate, `glasses_enabled()` stays the
+     eye-rendering gate. node.rs registers the tick when glasses OR the encoder wants it; the tick
+     runs `submit_encoder_only()` (encoder-bundle copy alone, no eyes, no SDK compositor) when
+     glasses are off. `get_render_texture_encoder_backend()` returns 2 for any Vulkan renderer with
+     a RenderingDevice. (Needs a live SDK session, i.e. glasses connected, since node.rs's process
      early-returns without one.) **Device-verified 2026-07-31: WORKS** - with
      `debug.xreal.vulkan_glasses 0` (phone-only, head tracking live, no eye rendering), Stream
      ran through `submit_encoder_only` (ping-pong copy/fed status=0) and the browser rendered the
      live AR view.
+
+     The split above still stands, and it is what keeps the encoder working: it gates on
+     `bridge_ready()`, so streaming and recording are unaffected. What went (2026-08-15) is
+     `submit_encoder_only()` itself, together with the tick's else. The prop was its only selector,
+     nothing in GDScript asked for the mode, and once the prop was gone the branch could not be
+     reached. Reviving it means giving it a selector first, which is the "encoder-only mode" item
+     in the Status line.
 
 ### Stage 4 second-opinion review (two designs compared, 2026-07-31)
 

@@ -847,9 +847,9 @@ impl XrealSystem {
     /// texture-name push ([`Self::stream_push_frame`]), `2` = the Vulkan bridge
     /// (vulkan-path-plan.md stage 4), where components publish the source viewport each frame
     /// through [`Self::stream_publish_viewport`] instead. Backend 2 is reported whenever the
-    /// renderer is Vulkan with a live `RenderingDevice`, independent of the glasses kill switch
-    /// (the encoder works in encoder-only mode too); the bridge itself initializes lazily at
-    /// `stream_start`, and a hard init failure there turns the stream off through its error path.
+    /// renderer is Vulkan with a live `RenderingDevice`, independent of whether the glasses are
+    /// drawing; the bridge itself initializes lazily at `stream_start`, and a hard init failure
+    /// there turns the stream off through its error path.
     #[func]
     fn get_render_texture_encoder_backend(&self) -> i64 {
         if crate::gl::renderer_is_gl() {

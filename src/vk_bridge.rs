@@ -689,15 +689,16 @@ pub fn glasses_enabled() -> bool {
     })
 }
 
-/// The glasses-rendering per-frame gate: the kill switch is on AND the bridge initialized.
+/// The glasses-rendering per-frame gate: this renderer reaches the glasses AND the bridge
+/// initialized.
 pub fn active() -> bool {
     glasses_enabled() && bridge_ready()
 }
 
 /// Whether the bridge machinery (Vulkan side, command pool, fence) is initialized and healthy.
-/// This is the encoder path's gate: it holds in encoder-only mode too, where the glasses kill
-/// switch is off. Cheap and thread-safe (a load, no init), so the render-thread tick may call
-/// it; [`ensure_init`] does the one-time setup from the main thread.
+/// This is the encoder path's gate, which is why it is separate from [`glasses_enabled`]: the
+/// encoder runs the bridge on either renderer. Cheap and thread-safe (a load, no init), so the
+/// render-thread tick may call it; [`ensure_init`] does the one-time setup from the main thread.
 pub fn bridge_ready() -> bool {
     !BROKEN.load(Ordering::Relaxed) && VK.get().is_some_and(|v| v.is_some())
 }
@@ -1986,59 +1987,12 @@ pub fn fill_eyes(targets: &[(u32, usize)]) -> u32 {
     }
 }
 
-/// Encoder-only mode (stage 4, glasses kill switch off): submit JUST the encoder-bundle copy,
-/// with no eye slots. Tick thread, private EGL context bound, AFTER [`wait_entry_fence`] (the
-/// tick already called it). Records nothing and does not submit when there is no encoder source
-/// yet, so an idle encoder costs one command-buffer reset and nothing on the queue.
-pub fn submit_encoder_only() {
-    let Some(api) = vk() else { return };
-    if BROKEN.load(Ordering::Relaxed) {
-        return;
-    }
-    unsafe {
-        let r = (api.reset_command_buffer)(api.command_buffer, 0);
-        if r != VK_SUCCESS {
-            broken(&format!("vkResetCommandBuffer(enc) -> {r}"));
-            return;
-        }
-        let begin = VkCommandBufferBeginInfo {
-            s_type: VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
-            p_next: std::ptr::null(),
-            flags: VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
-            p_inheritance_info: std::ptr::null(),
-        };
-        if (api.begin_command_buffer)(api.command_buffer, &begin) != VK_SUCCESS {
-            broken("vkBeginCommandBuffer(enc)");
-            return;
-        }
-        let recorded = record_encoder_copy(api);
-        if (api.end_command_buffer)(api.command_buffer) != VK_SUCCESS {
-            broken("vkEndCommandBuffer(enc)");
-            return;
-        }
-        if !recorded {
-            return; // nothing to encode this frame; leave the queue and fence untouched
-        }
-        let submit = VkSubmitInfo {
-            s_type: VK_STRUCTURE_TYPE_SUBMIT_INFO,
-            p_next: std::ptr::null(),
-            wait_semaphore_count: 0,
-            p_wait_semaphores: std::ptr::null(),
-            p_wait_dst_stage_mask: std::ptr::null(),
-            command_buffer_count: 1,
-            p_command_buffers: &api.command_buffer,
-            signal_semaphore_count: 0,
-            p_signal_semaphores: std::ptr::null(),
-        };
-        if (api.queue_submit)(api.queue, 1, &submit, api.fence) != VK_SUCCESS {
-            broken("vkQueueSubmit(enc)");
-            return;
-        }
-        // Same pipelined fence as the eye path: the next tick's wait_entry_fence proves this copy
-        // complete before the encoder is handed the bundle.
-        FENCE_PENDING.store(true, Ordering::Relaxed);
-    }
-}
+// There used to be a submit_encoder_only() here: the encoder-bundle copy alone, no eye slots, no
+// SDK compositor. `debug.xreal.vulkan_glasses 0` was its only selector, so removing that switch
+// left it unreachable, and it went rather than lingering as dead code. The encoder itself is
+// untouched - it gates on bridge_ready(), not on the glasses, and [`fill_eyes`] piggybacks its
+// copy on the eye submission. Reviving the mode means giving it a selector first, which is the
+// "encoder-only mode" item in vulkan-path-plan.md.
 
 #[cfg(test)]
 mod tests {
