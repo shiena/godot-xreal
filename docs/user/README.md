@@ -78,6 +78,13 @@ tracker, your model under it, and an `XRHandModifier3D` on the model's `Skeleton
 on the real hands and disappear when tracking stops, so on glasses without hand tracking they never
 appear and nothing has to switch them off.
 
+A tracked hand also aims and clicks. While it is tracked it owns its side's `aim` and `grip` poses,
+so `XRController3D` follows the hand instead of the phone, and a thumb-to-index pinch raises
+`trigger_click` and so `xr_select`. Gameplay code reads the same nodes and actions it reads on an
+OpenXR headset, and needs no branch. Putting the hand down hands the ray back to the phone.
+The `XRInputRouter` node inside `xreal_xr_runtime.tscn` exports `hand_aim` to turn this off, and
+`shoulder_offset`, `pinch_press_m` and `pinch_release_m` to tune it.
+
 ### Wiring up hand models
 
 The addon ships no models, so bring your own. `XRHandModifier3D` matches bones by name alone:

@@ -57,6 +57,17 @@ InputMap actions. The
 raw NRController button bitfield is not mapped because its current-device layout is not yet
 verified. The old `xreal_rig.tscn` remains for existing projects.
 
+A tracked hand aims and clicks the same controller, the way an OpenXR runtime synthesises controller
+poses and buttons from hands when none is held (Air 2 Ultra). While a hand is tracked it owns that
+side's `aim` and `grip` poses, and a thumb-to-index pinch raises `trigger_click`; the phone keeps
+whichever hand the cameras cannot see, so putting a hand down hands the ray back. The ray runs from
+a shoulder anchor through the base of the index finger rather than along the hand's own axis, which
+is what keeps it steady enough to point with. Both are ours: the SDK computes a pinch and a pointer
+pose of its own, but publishes them as Unity Input System controls rather than exporting them, and
+`libXREALXRPlugin.so` offers only `GetHandJointsPose`, `UpdateHandPose`, `IsHandTrackingSupported`
+and `SetDominantHand`. The `XRInputRouter` node inside `xreal_xr_runtime.tscn` exports `hand_aim` to
+turn it off, plus `shoulder_offset`, `pinch_press_m` and `pinch_release_m` to tune it.
+
 The current app `Camera3D` remains the source for its transform, near/far clipping, render layers,
 environment, camera attributes and offsets. Runtime changes are mirrored to both eye cameras;
 XREAL's calibrated asymmetric projection and eye separation remain SDK-controlled.

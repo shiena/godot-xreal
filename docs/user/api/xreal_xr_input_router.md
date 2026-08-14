@@ -30,6 +30,12 @@ Complementary-filter gain used to correct phone pitch and roll from gravity.
 
 Gyroscope rates below this threshold are treated as resting noise.
 
+<a id="property-hand_aim"></a>
+
+### hand_aim: bool = true
+
+Aim a tracked hand as well, so a hand points the same ray a controller would. An OpenXR runtime synthesises the controller's aim and grip poses from the hands when no controller is held, and `left_hand` / `right_hand` carry them either way; this does the same here, per hand and only while that hand is tracked. The phone keeps every hand the cameras cannot see, so putting a hand down hands the ray back to it.
+
 <a id="property-hand_offset"></a>
 
 ### hand_offset: Vector3 = Vector3(0.28, -0.32, -0.3)
@@ -42,10 +48,30 @@ Phone-controller origin relative to the tracked head, in metres. Negative Y puts
 
 Optional explicit wiring. Left empty, bind_controllers() picks the XRController3D nodes under the origin by their tracker name, so an application may name and nest its own however it likes.
 
+<a id="property-pinch_press_m"></a>
+
+### pinch_press_m: float = 0.02
+
+Thumb-to-index distance at which a pinch counts as a press, in metres. A pinch is published as `trigger_click` on that hand, the same button the phone's trigger raises, so `xr_select` fires either way and gameplay code needs no branch.
+
+<a id="property-pinch_release_m"></a>
+
+### pinch_release_m: float = 0.03
+
+Distance at which the pinch lets go, in metres. Wider than [`pinch_press_m`](#property-pinch_press_m) on purpose: a single threshold chatters while the fingers rest near it, which reads as a double click.
+
 <a id="property-right_controller"></a>
 
 ### right_controller: XRController3D
 
+
+<a id="property-shoulder_offset"></a>
+
+### shoulder_offset: Vector3 = Vector3(0.17, -0.2, 0)
+
+Where a hand ray is anchored, relative to the tracked head, in metres: roughly the shoulder. X is a magnitude, signed per hand.
+
+The ray runs from here through the hand rather than along the hand's own forward axis. Anchoring it to the body is what makes a hand ray steady enough to point with: the hand's own axis carries every tremor of the wrist, amplified by the distance to the target, while a shoulder-through-hand ray turns only as fast as the hand travels.
 
 ## Methods
 
