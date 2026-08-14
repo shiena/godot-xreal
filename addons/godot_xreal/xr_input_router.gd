@@ -22,6 +22,31 @@ const INPUT_ACTIONS := {
 ## Phone-controller origin relative to the tracked head, in metres. Negative Y puts the origin
 ## below the head, at hand height. X is a magnitude; set_active_hand picks its sign.
 @export var hand_offset := Vector3(0.28, -0.32, -0.3)
+
+## Aim a tracked hand as well, so a hand points the same ray a controller would. An OpenXR runtime
+## synthesises the controller's aim and grip poses from the hands when no controller is held, and
+## `left_hand` / `right_hand` carry them either way; this does the same here, per hand and only
+## while that hand is tracked. The phone keeps every hand the cameras cannot see, so putting a hand
+## down hands the ray back to it.
+@export var hand_aim := true
+
+## Where a hand ray is anchored, relative to the tracked head, in metres: roughly the shoulder.
+## X is a magnitude, signed per hand.
+##
+## The ray runs from here through the hand rather than along the hand's own forward axis. Anchoring
+## it to the body is what makes a hand ray steady enough to point with: the hand's own axis carries
+## every tremor of the wrist, amplified by the distance to the target, while a shoulder-through-hand
+## ray turns only as fast as the hand travels.
+@export var shoulder_offset := Vector3(0.17, -0.20, 0.0)
+
+## Thumb-to-index distance at which a pinch counts as a press, in metres. A pinch is published as
+## `trigger_click` on that hand, the same button the phone's trigger raises, so `xr_select` fires
+## either way and gameplay code needs no branch.
+@export var pinch_press_m := 0.02
+
+## Distance at which the pinch lets go, in metres. Wider than [member pinch_press_m] on purpose: a
+## single threshold chatters while the fingers rest near it, which reads as a double click.
+@export var pinch_release_m := 0.03
 ## Complementary-filter gain used to correct phone pitch and roll from gravity.
 @export_range(0.0, 1.0, 0.01) var gravity_gain := 0.06
 ## Gyroscope rates below this threshold are treated as resting noise.
@@ -47,6 +72,8 @@ var _gyro_bias := Vector3.ZERO
 var _valid_pose := false
 var _pose := Transform3D.IDENTITY
 var _sample_count := 0
+# Per-hand pinch state, held across frames so the release threshold can be the wider one.
+var _pinch: Dictionary = {}
 # Per-button counter identifying the newest pulse, so an older one cannot end it early.
 var _pulse_generation: Dictionary = {}
 
@@ -100,7 +127,12 @@ func enable_xreal_trackers(system: Object = null) -> void:
 
 ## Poll and publish the native XREAL phone controller. Call after head tracking becomes live.
 func poll_xreal_controller(delta: float, head_transform: Transform3D) -> void:
-	if not _xreal_enabled or _system == null:
+	if not _xreal_enabled:
+		return
+	# Before the early returns below, which are all about the phone. A hand is aimed whether or not
+	# the phone controller ever starts.
+	_publish_hand_aim(head_transform)
+	if _system == null:
 		return
 	if not _native_controller_started:
 		if _native_start_retry_frames > 0:
@@ -228,6 +260,10 @@ func set_button(input_name: StringName, pressed: bool) -> void:
 	if not _xreal_enabled:
 		return
 	_button_state[input_name] = pressed
+	if input_name == &"trigger_click":
+		# Shared with the pinch, so it goes through the merge rather than straight to the tracker.
+		_apply_trigger(_active_hand)
+		return
 	var tracker := _active_tracker()
 	if tracker:
 		tracker.set_input(input_name, pressed)
@@ -285,6 +321,10 @@ func set_aim_transform(transform: Transform3D) -> void:
 	var tracker := _active_tracker()
 	if tracker == null:
 		return
+	# A tracked hand outranks the phone on the hand it belongs to. Without this the phone would
+	# overwrite the hand's pose every frame and the ray would sit wherever the phone points.
+	if hand_aim and _hand_tracker(_active_hand) != null:
+		return
 	tracker.set_pose(
 		&"aim", transform, Vector3.ZERO, Vector3.ZERO,
 		XRPose.XR_TRACKING_CONFIDENCE_HIGH)
@@ -292,16 +332,118 @@ func set_aim_transform(transform: Transform3D) -> void:
 		&"grip", transform, Vector3.ZERO, Vector3.ZERO,
 		XRPose.XR_TRACKING_CONFIDENCE_HIGH)
 
+## The tracked hand for one side, or null when it is absent, untracked, or hand aiming is off.
+func _hand_tracker(hand: XRPositionalTracker.TrackerHand) -> XRHandTracker:
+	if not hand_aim:
+		return null
+	var name := (&"/user/hand_tracker/right"
+		if hand == XRPositionalTracker.TRACKER_HAND_RIGHT
+		else &"/user/hand_tracker/left")
+	var tracker := XRServer.get_tracker(name) as XRHandTracker
+	if tracker == null or not tracker.has_tracking_data:
+		return null
+	return tracker
+
+## Aim both controller trackers from the hands that are tracked, and clear the ones that are not.
+func _publish_hand_aim(head_transform: Transform3D) -> void:
+	for hand: XRPositionalTracker.TrackerHand in [
+		XRPositionalTracker.TRACKER_HAND_LEFT, XRPositionalTracker.TRACKER_HAND_RIGHT
+	]:
+		var name := (&"right_hand"
+			if hand == XRPositionalTracker.TRACKER_HAND_RIGHT
+			else &"left_hand")
+		var controller := XRServer.get_tracker(name) as XRControllerTracker
+		if controller == null:
+			continue
+		var hand_tracker := _hand_tracker(hand)
+		if hand_tracker == null:
+			# A hand that leaves the cameras' view mid-pinch would otherwise hold the button down
+			# for good, so let go first.
+			if _pinch.get(hand, false):
+				_pinch[hand] = false
+				_apply_trigger(hand)
+			# The phone still drives the hand it is standing in for; the other has no pose at all,
+			# which is the state it was in before hand tracking existed.
+			if hand != _active_hand:
+				controller.invalidate_pose(&"aim")
+				controller.invalidate_pose(&"grip")
+			continue
+		_update_pinch(hand, hand_tracker)
+		var grip: Transform3D = hand_tracker.get_hand_joint_transform(
+			XRHandTracker.HAND_JOINT_PALM)
+		var aim := _hand_aim_pose(hand_tracker, hand, head_transform)
+		controller.set_pose(
+			&"aim", aim, Vector3.ZERO, Vector3.ZERO, XRPose.XR_TRACKING_CONFIDENCE_HIGH)
+		controller.set_pose(
+			&"grip", grip, Vector3.ZERO, Vector3.ZERO, XRPose.XR_TRACKING_CONFIDENCE_HIGH)
+
+## Watch one hand's thumb and index finger and publish the pinch as a button press.
+func _update_pinch(hand: XRPositionalTracker.TrackerHand, hand_tracker: XRHandTracker) -> void:
+	var thumb: Vector3 = hand_tracker.get_hand_joint_transform(
+		XRHandTracker.HAND_JOINT_THUMB_TIP).origin
+	var index: Vector3 = hand_tracker.get_hand_joint_transform(
+		XRHandTracker.HAND_JOINT_INDEX_FINGER_TIP).origin
+	var was: bool = _pinch.get(hand, false)
+	var limit := pinch_release_m if was else pinch_press_m
+	var now := thumb.distance_to(index) < limit
+	if now == was:
+		return
+	_pinch[hand] = now
+	_apply_trigger(hand)
+
+## Write one hand's `trigger_click`, holding it down while either source asks for it.
+##
+## The phone and a pinch both mean "select", and on the hand the phone is standing in for they can
+## overlap. Writing the merged value from one place keeps a release by one source from cancelling
+## the other's press.
+func _apply_trigger(hand: XRPositionalTracker.TrackerHand) -> void:
+	var name := (&"right_hand"
+		if hand == XRPositionalTracker.TRACKER_HAND_RIGHT
+		else &"left_hand")
+	var controller := XRServer.get_tracker(name) as XRControllerTracker
+	if controller == null:
+		return
+	var phone: bool = hand == _active_hand and _button_state.get(&"trigger_click", false)
+	controller.set_input(&"trigger_click", phone or _pinch.get(hand, false))
+
+## One hand's ray: it leaves the base of the index finger and runs away from the shoulder.
+##
+## The origin is the index finger's proximal joint, so the ray leaves the hand where a pointing
+## finger would rather than from the wrist. The direction comes from the shoulder anchor, for the
+## steadiness described on [member shoulder_offset]. A hand held exactly at shoulder height leaves
+## nothing to aim with, so that degenerate case falls back to the palm's own forward axis.
+func _hand_aim_pose(
+	hand_tracker: XRHandTracker,
+	hand: XRPositionalTracker.TrackerHand,
+	head_transform: Transform3D
+) -> Transform3D:
+	var origin: Vector3 = hand_tracker.get_hand_joint_transform(
+		XRHandTracker.HAND_JOINT_INDEX_FINGER_PHALANX_PROXIMAL).origin
+	var offset := shoulder_offset
+	offset.x = absf(offset.x) * (
+		1.0 if hand == XRPositionalTracker.TRACKER_HAND_RIGHT else -1.0)
+	var shoulder: Vector3 = head_transform.origin + head_transform.basis * offset
+	var forward: Vector3 = origin - shoulder
+	if forward.length() < 0.05 or absf(forward.normalized().dot(Vector3.UP)) > 0.999:
+		var palm: Transform3D = hand_tracker.get_hand_joint_transform(
+			XRHandTracker.HAND_JOINT_PALM)
+		return Transform3D(palm.basis, origin)
+	return Transform3D(Basis.looking_at(forward, Vector3.UP), origin)
+
 func _publish_state() -> void:
 	var tracker := _active_tracker()
 	if tracker == null:
 		return
 	for input_name in _button_state.keys():
+		if input_name == &"trigger_click":
+			continue  # merged with the pinch below
 		tracker.set_input(input_name, _button_state[input_name])
 	for input_name in _float_state.keys():
 		tracker.set_input(input_name, _float_state[input_name])
 	tracker.set_input(&"primary", _axis)
 	tracker.set_input(&"touchpad", _axis)
+	_apply_trigger(XRPositionalTracker.TRACKER_HAND_LEFT)
+	_apply_trigger(XRPositionalTracker.TRACKER_HAND_RIGHT)
 
 func _on_button_pressed(input_name: String, controller: XRController3D) -> void:
 	var action: StringName = INPUT_ACTIONS.get(StringName(input_name), &"")
