@@ -39,7 +39,6 @@ var _snapshot_edit: LineEdit
 var _output_edit: LineEdit
 var _res_check: CheckBox
 var _glb_check: CheckBox
-var _canonical_check: CheckBox
 var _status: RichTextLabel
 var _file_dialog: EditorFileDialog
 var _materials := {}  # class id (-1 = unclassified) -> the one material shared by every surface of it
@@ -112,18 +111,6 @@ func _build_ui() -> void:
 		+ "materials; the ids themselves do not survive the format.")
 	formats.add_child(_glb_check)
 	add_child(formats)
-
-	# On by default, because every consumer of a converted scan outside the glasses, this viewport,
-	# Blender, a collision shape, wants a canonical mesh. Untick it only to reproduce the runtime's
-	# own space, for instance to lay a converted scan over the live overlay in the running app.
-	_canonical_check = CheckBox.new()
-	_canonical_check.text = "Godot space (flip Y)"
-	_canonical_check.button_pressed = true
-	_canonical_check.tooltip_text = ("A snapshot is written in the runtime's mirrored space (the eye "
-		+ "viewports render with an inverted Y), so it opens upside down everywhere else. This "
-		+ "negates Y, which also turns the triangles the right way round. Untick to keep the "
-		+ "runtime's space.")
-	add_child(_canonical_check)
 
 	var convert := Button.new()
 	convert.text = "Convert"
@@ -235,12 +222,11 @@ func _build_mesh(doc: Dictionary) -> ArrayMesh:
 	for entry in doc.get("blocks", []):
 		var block: Dictionary = entry
 		var id: String = block.get("id", "")
-		var flip := _canonical_check.button_pressed
-		var verts := _to_vector3_array(block.get("vertices", ""), flip)
-		var indices := _to_index_array(block.get("indices", ""), flip)
+		var verts := _to_vector3_array(block.get("vertices", ""))
+		var indices := _from_base64(block.get("indices", "")).to_int32_array()
 		if verts.is_empty() or indices.is_empty():
 			continue
-		var normals := _to_vector3_array(block.get("normals", ""), flip)
+		var normals := _to_vector3_array(block.get("normals", ""))
 		if normals.size() != verts.size():
 			normals = PackedVector3Array()
 		var labels := _from_base64(block.get("labels", ""))
@@ -331,6 +317,15 @@ func _add_surface(mesh: ArrayMesh, surface_name: String, verts: PackedVector3Arr
 	mesh.surface_set_material(surface, material)
 
 ## Write the mesh out as .glb through a throwaway scene, since GLTFDocument works on node trees.
+##
+## The .glb cannot be used to check winding. Godot treats clockwise as front-facing and glTF treats
+## counter-clockwise, so GLTFDocument reverses every triangle on the way out, leaving the surfaces
+## facing the same way physically while the index order reads the opposite. Blender then shows the
+## glTF convention either way, so backface culling there says nothing about the source. Positions
+## and normals do survive the export, so orientation is worth checking in Blender.
+##
+## Winding is best judged on the glasses now: the overlay culls back faces (xreal_mesh.gd's
+## cull_backfaces), so a scan wound inside out disappears as you look at it.
 func _write_glb(mesh: ArrayMesh, path: String) -> bool:
 	var root := Node3D.new()
 	root.name = "MeshSnapshot"
@@ -376,11 +371,13 @@ func _flat_material() -> StandardMaterial3D:
 	return _materials[-1]
 
 ## Unlike the runtime overlay these are opaque: nothing real is behind them here, and a see-through
-## mesh only obscures itself.
+## mesh only obscures itself. Back faces are culled, as they are on the glasses, so a converted scan
+## viewed from where it was taken shows the same thing the wearer saw - including a winding mistake,
+## which is invisible with culling off.
 func _base_material() -> StandardMaterial3D:
 	var mat := StandardMaterial3D.new()
 	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	mat.cull_mode = BaseMaterial3D.CULL_BACK
 	return mat
 
 ## The SDK's name for a class, or "class<n>" for a value a future taxonomy might add.
@@ -392,45 +389,22 @@ static func _label_name(label: int) -> String:
 static func _from_base64(encoded: String) -> PackedByteArray:
 	return PackedByteArray() if encoded.is_empty() else Marshalls.base64_to_raw(encoded)
 
-## Base64 float32 triples back to points, negating Y when `flip` asks for canonical Godot space.
+## Base64 float32 triples back to points, verbatim.
 ##
-## A snapshot is written in the RUNTIME's space, not a canonical Godot one: the port's eye
-## SubViewports render with an inverted Y, and the whole conversion chain compensates by negating Y
-## on top of the canonical Unity(LH) -> Godot(RH) negate-Z (see docs/develop/plans/coordinate-systems-notes.md
-## and mesh_block_to_dict in src/system.rs). That is a mirror, so what looks right through the
-## glasses opens upside down and left-right swapped anywhere else: in this editor's viewport, in a
-## .glb in Blender, or against physics. Negating Y here undoes it, which is device-verified against a
-## real scan: the floor's vertices sit at y = +1.12 and the ceiling's at y = -1.45 as written.
-func _to_vector3_array(encoded: String, flip: bool) -> PackedVector3Array:
+## Snapshots are written in canonical Godot space and wound to face the room, so nothing is adjusted
+## here. Earlier files were not: the mesh conversion negated Y to compensate for an eye image the
+## port then submitted mirrored, and later wound inside out. Both are fixed at the source
+## (mesh_block_to_dict in src/system.rs), and this reader deliberately learned neither of the old
+## conventions - they only ever produced a handful of test scans, which is cheaper to redo than to
+## keep readable.
+func _to_vector3_array(encoded: String) -> PackedVector3Array:
 	var floats := _from_base64(encoded).to_float32_array()
 	var out := PackedVector3Array()
 	@warning_ignore("integer_division")
 	out.resize(floats.size() / 3)
-	var sy := -1.0 if flip else 1.0
 	for i in out.size():
-		out[i] = Vector3(floats[i * 3], sy * floats[i * 3 + 1], floats[i * 3 + 2])
+		out[i] = Vector3(floats[i * 3], floats[i * 3 + 1], floats[i * 3 + 2])
 	return out
-
-## Base64 int32 back to triangle indices, reversed when `flip` un-mirrors the vertices.
-##
-## A snapshot's winding is correct for the space it is written in. Negating a single axis to reach
-## canonical Godot space is a mirror, and a mirror swaps every triangle's front and back, so the
-## winding has to follow or the whole scan converts inside out. Nothing on the glasses would show
-## that, since the runtime overlay draws with CULL_DISABLED, but a .glb in Blender is lit from the
-## wrong side.
-##
-## Snapshots taken before mesh_block_to_dict (src/system.rs) stopped reversing hold the opposite
-## winding and so convert inside out through here. Deliberate: the format version stayed at 1 rather
-## than teaching this reader both conventions, because those files were only ever a few test scans.
-func _to_index_array(encoded: String, flip: bool) -> PackedInt32Array:
-	var indices := _from_base64(encoded).to_int32_array()
-	if not flip:
-		return indices
-	for t in range(0, indices.size() - 2, 3):
-		var last := indices[t + 2]
-		indices[t + 2] = indices[t + 1]
-		indices[t + 1] = last
-	return indices
 
 ## The classes the conversion produced, for the status line: it says at a glance whether the scan
 ## was classified at all, and which surfaces to look for.

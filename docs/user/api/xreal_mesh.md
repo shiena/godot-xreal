@@ -21,6 +21,16 @@ World-locked: add this component under a world-fixed node, such as the scene roo
 
 Tint each vertex by its semantic class (wall, floor, ceiling, door, table and so on) instead of painting the whole scan one colour. It falls back to the flat tint per block whenever the backend ships no classification for it. Read when a block mesh is built, so a change takes effect from the next block update rather than repainting what is already on screen.
 
+<a id="property-cull_backfaces"></a>
+
+### cull_backfaces: bool = true
+
+Draw only the side of each surface that faces the room, the way the Unity SDK's own meshing samples do (they declare no `Cull` and so take Unity's `Cull Back` default).
+
+On by default, and worth leaving on. The overlay is unshaded, so culling costs nothing visually while halving the fragments; more importantly it is the only thing on the glasses that shows a winding mistake at all. With it off, a scan wound inside out looks identical to a correct one, which is how one went unnoticed until a snapshot was measured on a PC. If a surface vanishes when you walk around it, its winding is wrong.
+
+Turn it off to see geometry the scan only captured from one side - the underside of a table it only ever saw from above, say, which correctly draws nothing when culled.
+
 <a id="property-enabled"></a>
 
 ### enabled: bool = false
@@ -61,7 +71,7 @@ Convert a saved file with the "XREAL Mesh Snapshot" editor dock, which turns it 
 
 The arrays are base64 rather than JSON numbers on purpose: a room scan runs to hundreds of thousands of floats, and writing those as text costs roughly ten times the bytes and long enough on the phone to stall the frame.
 
-The geometry is verbatim what the scene holds, which is the RUNTIME's space, not a canonical Godot one: this port negates Y on top of the canonical Unity-to-Godot conversion to cancel the eye SubViewports rendering inverted (docs/develop/plans/coordinate-systems-notes.md). Winding is right for that space. A reader that wants canonical Godot has to negate Y and reverse each triangle with it, which is what the "XREAL Mesh Snapshot" dock does.
+The geometry is verbatim what the scene holds, which is canonical Godot space: the floor reads negative Y and the ceiling positive, and the surfaces face the room the wearer scanned them from, so they draw with Godot's default back-face culling rather than needing it turned off.
 
 <a id="method-set_enabled"></a>
 

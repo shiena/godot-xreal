@@ -14,9 +14,11 @@ draws world-locked joint spheres. What it took to go from "code prepared" to "wo
      `1=Controller / 2=Hands / 3=Both`). Bit 1 = Hands is the gate `UpdateHandPose` checks at
      `(*(InputManager+0x30))+0x18`. With `0` (none) hand tracking never runs. On the One Pro the feature
      bit is simply never satisfied (`IsHandTrackingSupported()==false`).
-2. **Coordinate conversion.** `pos = (x, -y, -z)`, `quat = (x, -y, -z, w)`: Unity→Godot negates Z, and this
-   port's eye cameras use a Y-inverted head pose (`display_rotation` → `(x,-y,z,w)`) so we also negate Y —
-   without it the hand rendered upside-down (device-confirmed).
+2. **Coordinate conversion.** `pos = (x, y, -z)`, `quat = (-x, -y, z, w)`: the canonical Unity→Godot
+   negate-Z, the same one planes, anchors and image tracking use. It carried an extra Y negation until
+   the eye image stopped being submitted mirrored; that mirror was what made the negation necessary, and
+   both went together. Verified on an Air 2 Ultra (2026-08-14): the joints rise with the hand and the
+   palm faces the way the real one does.
 3. **World-locked, not head-locked.** The joint poses are in world/tracking space, so `demo/main.gd`
    parents `HandVisualizer` under **Main (a fixed node), not the head rig**. Under the rotating rig the
    head rotation cancels against the eye cameras and the hand sticks to the screen; under a fixed node the

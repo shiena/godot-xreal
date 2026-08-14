@@ -1012,16 +1012,30 @@ impl XrealSystem {
 
 // --- Plane-detection conversions (Unity → Godot) ---
 
-/// Convert a Unity-space plane pose to a Godot `Transform3D`: position `(x, -y, -z)` and quaternion
-/// `(-x, -y, z, w)`, the same convention as the head and hand poses (`src/hand_tracking.rs`). The
-/// exact axis signs are pending on-device verification with real planes.
+/// Convert a Unity-space pose (planes, anchors, image tracking) to a Godot `Transform3D`: the
+/// canonical Unity(LH, +Z fwd) → Godot(RH, -Z fwd) negate-Z, position `(x, y, -z)` and quaternion
+/// `(-x, -y, z, w)`. Same as `ffi.rs::NrPose::to_godot_quaternion`.
+///
+/// This used to emit `(x, -y, -z)` / `(x, -y, -z, w)`, which is the canonical conversion with a
+/// mirror of the Y axis composed on top. The two agree on being one mirror apart: reflecting Y maps
+/// a quaternion `(a, b, c, w)` to `(-a, b, -c, w)`, and applying that to the canonical
+/// `(-x, -y, z, w)` gives exactly the `(x, -y, -z, w)` that was here.
+///
+/// That mirror was this port's compensation for an eye image it submitted mirrored vertically. The
+/// mirror is gone, and hands and the depth mesh have already dropped their copies (both
+/// device-verified on an Air 2 Ultra, 2026-08-14).
+///
+/// Device-verified on an Air 2 Ultra (2026-08-14): plane tracking, world anchors and image tracking
+/// all land where they should, on the GL and Vulkan builds alike. The signs had been "pending
+/// on-device verification with real planes" ever since they were written, so this is the first time
+/// any of the three was checked. See `docs/develop/plans/coordinate-systems-notes.md`.
 fn unity_pose_to_transform(pose: &crate::ffi::UnityPose) -> Transform3D {
     let p = pose.position;
     let r = pose.rotation;
-    let quat = Quaternion::new(r[0], -r[1], -r[2], r[3]);
+    let quat = Quaternion::new(-r[0], -r[1], r[2], r[3]);
     Transform3D::new(
         Basis::from_quaternion(quat),
-        Vector3::new(p[0], -p[1], -p[2]),
+        Vector3::new(p[0], p[1], -p[2]),
     )
 }
 
@@ -1079,14 +1093,15 @@ fn plane_to_dict(p: &crate::native::PlaneSample) -> VarDictionary {
 }
 
 /// Inverse of [`unity_pose_to_transform`]: a Godot world `Transform3D` → a Unity-space `UnityPose`
-/// (for anchor acquire/quality input). The position/quaternion sign flips are self-inverse, so the
-/// same `(x, -y, -z)` / `(x, -y, -z, w)` pattern round-trips.
+/// (for anchor acquire/quality input). The negate-Z is self-inverse in both halves - negating Z
+/// twice restores it, and `(-x, -y, z, w)` applied twice gives `(x, y, z, w)` - so the same pattern
+/// round-trips.
 fn transform_to_unity_pose(t: &Transform3D) -> crate::ffi::UnityPose {
     let p = t.origin;
     let q = t.basis.get_quaternion();
     crate::ffi::UnityPose {
-        position: [p.x, -p.y, -p.z],
-        rotation: [q.x, -q.y, -q.z, q.w],
+        position: [p.x, p.y, -p.z],
+        rotation: [-q.x, -q.y, q.z, q.w],
     }
 }
 
@@ -1171,32 +1186,56 @@ fn image_to_dict(im: &crate::native::ImageSample) -> VarDictionary {
 
 /// A depth-mesh block → a GDScript `Dictionary`.
 ///
-/// Unlike the poses, mesh vertices come out of `MeshBlockInfo` in **raw NR space** (the SDK's
-/// `AcquireMesh` is what negates Z on the way into Unity), so the flip is one step short of the pose
-/// path: raw → Unity is `(x, y, -z)` and Unity → this port's Godot is `(x, -y, -z)`, which composes to
-/// `(x, -y, z)`.
+/// Positions and normals pass through unchanged. Unlike the poses, mesh vertices come out of
+/// `MeshBlockInfo` in **raw NR space** (the SDK's `AcquireMesh` is what negates Z on the way into
+/// Unity), so raw → Unity is `(x, y, -z)`, and the canonical Unity → Godot is `(x, y, -z)` again.
+/// The two negations cancel: raw already IS Godot space.
 ///
-/// The indices go through untouched. They used to be emitted reversed, on the reasoning that our
-/// space is a 180-degree rotation about X of Unity's and so keeps Unity's clockwise-front winding.
-/// The step that reasoning misses is that the input is raw, not Unity: `(x, -y, z)` applied to raw
-/// has determinant -1, so the conversion has ALREADY swapped each triangle's front and back, and
-/// reversing on top of that swaps it a second time. Device-measured over two real scans, comparing
-/// every triangle's counter-clockwise normal against the SDK's own vertex normals: reversed, 74,026
-/// of 74,036 and 97,380 of 97,390 triangles faced away from their normals; verbatim, all but ten of
-/// each face the right way. The overlay draws CULL_DISABLED, which is why nothing on the glasses
-/// ever showed it.
+/// This used to emit `(x, -y, z)`. The extra Y came from the port's own Unity → Godot step reading
+/// `(x, -y, -z)` instead of the canonical `(x, y, -z)`, and
+/// `docs/develop/plans/coordinate-systems-notes.md` had already identified that Y as a rendering
+/// artifact rather than a coordinate fundamental, attributing it to the eye image this port then
+/// submitted mirrored vertically. That mirror is gone (7b49a5c, ddf2823), so its compensation goes
+/// with it.
+///
+/// Indices pass through verbatim, so the scan's surfaces face the room the wearer is standing in.
+///
+/// Getting here took two wrong turns, both from testing winding by the wrong rule. The measurement
+/// everything rested on compared each triangle's counter-clockwise cross product against the SDK's
+/// own vertex normal and called agreement "correct". It is not a front/back test at all: **Godot's
+/// front face is CLOCKWISE**, so a triangle whose counter-clockwise cross product points along its
+/// normal presents its BACK to anything the normal points at. The room scan therefore rendered
+/// inside out, which nothing caught because the runtime overlay drew with culling off, and a .glb
+/// cannot show it either (GLTFDocument reverses every triangle to reach glTF's counter-clockwise
+/// convention, so Blender sees the same picture whichever way the source wound). The overlay culls
+/// back faces now (`xreal_mesh.gd`'s `cull_backfaces`), so the next mistake shows on the glasses.
+///
+/// Measured directly instead, by putting a camera where the wearer's head was and rendering the
+/// scan with CULL_BACK: verbatim indices draw the ceiling from underneath and reversed ones draw
+/// nothing. That also matches the Unity SDK, whose own meshing sample shaders declare no `Cull` and
+/// so take Unity's `Cull Back` default - their overlay would show an empty room otherwise.
+///
+/// Device-verified on an Air 2 Ultra (2026-08-14). Two fresh scans, 6,100 and 27,334 triangles,
+/// both winding to face the room by Godot's own rule; the four exceptions in the larger one are
+/// degenerate triangles whose cross product is numerically meaningless. That scan carried a FLOOR
+/// label as well as a CEILING, which pins both ends of the coordinate fix: FLOOR at y = -1.02 with
+/// its normals up, CEILING at y = +0.92 with its normals down. On the glasses the label colours are
+/// simply there on the surfaces the wearer looked at, which with `cull_backfaces` on says the same.
 fn mesh_block_to_dict(b: &crate::depth_mesh::MeshBlock) -> VarDictionary {
     let mut verts = PackedVector3Array::new();
     for v in &b.vertices {
-        verts.push(Vector3::new(v[0], -v[1], v[2]));
+        verts.push(Vector3::new(v[0], v[1], v[2]));
     }
     let mut norms = PackedVector3Array::new();
     for n in &b.normals {
-        norms.push(Vector3::new(n[0], -n[1], n[2]));
+        norms.push(Vector3::new(n[0], n[1], n[2]));
     }
+    // A trailing partial triangle cannot be drawn, so it is dropped rather than emitted short.
     let mut idx = PackedInt32Array::new();
-    for &i in &b.indices {
-        idx.push(i as i32);
+    for tri in b.indices.chunks_exact(3) {
+        idx.push(tri[0] as i32);
+        idx.push(tri[1] as i32);
+        idx.push(tri[2] as i32);
     }
     let mut d = VarDictionary::new();
     d.set(
@@ -1451,18 +1490,18 @@ mod tests {
     }
 
     #[test]
-    fn unity_pose_to_transform_flips_y_and_z_position() {
+    fn unity_pose_to_transform_negates_z_position() {
         let pose = UnityPose {
             position: [1.0, 2.0, 3.0],
             rotation: [0.0, 0.0, 0.0, 1.0],
         };
         let t = unity_pose_to_transform(&pose);
-        assert_eq!(t.origin, Vector3::new(1.0, -2.0, -3.0));
+        assert_eq!(t.origin, Vector3::new(1.0, 2.0, -3.0));
     }
 
     #[test]
     fn unity_pose_transform_round_trips() {
-        // The (x, -y, -z) position and (x, -y, -z, w) quaternion flips are self-inverse.
+        // The (x, y, -z) position and (-x, -y, z, w) quaternion flips are self-inverse.
         let q = Quaternion::new(0.1, 0.2, 0.3, 0.9).normalized();
         let pose = UnityPose {
             position: [1.0, -2.0, 3.0],
