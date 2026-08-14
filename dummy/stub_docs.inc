@@ -155,8 +155,8 @@ static const char *const stub_docs[] = {
 ,
 "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
 "<class name=\"XrealHandTracker\" inherits=\"Node\" xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xsi:noNamespaceSchemaLocation=\"../class.xsd\">\n"
-"<brief_description>Node that publishes XREAL hand tracking to Godot&#39;s [code]XRServer[/code] as two [code]XRHandTracker[/code]s, [code]/user/hand_tracker/left[/code] and [code]/user/hand_tracker/right[/code]. Add it to the scene, and then an [code]XRHandModifier3D[/code] carrying the matching tracker name animates a hand skeleton, or GDScript reads the trackers through [code]XRServer.get_tracker(...)[/code].</brief_description>\n"
-"<description>Hardware-gated to the Air 2 Ultra, and a no-op elsewhere.</description>\n"
+"<brief_description>Node that publishes XREAL hand tracking to Godot&#39;s [code]XRServer[/code] as two [code]XRHandTracker[/code]s, [code]/user/hand_tracker/left[/code] and [code]/user/hand_tracker/right[/code]. Add it to the scene, and then an [code]XRHandModifier3D[/code] carrying the matching tracker name animates a hand skeleton, an [code]XRNode3D[/code] carrying it follows the palm and hides itself when the hand is not tracked, or GDScript reads the trackers through [code]XRServer.get_tracker(...)[/code]. Same wiring as on an OpenXR headset.</brief_description>\n"
+"<description>Hardware-gated to the Air 2 Ultra. Elsewhere the trackers still register, and simply report no tracking data, so an app that shows hands only while they are tracked shows none at all.</description>\n"
 "\n"
 "<members></members>\n"
 "</class>\n"
