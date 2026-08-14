@@ -129,9 +129,12 @@ func enable_xreal_trackers(system: Object = null) -> void:
 func poll_xreal_controller(delta: float, head_transform: Transform3D) -> void:
 	if not _xreal_enabled:
 		return
-	# Before the early returns below, which are all about the phone. A hand is aimed whether or not
-	# the phone controller ever starts.
+	# A hand is aimed whether or not the phone controller ever starts, which is why the phone's own
+	# bail-outs live in their own function below rather than cutting this one short.
 	_publish_hand_aim(head_transform)
+	_poll_phone_controller(delta, head_transform)
+
+func _poll_phone_controller(delta: float, head_transform: Transform3D) -> void:
 	if _system == null:
 		return
 	if not _native_controller_started:
