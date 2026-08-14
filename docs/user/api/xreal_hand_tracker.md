@@ -6,6 +6,6 @@
 **Inherits:** [`Node`](https://docs.godotengine.org/en/stable/classes/class_node.html)  
 **Registered by:** the `godot_xreal` GDExtension  
 
-Node that publishes XREAL hand tracking to Godot's `XRServer` as two `XRHandTracker`s, `/user/hand_tracker/left` and `/user/hand_tracker/right`. Add it to the scene, and then an `XRHandModifier3D` carrying the matching tracker name animates a hand skeleton, or GDScript reads the trackers through `XRServer.get_tracker(...)`.
+Node that publishes XREAL hand tracking to Godot's `XRServer` as two `XRHandTracker`s, `/user/hand_tracker/left` and `/user/hand_tracker/right`. Add it to the scene, and then an `XRHandModifier3D` carrying the matching tracker name animates a hand skeleton, an `XRNode3D` carrying it follows the palm and hides itself when the hand is not tracked, or GDScript reads the trackers through `XRServer.get_tracker(...)`. Same wiring as on an OpenXR headset.
 
-Hardware-gated to the Air 2 Ultra, and a no-op elsewhere.
+Hardware-gated to the Air 2 Ultra. Elsewhere the trackers still register, and simply report no tracking data, so an app that shows hands only while they are tracked shows none at all.
