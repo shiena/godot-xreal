@@ -23,7 +23,9 @@
 //! space, and we convert Unity to Godot here: position `(x, y, -z)`, quaternion `(-x, -y, z, w)`.
 //! The array arrives in **Unity `XRHandJointID` order**, `[0]=Wrist, [1]=Palm, [2..25]=fingers`,
 //! while Godot's `XRHandTracker` uses `PALM=0, WRIST=1, [2..25]=fingers` with the same finger order,
-//! so we swap the first two and leave the rest.
+//! so we swap the first two and leave the rest. Each orientation then takes the same bone
+//! adjustment Godot's own OpenXR driver applies, turning the joint frame into the one Godot's hand
+//! skeletons are rigged for; see [`bone_adjustment`].
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
@@ -250,7 +252,26 @@ pub fn ensure_enabled() {
 fn unity_pose_to_godot(p: &UnityPose) -> Transform3D {
     let pos = Vector3::new(p.position[0], p.position[1], -p.position[2]);
     let rot = Quaternion::new(-p.rotation[0], -p.rotation[1], p.rotation[2], p.rotation[3]);
-    Transform3D::new(Basis::from_quaternion(rot), pos)
+    Transform3D::new(Basis::from_quaternion(rot * bone_adjustment()), pos)
+}
+
+/// Turn a joint frame from the hand-tracking convention into the one Godot's hand skeletons use.
+///
+/// OpenXR runs each joint's -Z out toward the fingertip, and this SDK does the same: measured on an
+/// Air 2 Ultra (2026-08-15), every child joint sits at `(0, 0, -1)` in its parent's frame. Godot's
+/// humanoid bones instead run +Y along the bone, which is what a rigged hand model is skinned
+/// against. Godot's own OpenXR driver reconciles the two by right-multiplying every joint
+/// orientation by this quaternion, a 180-degree turn about `(0, -1, 1)/sqrt(2)`
+/// (`openxr_hand_tracking_extension.cpp`, "OpenXR Y+ -> Godot Humanoid Z-").
+///
+/// Publishing the joints without it left `XRHandModifier3D` twisting every bone a quarter turn off
+/// its mesh. The hand still read as a hand, because the twist is mostly about each finger's own
+/// axis, but the palm paid for it: the web between thumb and index caved in and the finger bases
+/// pinched. Applying it puts the child joints at `(0, 1, 0)` in their parent's frame, which is
+/// where the Godot demo hand models' bind pose puts them.
+fn bone_adjustment() -> Quaternion {
+    use std::f32::consts::FRAC_1_SQRT_2;
+    Quaternion::new(0.0, -FRAC_1_SQRT_2, FRAC_1_SQRT_2, 0.0)
 }
 
 /// The 26 Godot `HandJoint` ordinals in order (0..=25), for feeding `XrHandTracker`.
