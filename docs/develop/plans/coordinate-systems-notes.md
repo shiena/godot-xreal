@@ -21,9 +21,11 @@ OpenCV (RH, Y-down). Our conversions (from the code):
 
 | subsystem | position | quaternion | source |
 |-----------|----------|------------|--------|
-| hand tracking | `(x, -y, -z)` | `(x, -y, -z, w)` | `src/hand_tracking.rs` |
-| planes / anchors / images | `(x, -y, -z)` | `(-x, -y, z, w)` | `src/native.rs` |
-| DISP head pose | — | `(x, -y, z, w)` | memory `glasses-head-lock` |
+| hand tracking | `(x, y, -z)` | `(-x, -y, z, w)` | `src/hand_tracking.rs` |
+| depth mesh | `(x, y, z)` — raw NR is already Godot | — | `src/system.rs::mesh_block_to_dict` |
+| planes / anchors / images | `(x, -y, -z)` | `(x, -y, -z, w)` | `src/system.rs::unity_pose_to_transform` |
+| head pose (calibration) | — | `(-x, -y, z, w)` | `src/ffi.rs::to_godot_quaternion` |
+| DISP head pose | — | `(-x, -y, -z, w)` | `src/node.rs::display_rotation` |
 
 ## Comparison / takeaways
 
@@ -31,17 +33,23 @@ OpenCV (RH, Y-down). Our conversions (from the code):
    exactly what every `UnityPose` struct and "Unity space" comment in this port assumed. The whole RE
    approach (treat SDK poses as Unity LH, convert to Godot RH) is validated.
 
-2. **Our Y-flip is a render-pipeline artifact, not a coordinate fundamental.** The *canonical*
-   Unity(LH,+Z fwd) → Godot(RH,-Z fwd) conversion is **negate Z only** (position `(x, y, -z)`, quaternion
-   `(-x, -y, z, w)`). Our code negates Y too; the code comments attribute that extra Y flip to "this
-   port's eye SubViewports render with an inverted Y", i.e. a Godot rendering quirk. So `(x, -y, -z)`
-   bundles [canonical LH→RH negate-Z] + [our eye-camera Y compensation]. (The doc's own Y-negation is a
-   *different* thing — Unity→OpenCV, because OpenCV is Y-down — it just coincidentally also touches Y.)
+2. **Our Y-flip was a render-pipeline artifact, not a coordinate fundamental — and it is gone.** The
+   *canonical* Unity(LH,+Z fwd) → Godot(RH,-Z fwd) conversion is **negate Z only** (position
+   `(x, y, -z)`, quaternion `(-x, -y, z, w)`). The code used to negate Y on top, attributing it to "this
+   port's eye SubViewports render with an inverted Y", i.e. a Godot rendering quirk. That prediction held:
+   once the eye image stopped being submitted mirrored, every consumer of the extra flip had to drop it.
+   Hands and the depth mesh were the last two, both verified on an Air 2 Ultra (2026-08-14). (The doc's
+   own Y-negation is a *different* thing — Unity→OpenCV, because OpenCV is Y-down — it just
+   coincidentally also touches Y.)
 
-3. **The canonical quaternion matches our planes/anchors path.** `(-x, -y, z, w)` (planes/anchors) is the
-   textbook negate-Z quaternion; hands `(x, -y, -z, w)` and DISP `(x, -y, z, w)` carry extra
-   per-subsystem flips (device-tuned + verified individually). Not bugs, but the doc gives the canonical
-   reference to check against if any subsystem's orientation ever looks off.
+3. **Two subsystems still carry the old flip.** `(-x, -y, z, w)` is the textbook negate-Z quaternion,
+   and hands now apply it. Planes, anchors and image tracking do not: `unity_pose_to_transform` still
+   uses `(x, -y, -z)` / `(x, -y, -z, w)`, and its comment claims it matches "the head and hand poses",
+   which was true when written and is not any more. By the reasoning in point 2 they carry the same
+   leftover, but nothing has measured that, and their own comment says the axis signs were "pending
+   on-device verification with real planes" to begin with. Worth a session with a surface to scan.
+   DISP is a separate case on purpose: `display_rotation` returns `(-x, -y, -z, w)`, which pairs with
+   the vertical mirror the eye image gets on every submission path.
 
 ## Unused native APIs the doc revealed (all C exports in `libXREALXRPlugin.so`, dlsym-able)
 

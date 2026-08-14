@@ -330,6 +330,14 @@ func _add_surface(mesh: ArrayMesh, surface_name: String, verts: PackedVector3Arr
 	mesh.surface_set_material(surface, material)
 
 ## Write the mesh out as .glb through a throwaway scene, since GLTFDocument works on node trees.
+##
+## The .glb cannot be used to check winding. Godot treats clockwise as front-facing and glTF treats
+## counter-clockwise, so GLTFDocument reverses every triangle on the way out: a file measured here
+## agreed with its own normals on all 5,970 triangles as an ArrayMesh and on none of them as a .glb,
+## with positions and normals unchanged. Blender then shows the glTF convention, so backface culling
+## hides the ceiling from inside the room whether the source wound correctly or not. Judge winding on
+## the snapshot itself (each triangle's cross product against its stored normal); the .glb still
+## carries positions and normals faithfully, so orientation is worth checking there.
 func _write_glb(mesh: ArrayMesh, path: String) -> bool:
 	var root := Node3D.new()
 	root.name = "MeshSnapshot"

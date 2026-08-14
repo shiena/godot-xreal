@@ -1013,8 +1013,15 @@ impl XrealSystem {
 // --- Plane-detection conversions (Unity → Godot) ---
 
 /// Convert a Unity-space plane pose to a Godot `Transform3D`: position `(x, -y, -z)` and quaternion
-/// `(-x, -y, z, w)`, the same convention as the head and hand poses (`src/hand_tracking.rs`). The
-/// exact axis signs are pending on-device verification with real planes.
+/// `(x, -y, -z, w)`.
+///
+/// That is the canonical negate-Z with an extra Y negation on top, the compensation this port used
+/// to apply everywhere for an eye image it submitted mirrored vertically. The mirror is gone, and
+/// hands and the depth mesh have dropped their copies of the compensation (both device-verified on
+/// an Air 2 Ultra, 2026-08-14). This path has not been rechecked since: the axis signs here were
+/// "pending on-device verification with real planes" from the start, so the flip may be leftover in
+/// the same way, or may be covering something else. Judge it against a real surface, not by
+/// analogy. See `docs/develop/plans/coordinate-systems-notes.md`.
 fn unity_pose_to_transform(pose: &crate::ffi::UnityPose) -> Transform3D {
     let p = pose.position;
     let r = pose.rotation;

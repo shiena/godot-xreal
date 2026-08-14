@@ -242,11 +242,11 @@ pub fn ensure_enabled() {
 /// `docs/develop/plans/coordinate-systems-notes.md` identified, and that the depth-mesh commit
 /// removed from `mesh_block_to_dict` for the same reason.
 ///
-/// **WIP, not device-verified.** Hand tracking needs an Air 2 Ultra; the One Pro answers
-/// `IsHandTrackingSupported()==false`. The Y negation was device-confirmed there once ("without it
-/// the hand rendered upside-down"), but through the mirrored display that made it necessary, so
-/// that confirmation does not survive the mirror fix. Check it by holding a hand up: the joints should
-/// rise with it rather than sink, and the palm should face the way the real one does.
+/// Device-verified on an Air 2 Ultra (2026-08-14): with the negation gone the joints rise with the
+/// hand and the palm faces the way the real one does. The One Pro cannot check this at all, since it
+/// answers `IsHandTrackingSupported()==false`. The negation had been device-confirmed once ("without
+/// it the hand rendered upside-down"), but through the mirrored display that made it necessary, so
+/// that confirmation did not survive the mirror fix.
 fn unity_pose_to_godot(p: &UnityPose) -> Transform3D {
     let pos = Vector3::new(p.position[0], p.position[1], -p.position[2]);
     let rot = Quaternion::new(-p.rotation[0], -p.rotation[1], p.rotation[2], p.rotation[3]);

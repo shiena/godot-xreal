@@ -61,7 +61,7 @@ Convert a saved file with the "XREAL Mesh Snapshot" editor dock, which turns it 
 
 The arrays are base64 rather than JSON numbers on purpose: a room scan runs to hundreds of thousands of floats, and writing those as text costs roughly ten times the bytes and long enough on the phone to stall the frame.
 
-The geometry is verbatim what the scene holds, which is the RUNTIME's space, not a canonical Godot one: this port negates Y on top of the canonical Unity-to-Godot conversion to cancel the eye SubViewports rendering inverted (docs/develop/plans/coordinate-systems-notes.md). Winding is right for that space. A reader that wants canonical Godot has to negate Y and reverse each triangle with it, which is what the "XREAL Mesh Snapshot" dock does.
+The geometry is verbatim what the scene holds, which is canonical Godot space: the floor reads negative Y, the ceiling positive, and every triangle winds to face its own normal. Snapshots written before that fix carry an extra Y negation and the opposite winding, which is what the "XREAL Mesh Snapshot" dock's "Legacy snapshot (flip Y)" box is for.
 
 <a id="method-set_enabled"></a>
 
