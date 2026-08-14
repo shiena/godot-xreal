@@ -19,6 +19,15 @@ draws world-locked joint spheres. What it took to go from "code prepared" to "wo
    the eye image stopped being submitted mirrored; that mirror was what made the negation necessary, and
    both went together. Verified on an Air 2 Ultra (2026-08-14): the joints rise with the hand and the
    palm faces the way the real one does.
+
+   Each orientation then takes the **bone adjustment**, a 180° turn about `(0, -1, 1)/sqrt(2)`, the
+   same one Godot's OpenXR driver applies ("OpenXR Y+ -> Godot Humanoid Z-"). The SDK runs each
+   joint's -Z out toward the fingertip, as OpenXR does; Godot's hand skeletons run +Y along the bone,
+   and a rigged hand model is skinned against that. Measured on an Air 2 Ultra (2026-08-15): without
+   the adjustment every child joint sits at `(0, 0, -1)` in its parent's frame, with it at
+   `(0, 1, 0)`, which is where the Godot demo hand models' bind pose puts them. It was missing until
+   then, and `XRHandModifier3D` drove every bone a quarter turn off its mesh - visible in the palm,
+   where the web between thumb and index caved in and the finger bases pinched.
 3. **World-locked, not head-locked.** The joint poses are in world/tracking space, so `demo/main.gd`
    parents `HandVisualizer` under **Main (a fixed node), not the head rig**. Under the rotating rig the
    head rotation cancels against the eye cameras and the hand sticks to the screen; under a fixed node the
