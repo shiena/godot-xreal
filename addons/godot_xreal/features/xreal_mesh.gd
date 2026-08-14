@@ -27,6 +27,19 @@ signal snapshot_saved(path: String, block_count: int)
 ## storage on Android, and a scan nobody can copy off the device is of no use in the editor.
 @export var snapshot_dir := ""
 
+## Draw only the side of each surface that faces the room, the way the Unity SDK's own meshing
+## samples do (they declare no `Cull` and so take Unity's `Cull Back` default).
+##
+## On by default, and worth leaving on. The overlay is unshaded, so culling costs nothing visually
+## while halving the fragments; more importantly it is the only thing on the glasses that shows a
+## winding mistake at all. With it off, a scan wound inside out looks identical to a correct one,
+## which is how one went unnoticed until a snapshot was measured on a PC. If a surface vanishes when
+## you walk around it, its winding is wrong.
+##
+## Turn it off to see geometry the scan only captured from one side - the underside of a table it
+## only ever saw from above, say, which correctly draws nothing when culled.
+@export var cull_backfaces := true
+
 ## Tint each vertex by its semantic class (wall, floor, ceiling, door, table and so on) instead of
 ## painting the whole scan one colour. It falls back to the flat tint per block whenever the backend
 ## ships no classification for it. Read when a block mesh is built, so a change takes effect from
@@ -144,9 +157,8 @@ func set_enabled(on: bool) -> bool:
 ## on the phone to stall the frame.
 ##
 ## The geometry is verbatim what the scene holds, which is canonical Godot space: the floor reads
-## negative Y, the ceiling positive, and every triangle winds to face its own normal. Snapshots
-## written before that fix carry an extra Y negation and the opposite winding, which is what the
-## "XREAL Mesh Snapshot" dock's "Legacy snapshot (flip Y)" box is for.
+## negative Y and the ceiling positive, and the surfaces face the room the wearer scanned them from,
+## so they draw with Godot's default back-face culling rather than needing it turned off.
 func save_snapshot() -> String:
 	if _meshes.is_empty():
 		error.emit("[xreal-mesh] no mesh blocks yet, so nothing to save; scan the room first")
@@ -380,7 +392,9 @@ func _make_material(albedo: Color) -> StandardMaterial3D:
 	mat.albedo_color = albedo
 	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	mat.cull_mode = (
+		BaseMaterial3D.CULL_BACK if cull_backfaces else BaseMaterial3D.CULL_DISABLED
+	)
 	return mat
 
 func _exit_tree() -> void:

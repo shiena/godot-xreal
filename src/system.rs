@@ -1190,18 +1190,29 @@ fn image_to_dict(im: &crate::native::ImageSample) -> VarDictionary {
 /// submitted mirrored vertically. That mirror is gone (7b49a5c, ddf2823), so its compensation goes
 /// with it.
 ///
-/// The indices now reverse, which follows from the same change. They were emitted verbatim because
-/// `(x, -y, z)` has determinant -1: the conversion itself swapped each triangle's front and back,
-/// so verbatim came out right. That was device-measured over two real scans against the SDK's own
-/// vertex normals - reversed, 74,026 of 74,036 and 97,380 of 97,390 triangles faced away from their
-/// normals; verbatim, all but ten of each faced the right way - which says raw's own winding faces
-/// AWAY from raw's normals. With the mirror gone the conversion swaps nothing, so the reversal has
-/// to happen here instead.
+/// Indices pass through verbatim, so the scan's surfaces face the room the wearer is standing in.
 ///
-/// **Not yet device-verified.** Judge it on a scan with a floor and a ceiling: the floor's vertices
-/// should read negative Y and the ceiling's positive (they came out the other way round while the
-/// Y was negated), and every triangle should face its own normal. The runtime overlay draws
-/// CULL_DISABLED, so nothing on the glasses will show a winding mistake; a .glb in Blender will.
+/// Getting here took two wrong turns, both from testing winding by the wrong rule. The measurement
+/// everything rested on compared each triangle's counter-clockwise cross product against the SDK's
+/// own vertex normal and called agreement "correct". It is not a front/back test at all: **Godot's
+/// front face is CLOCKWISE**, so a triangle whose counter-clockwise cross product points along its
+/// normal presents its BACK to anything the normal points at. The room scan therefore rendered
+/// inside out, which nothing caught because the runtime overlay drew with culling off, and a .glb
+/// cannot show it either (GLTFDocument reverses every triangle to reach glTF's counter-clockwise
+/// convention, so Blender sees the same picture whichever way the source wound). The overlay culls
+/// back faces now (`xreal_mesh.gd`'s `cull_backfaces`), so the next mistake shows on the glasses.
+///
+/// Measured directly instead, by putting a camera where the wearer's head was and rendering the
+/// scan with CULL_BACK: verbatim indices draw the ceiling from underneath and reversed ones draw
+/// nothing. That also matches the Unity SDK, whose own meshing sample shaders declare no `Cull` and
+/// so take Unity's `Cull Back` default - their overlay would show an empty room otherwise.
+///
+/// Device-verified on an Air 2 Ultra (2026-08-14). Two fresh scans, 6,100 and 27,334 triangles,
+/// both winding to face the room by Godot's own rule; the four exceptions in the larger one are
+/// degenerate triangles whose cross product is numerically meaningless. That scan carried a FLOOR
+/// label as well as a CEILING, which pins both ends of the coordinate fix: FLOOR at y = -1.02 with
+/// its normals up, CEILING at y = +0.92 with its normals down. On the glasses the label colours are
+/// simply there on the surfaces the wearer looked at, which with `cull_backfaces` on says the same.
 fn mesh_block_to_dict(b: &crate::depth_mesh::MeshBlock) -> VarDictionary {
     let mut verts = PackedVector3Array::new();
     for v in &b.vertices {
@@ -1211,12 +1222,12 @@ fn mesh_block_to_dict(b: &crate::depth_mesh::MeshBlock) -> VarDictionary {
     for n in &b.normals {
         norms.push(Vector3::new(n[0], n[1], n[2]));
     }
-    // A trailing partial triangle cannot be drawn, so it is dropped rather than emitted unreversed.
+    // A trailing partial triangle cannot be drawn, so it is dropped rather than emitted short.
     let mut idx = PackedInt32Array::new();
     for tri in b.indices.chunks_exact(3) {
-        idx.push(tri[2] as i32);
-        idx.push(tri[1] as i32);
         idx.push(tri[0] as i32);
+        idx.push(tri[1] as i32);
+        idx.push(tri[2] as i32);
     }
     let mut d = VarDictionary::new();
     d.set(
