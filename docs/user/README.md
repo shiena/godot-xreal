@@ -60,6 +60,58 @@ tracking, depth mesh, hands, capture, recording, and streaming. They remain self
 be configured from the Inspector without writing initialization code, and they stay inert off
 device so scenes remain runnable in the editor.
 
+## Hands
+
+Hand tracking is an Air 2 Ultra feature. Ask for it in Project Settings under `xreal/input_source`,
+set to **Controller And Hands**. The addon leaves that at controller-only because the SDK spends
+about 878 ms on the Hands bit while starting up, and it reads the setting once, at boot. A One or a
+One Pro pays that time and gets nothing back.
+
+Two components draw hands, and they differ in what they ask of you.
+
+`xreal_hands.tscn` puts a small sphere on each of the 26 joints per hand. It needs no art of your
+own and belongs under a world-fixed node. Reach for it to see whether tracking works at all.
+
+`xreal_hand_models.tscn` drives your own skinned hand models, and belongs **under your
+`XROrigin3D`**. It builds Godot's standard hand rig for each side: an `XRNode3D` bound to the
+tracker, your model under it, and an `XRHandModifier3D` on the model's `Skeleton3D`. The hands sit
+on the real hands and disappear when tracking stops, so on glasses without hand tracking they never
+appear and nothing has to switch them off.
+
+### Wiring up hand models
+
+The addon ships no models, so bring your own. `XRHandModifier3D` matches bones by name alone:
+`Left<bone>` and `Right<bone>`, where `<bone>` runs `Palm`, `Hand`, `ThumbMetacarpal` through
+`LittleTip`. A model also has to be skinned in the OpenXR joint convention, because the modifier
+replaces each bone's pose with the tracker's joint transform outright.
+
+Godot's own demo hands meet both conditions. Copy `LeftHandHumanoid.gltf`, `RightHandHumanoid.gltf`
+and their `.bin` files out of
+[godot-demo-projects](https://github.com/godotengine/godot-demo-projects), under
+`xr/openxr_hand_tracking_demo/assets/gltf/`, into your project. They are MIT-licensed.
+
+1. Set `xreal/input_source` to **Controller And Hands**.
+2. Add `addons/godot_xreal/features/xreal_hand_models.tscn` under your `XROrigin3D`, and leave its
+   own transform at the identity. Anything between it and the tracking origin displaces the hands.
+3. Point `left_model` and `right_model` at the two glTF scenes.
+4. Give `material_override` an unshaded material if your scene is dark. The glasses composite
+   additively, so scene lighting turns a hand into a dark smear.
+
+```
+XROrigin3D                     # yours
+├── XRCamera3D
+├── XrealXRRuntime
+└── XrealHandModels            # left_model / right_model
+```
+
+Those demo hands carry no `Palm` bone, so Godot logs `Couldn't obtain bone for LeftPalm` once per
+hand at start-up. The modifier skips the bones it cannot find, and the other 25 drive the hand.
+
+godot-xr-tools' hand models do not work here. Their 26 bones correspond one for one, which makes
+renaming look sufficient, but their bind pose sits at a fixed rotation from the convention the
+modifier assumes: 90° on the fingers and 135° on the thumb, measured against Godot's demo hands.
+The skin would deform by that same rotation.
+
 ## api/: generated class reference
 
 [api/README.md](api/README.md) lists every class the addon exposes to GDScript, one page each. Those

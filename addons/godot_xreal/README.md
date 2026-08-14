@@ -95,6 +95,7 @@ reason and covers runtime failures too. The demo connects them in `demo/main.gd`
 | `xreal_image_tracking.tscn` | yes | `set_enabled(on) -> bool`, `cycle_set()`; exports `enabled`, `manifest_path` (**required**: a reference.json, see `demo/image_tracking/`), `marker_material` (optional overlay override; a ShaderMaterial with a `tracking` bool uniform gets the per-marker state) | Air 2 Ultra |
 | `xreal_mesh.tscn` | yes | `set_enabled(on) -> bool`; exports `enabled` | Air 2 Ultra |
 | `xreal_hands.tscn` | yes | autonomous (spheres on the 26 joints per hand); hide it through `visible` | Air 2 Ultra |
+| `xreal_hand_models.tscn` | under your `XROrigin3D` | autonomous; drives your own skinned hand models through `XRHandModifier3D`. Exports `left_model` and `right_model` (**required**: the addon ships no art, and the bones have to carry Godot's `Left<bone>`/`Right<bone>` names — see [docs/user](../../docs/user/README.md#hands)), plus `material_override` and `bone_update` | Air 2 Ultra |
 | `xreal_photo_capture.tscn` | no | `capture_photo() -> String` returns a JPG path; needs the camera component enabled | One Series |
 | `xreal_blend_capture.tscn` | no | `capture_blended() -> String` returns a camera+AR composite JPG; needs camera + rig | One Series |
 | `xreal_stream.tscn` | no | `set_enabled(on)`, which is async: watch `active_changed(active)`. Streams FPV/MRC to XREAL's StreamingReceiver over LAN; exports `audio_state`, `observer_mode`, and the size, bitrate, and fps settings | any (camera-less devices stream AR-only) |
