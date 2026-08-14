@@ -1012,23 +1012,30 @@ impl XrealSystem {
 
 // --- Plane-detection conversions (Unity → Godot) ---
 
-/// Convert a Unity-space plane pose to a Godot `Transform3D`: position `(x, -y, -z)` and quaternion
-/// `(x, -y, -z, w)`.
+/// Convert a Unity-space pose (planes, anchors, image tracking) to a Godot `Transform3D`: the
+/// canonical Unity(LH, +Z fwd) → Godot(RH, -Z fwd) negate-Z, position `(x, y, -z)` and quaternion
+/// `(-x, -y, z, w)`. Same as `ffi.rs::NrPose::to_godot_quaternion`.
 ///
-/// That is the canonical negate-Z with an extra Y negation on top, the compensation this port used
-/// to apply everywhere for an eye image it submitted mirrored vertically. The mirror is gone, and
-/// hands and the depth mesh have dropped their copies of the compensation (both device-verified on
-/// an Air 2 Ultra, 2026-08-14). This path has not been rechecked since: the axis signs here were
-/// "pending on-device verification with real planes" from the start, so the flip may be leftover in
-/// the same way, or may be covering something else. Judge it against a real surface, not by
-/// analogy. See `docs/develop/plans/coordinate-systems-notes.md`.
+/// This used to emit `(x, -y, -z)` / `(x, -y, -z, w)`, which is the canonical conversion with a
+/// mirror of the Y axis composed on top. The two agree on being one mirror apart: reflecting Y maps
+/// a quaternion `(a, b, c, w)` to `(-a, b, -c, w)`, and applying that to the canonical
+/// `(-x, -y, z, w)` gives exactly the `(x, -y, -z, w)` that was here.
+///
+/// That mirror was this port's compensation for an eye image it submitted mirrored vertically. The
+/// mirror is gone, and hands and the depth mesh have already dropped their copies (both
+/// device-verified on an Air 2 Ultra, 2026-08-14).
+///
+/// Device-verified on an Air 2 Ultra (2026-08-14): plane tracking, world anchors and image tracking
+/// all land where they should, on the GL and Vulkan builds alike. The signs had been "pending
+/// on-device verification with real planes" ever since they were written, so this is the first time
+/// any of the three was checked. See `docs/develop/plans/coordinate-systems-notes.md`.
 fn unity_pose_to_transform(pose: &crate::ffi::UnityPose) -> Transform3D {
     let p = pose.position;
     let r = pose.rotation;
-    let quat = Quaternion::new(r[0], -r[1], -r[2], r[3]);
+    let quat = Quaternion::new(-r[0], -r[1], r[2], r[3]);
     Transform3D::new(
         Basis::from_quaternion(quat),
-        Vector3::new(p[0], -p[1], -p[2]),
+        Vector3::new(p[0], p[1], -p[2]),
     )
 }
 
@@ -1086,14 +1093,15 @@ fn plane_to_dict(p: &crate::native::PlaneSample) -> VarDictionary {
 }
 
 /// Inverse of [`unity_pose_to_transform`]: a Godot world `Transform3D` → a Unity-space `UnityPose`
-/// (for anchor acquire/quality input). The position/quaternion sign flips are self-inverse, so the
-/// same `(x, -y, -z)` / `(x, -y, -z, w)` pattern round-trips.
+/// (for anchor acquire/quality input). The negate-Z is self-inverse in both halves - negating Z
+/// twice restores it, and `(-x, -y, z, w)` applied twice gives `(x, y, z, w)` - so the same pattern
+/// round-trips.
 fn transform_to_unity_pose(t: &Transform3D) -> crate::ffi::UnityPose {
     let p = t.origin;
     let q = t.basis.get_quaternion();
     crate::ffi::UnityPose {
-        position: [p.x, -p.y, -p.z],
-        rotation: [q.x, -q.y, -q.z, q.w],
+        position: [p.x, p.y, -p.z],
+        rotation: [-q.x, -q.y, q.z, q.w],
     }
 }
 
@@ -1482,18 +1490,18 @@ mod tests {
     }
 
     #[test]
-    fn unity_pose_to_transform_flips_y_and_z_position() {
+    fn unity_pose_to_transform_negates_z_position() {
         let pose = UnityPose {
             position: [1.0, 2.0, 3.0],
             rotation: [0.0, 0.0, 0.0, 1.0],
         };
         let t = unity_pose_to_transform(&pose);
-        assert_eq!(t.origin, Vector3::new(1.0, -2.0, -3.0));
+        assert_eq!(t.origin, Vector3::new(1.0, 2.0, -3.0));
     }
 
     #[test]
     fn unity_pose_transform_round_trips() {
-        // The (x, -y, -z) position and (x, -y, -z, w) quaternion flips are self-inverse.
+        // The (x, y, -z) position and (-x, -y, z, w) quaternion flips are self-inverse.
         let q = Quaternion::new(0.1, 0.2, 0.3, 0.9).normalized();
         let pose = UnityPose {
             position: [1.0, -2.0, 3.0],

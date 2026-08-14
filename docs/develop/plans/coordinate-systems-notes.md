@@ -23,7 +23,7 @@ OpenCV (RH, Y-down). Our conversions (from the code):
 |-----------|----------|------------|--------|
 | hand tracking | `(x, y, -z)` | `(-x, -y, z, w)` | `src/hand_tracking.rs` |
 | depth mesh | `(x, y, z)` — raw NR is already Godot | — | `src/system.rs::mesh_block_to_dict` |
-| planes / anchors / images | `(x, -y, -z)` | `(x, -y, -z, w)` | `src/system.rs::unity_pose_to_transform` |
+| planes / anchors / images | `(x, y, -z)` | `(-x, -y, z, w)` | `src/system.rs::unity_pose_to_transform` |
 | head pose (calibration) | — | `(-x, -y, z, w)` | `src/ffi.rs::to_godot_quaternion` |
 | DISP head pose | — | `(-x, -y, -z, w)` | `src/node.rs::display_rotation` |
 
@@ -42,14 +42,37 @@ OpenCV (RH, Y-down). Our conversions (from the code):
    own Y-negation is a *different* thing — Unity→OpenCV, because OpenCV is Y-down — it just
    coincidentally also touches Y.)
 
-3. **Two subsystems still carry the old flip.** `(-x, -y, z, w)` is the textbook negate-Z quaternion,
-   and hands now apply it. Planes, anchors and image tracking do not: `unity_pose_to_transform` still
-   uses `(x, -y, -z)` / `(x, -y, -z, w)`, and its comment claims it matches "the head and hand poses",
-   which was true when written and is not any more. By the reasoning in point 2 they carry the same
-   leftover, but nothing has measured that, and their own comment says the axis signs were "pending
-   on-device verification with real planes" to begin with. Worth a session with a surface to scan.
+3. **Every tracked subsystem now uses the canonical conversion.** `(x, y, -z)` and `(-x, -y, z, w)`,
+   for hands, planes, anchors and image tracking alike. The last three arrived there by derivation
+   rather than measurement: reflecting Y maps a quaternion `(a, b, c, w)` to `(-a, b, -c, w)`, and
+   applying that to the canonical quaternion gives exactly the `(x, -y, -z, w)` they used to emit —
+   so they were the canonical conversion plus the same mirror, and dropping it lands on canonical.
+   Device-verified on an Air 2 Ultra (2026-08-14): plane tracking, world anchors and image tracking
+   all land where they should. Their signs had been "pending on-device verification with real
+   planes" ever since they were written, so this was the first check any of the three ever had.
+
    DISP is a separate case on purpose: `display_rotation` returns `(-x, -y, -z, w)`, which pairs with
    the vertical mirror the eye image gets on every submission path.
+
+## Renderer coverage of the 2026-08-14 verification
+
+Everything above was checked on both builds: GL Compatibility + multipass, and Vulkan Mobile. Hand
+tracking, plane detection, image tracking, world anchors and the depth mesh all read correctly on
+each.
+
+Only the *appearance* checks could have differed. The pose conversions and the depth mesh's
+geometry are renderer-independent data, and the front-face convention is not: Godot reports
+clockwise as front on `gl_compatibility`, `mobile` and `forward_plus` alike (measured with a single
+triangle). What the renderer does change is the eye-image submission path - GL flips in
+`gl.rs::blit_texture` / `blit_default_framebuffer`, Vulkan in the bridge's blit - and a path that
+failed to mirror would make every one of these read inverted. Both mirror.
+
+Multiview needs no separate pass: it changes how Godot *draws* the two eyes, not how the image is
+handed over, and the mirror rides on the handover.
+
+Note for anyone repeating this: the Vulkan build draws nothing on the glasses until
+`debug.xreal.vulkan_glasses` is set to 1 (`vk_bridge.rs::glasses_enabled`, default off while that
+path is in bring-up). It is a `setprop`, so it does not survive a reboot.
 
 ## Unused native APIs the doc revealed (all C exports in `libXREALXRPlugin.so`, dlsym-able)
 
