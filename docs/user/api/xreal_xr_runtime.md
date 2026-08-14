@@ -129,6 +129,14 @@ Feed a phone UI or another app-owned XREAL controller button through the standar
 
 Select which standard hand controller receives app-owned and native XREAL input.
 
+<a id="method-set_hand_aim"></a>
+
+### set_hand_aim(on: bool)
+
+Let tracked hands aim and click, or stop them. On by default.
+
+Turning it off hands every controller back to the phone at once: a hand mid-pinch lets go, and the hand that is not standing in for the phone loses its poses. An app whose UI moves off the glasses, to a phone screen say, wants that. Hands busy holding the phone would otherwise keep pointing a ray at the scene behind it and pinching by accident.
+
 ## Constants
 
 | Constant | Value | Description |
