@@ -24,6 +24,16 @@ Create a new anchor at `pose` (a world `Transform3D`). Returns the anchor `Dicti
 
 Estimate an anchor's save quality (`ANCHOR_QUALITY_*`) at `pose`, or `-1` on failure.
 
+<a id="method-get_android_prop"></a>
+
+### get_android_prop(key: String, fallback: int) -> int
+
+Read an Android system property as an int, or `fallback` where it is unset, unparseable, or off Android.
+
+It is how a switch can be flipped on a worn device without re-exporting: `adb shell setprop debug.myapp.thing 0`. The addon reads `debug.xreal.render_scale` this way, and an app can put its own debug switches on the same footing rather than reaching for `android.os.SystemProperties`, which is not public API.
+
+This goes through the NDK's `__system_property_get`, so no hidden-API restriction applies. Properties are strings, and only an int is offered here because that is what a switch or a swept value needs; `0`/`1` reads as a bool.
+
 <a id="method-get_app_frame_latency_ms"></a>
 
 ### get_app_frame_latency_ms() -> float
