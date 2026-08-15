@@ -25,6 +25,17 @@ Both the common XR camera and the live camera feed are discovered per frame, thr
 
 Which audio goes out with the stream (SDK VideoCapture's Audio State). The encoder captures MIC natively and needs RECORD_AUDIO; it captures APP natively too, through a MediaProjection. This replaces the old `with_mic` bool, where MIC behaves exactly like `with_mic = true`.
 
+<a id="property-background"></a>
+
+### background: XrealStream.Background = 0
+
+
+<a id="property-background_color"></a>
+
+### background_color: Color = Color(0, 0, 0, 1)
+
+Fill for Background.SOLID.
+
 <a id="property-blend_mode"></a>
 
 ### blend_mode: XrealStream.BlendMode = 0
@@ -112,6 +123,16 @@ Toggle streaming. Pairing is async, so turning it on only *starts* discovery; th
 | <a id="constant-BLEND"></a>`BLEND` | `0` |  |
 | <a id="constant-RGB_ONLY"></a>`RGB_ONLY` | `1` |  |
 | <a id="constant-VIRTUAL_ONLY"></a>`VIRTUAL_ONLY` | `2` |  |
+
+<a id="enum-Background"></a>
+
+### enum Background
+
+| Constant | Value | Description |
+| --- | --- | --- |
+| <a id="constant-TRANSPARENT"></a>`TRANSPARENT` | `0` |  |
+| <a id="constant-SCENE"></a>`SCENE` | `1` |  |
+| <a id="constant-SOLID"></a>`SOLID` | `2` |  |
 
 ## Constants
 

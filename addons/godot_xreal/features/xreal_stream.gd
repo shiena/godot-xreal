@@ -53,6 +53,26 @@ signal active_changed(active: bool)
 ## camera image, RGB_ONLY sends the camera alone, VIRTUAL_ONLY sends the holograms alone.
 enum BlendMode { BLEND, RGB_ONLY, VIRTUAL_ONLY }
 @export var blend_mode: BlendMode = BlendMode.BLEND
+## What fills the capture behind the holograms, before any camera blending.
+##
+## TRANSPARENT is the default and what the blend needs: the AR viewport keeps alpha 0 where nothing
+## is drawn, so the RGB camera image shows through underneath. It also means the 3D world's own
+## background is dropped, and with no camera the stream reads back as holograms on black.
+##
+## SCENE draws whatever the world puts behind them, a WorldEnvironment sky for instance. Reach for
+## it when the background IS the content, a planetarium sky being the case that prompted this, or on
+## camera-less glasses where there is nothing to composite over anyway.
+##
+## SOLID fills with `background_color` through an Environment on the capture camera alone, which
+## leaves what the wearer sees untouched.
+##
+## This is not `green_background`: that keys the composite AFTER the camera blend, for chroma-keying
+## in post, whereas this decides what the AR viewport itself clears to. BLEND overrides it back to
+## TRANSPARENT, since the blend has no camera image to show through an opaque fill.
+enum Background { TRANSPARENT, SCENE, SOLID }
+@export var background: Background = Background.TRANSPARENT
+## Fill for Background.SOLID.
+@export var background_color: Color = Color.BLACK
 ## Replace the real world behind the holograms with a chroma key. Ignored for RGB_ONLY.
 @export var green_background := false
 @export var green_key: Color = Color(0.0, 1.0, 0.0)
@@ -92,6 +112,14 @@ func _ready() -> void:
 	_pairing.failed.connect(_on_pair_failed)
 	_pairing.lost.connect(_on_pair_lost)
 	_pairing.camera_param.connect(_on_camera_param)
+
+## The background kind actually used. BLEND composites the AR viewport over the RGB camera, which
+## reads the viewport's alpha, so an opaque fill would hide the camera entirely; the blend wins.
+func _background_kind() -> XrealShared.CaptureBackground:
+	if blend_mode == BlendMode.BLEND and background != Background.TRANSPARENT:
+		return XrealShared.CaptureBackground.TRANSPARENT
+	return background as XrealShared.CaptureBackground
+
 
 ## True once RECORD_AUDIO is granted. It is always true off Android, where the encoder mic goes
 ## unused.
@@ -239,7 +267,6 @@ func _ensure_viewport() -> void:
 		return
 	_ar_vp = SubViewport.new()
 	_ar_vp.size = Vector2i(stream_width, stream_height)
-	_ar_vp.transparent_bg = true
 	_ar_vp.render_target_update_mode = SubViewport.UPDATE_ALWAYS
 	_ar_vp.world_3d = get_tree().root.world_3d  # render the same 3D world the glasses show
 	add_child(_ar_vp)
@@ -247,6 +274,7 @@ func _ensure_viewport() -> void:
 	_ar_cam.current = true
 	_ar_cam.cull_mask = stream_cull_mask
 	_ar_vp.add_child(_ar_cam)
+	XrealShared.apply_capture_background(_ar_vp, _ar_cam, _background_kind(), background_color)
 
 ## Composite viewport blending the AR viewport over the RGB camera, using xreal_blend_2d.gdshader
 ## just as blend capture does, built lazily the first time the camera is on. Streaming it casts

@@ -44,6 +44,26 @@ signal finished(path: String)
 ## camera.
 enum BlendMode { BLEND, RGB_ONLY, VIRTUAL_ONLY }
 @export var blend_mode: BlendMode = BlendMode.BLEND
+## What fills the capture behind the holograms, before any camera blending.
+##
+## TRANSPARENT is the default and what the blend needs: the AR viewport keeps alpha 0 where nothing
+## is drawn, so the RGB camera image shows through underneath. It also means the 3D world's own
+## background is dropped, and with no camera the recording reads back as holograms on black.
+##
+## SCENE draws whatever the world puts behind them, a WorldEnvironment sky for instance. Reach for
+## it when the background IS the content, a planetarium sky being the case that prompted this, or on
+## camera-less glasses where there is nothing to composite over anyway.
+##
+## SOLID fills with `background_color` through an Environment on the capture cameras alone, which
+## leaves what the wearer sees untouched.
+##
+## This is not `green_background`: that keys the composite AFTER the camera blend, for chroma-keying
+## in post, whereas this decides what the AR viewports themselves clear to. BLEND overrides it back
+## to TRANSPARENT, since the blend has no camera image to show through an opaque fill.
+enum Background { TRANSPARENT, SCENE, SOLID }
+@export var background: Background = Background.TRANSPARENT
+## Fill for Background.SOLID.
+@export var background_color: Color = Color.BLACK
 ## Replace the real world behind the holograms with a chroma key, for compositing in post. It is
 ## ignored for RGB_ONLY, which has no holograms to key against.
 @export var green_background := false
@@ -189,6 +209,14 @@ func _finalize_vk() -> void:
 	active_changed.emit(false)
 	finished.emit(_path)
 
+## The background kind actually used. BLEND composites the AR viewport over the RGB camera, which
+## reads the viewport's alpha, so an opaque fill would hide the camera entirely; the blend wins.
+func _background_kind() -> XrealShared.CaptureBackground:
+	if blend_mode == BlendMode.BLEND and background != Background.TRANSPARENT:
+		return XrealShared.CaptureBackground.TRANSPARENT
+	return background as XrealShared.CaptureBackground
+
+
 ## Fold the Resolution Level preset into record_width, record_height and record_bitrate, so
 ## everything downstream keeps reading one set of values: both SubViewports, the ColorRect and the
 ## encoder config. CUSTOM leaves the exported values alone.
@@ -209,9 +237,9 @@ func _eyes() -> int:
 func _out_size() -> Vector2i:
 	return Vector2i(record_width, record_height / _eyes())
 
-## Head-POV AR viewport on a transparent background: holograms only, so it composites over the
-## camera for the blend and, with no camera, reads back as holograms on black. Stereo builds one
-## per eye at half of both dimensions, which the composite then lays out side by side.
+## Head-POV AR viewport, cleared per `background`: transparent by default, so it composites over the
+## camera for the blend. Stereo builds one per eye at half of both dimensions, which the composite
+## then lays out side by side.
 func _ensure_viewport() -> void:
 	if not _ar_vps.is_empty() and _built_stereo == stereo:
 		return
@@ -221,7 +249,6 @@ func _ensure_viewport() -> void:
 	for eye in _eyes():
 		var vp := SubViewport.new()
 		vp.size = eye_size
-		vp.transparent_bg = true
 		vp.render_target_update_mode = SubViewport.UPDATE_ALWAYS
 		vp.world_3d = get_tree().root.world_3d  # render the same 3D world the glasses show
 		add_child(vp)
@@ -229,6 +256,7 @@ func _ensure_viewport() -> void:
 		cam.current = true
 		cam.cull_mask = record_cull_mask
 		vp.add_child(cam)
+		XrealShared.apply_capture_background(vp, cam, _background_kind(), background_color)
 		_ar_vps.append(vp)
 		_ar_cams.append(cam)
 
