@@ -178,6 +178,24 @@ impl XrealSystem {
         crate::controller_probe::start().as_str().into()
     }
 
+    /// Read an Android system property as an int, or `fallback` where it is unset, unparseable, or
+    /// off Android.
+    ///
+    /// It is how a switch can be flipped on a worn device without re-exporting:
+    /// `adb shell setprop debug.myapp.thing 0`. The addon reads
+    /// `debug.xreal.render_scale` this way, and an app can put its own debug switches on the same
+    /// footing rather than reaching for `android.os.SystemProperties`, which is not public API.
+    ///
+    /// This goes through the NDK's `__system_property_get`, so no hidden-API restriction applies.
+    /// Properties are strings, and only an int is offered here because that is what a switch or a
+    /// swept value needs; `0`/`1` reads as a bool.
+    #[func]
+    fn get_android_prop(&self, key: GString, fallback: i32) -> i32 {
+        let mut name = key.to_string().into_bytes();
+        name.push(0); // __system_property_get takes a NUL-terminated key
+        session::android_prop_i32(&name).unwrap_or(fallback)
+    }
+
     /// One-frame read of the live controller's raw sensors (call each frame after
     /// `start_controller`). Returns a flat `PackedFloat32Array`, layout:
     /// `[ok, accel.xyz(1..4), gyro.xyz(4..7), mag.xyz(7..10), touch(10), touch_xy(11..13), buttons(13)]`.

@@ -74,6 +74,7 @@ static const StubConst _c_XrealHeadTracker[] = {
   {"KEY_STATE_DOWN",1},
   {"KEY_STATE_UP",2},
 };
+static const StubArg _a_XrealSystem_get_android_prop[] = {{4,"","key"},{2,"","fallback"},};
 static const StubArg _a_XrealSystem_switch_tracking_type[] = {{2,"","tracking_type"},};
 static const StubArg _a_XrealSystem_set_display_bypass_psensor[] = {{1,"","bypass"},};
 static const StubArg _a_XrealSystem_set_glasses_space_mode[] = {{2,"","mode"},};
@@ -119,6 +120,7 @@ static const StubMethod _m_XrealSystem[] = {
   {"get_last_native_error_code",2,"",0,0},
   {"get_last_native_error_message",4,"",0,0},
   {"start_controller",4,"",0,0},
+  {"get_android_prop",2,"",2,_a_XrealSystem_get_android_prop},
   {"poll_controller",32,"",0,0},
   {"switch_tracking_type",1,"",1,_a_XrealSystem_switch_tracking_type},
   {"set_display_bypass_psensor",2,"",1,_a_XrealSystem_set_display_bypass_psensor},
@@ -212,8 +214,8 @@ static const StubMembers stub_members[] = {
   {"XrealCameraFeed",_m_XrealCameraFeed,5,0,0,0,0},
   {"XrealHandTracker",0,0,0,0,0,0},
   {"XrealHeadTracker",_m_XrealHeadTracker,4,_s_XrealHeadTracker,10,_c_XrealHeadTracker,9},
-  {"XrealSystem",_m_XrealSystem,70,0,0,_c_XrealSystem,26},
+  {"XrealSystem",_m_XrealSystem,71,0,0,_c_XrealSystem,26},
   {"XrealXrInterface",_m_XrealXrInterface,1,0,0,0,0},
 };
 enum { STUB_MEMBERS_COUNT = sizeof(stub_members) / sizeof(stub_members[0]) };
-#define STUB_SN_POOL 557
+#define STUB_SN_POOL 565
