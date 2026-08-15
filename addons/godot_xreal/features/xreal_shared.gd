@@ -42,6 +42,29 @@ static func resolution_preset(level: int) -> Vector3i:
 		_:
 			return Vector3i(1280, 720, 8_000_000)
 
+## What a capture viewport clears to behind the holograms. Shared by the stream and recorder
+## components, which each expose it as their own `background` export; see either for the trade-offs.
+enum CaptureBackground { TRANSPARENT, SCENE, SOLID }
+
+## Point a capture viewport and its camera at one of the CaptureBackground kinds.
+##
+## TRANSPARENT keeps alpha, so a camera image can show through and the world's own background is
+## dropped. The other two clear opaquely: SCENE lets the world draw whatever it puts behind the
+## holograms, and SOLID overrides that with `color` through an Environment set on the capture camera
+## alone, leaving the wearer's view untouched. The camera Environment is cleared for the other two,
+## so a component can switch kinds without rebuilding its viewport.
+static func apply_capture_background(
+	viewport: SubViewport, camera: Camera3D, kind: CaptureBackground, color: Color
+) -> void:
+	viewport.transparent_bg = kind == CaptureBackground.TRANSPARENT
+	if kind != CaptureBackground.SOLID:
+		camera.environment = null
+		return
+	var env := Environment.new()
+	env.background_mode = Environment.BG_COLOR
+	env.background_color = color
+	camera.environment = env
+
 ## Audio sources mixed into a recording or stream, mirroring the SDK VideoCapture sample's Audio
 ## State. The SDK captures both natively and mixes them in its encoder: `MIC` needs a config flag
 ## plus RECORD_AUDIO, `APP` a config flag plus an Android MediaProjection (see

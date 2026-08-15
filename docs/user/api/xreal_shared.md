@@ -17,6 +17,14 @@ Some native resources are process-global singletons, so the feature scenes must 
 
 ## Methods
 
+<a id="method-apply_capture_background"></a>
+
+### static apply_capture_background(viewport: SubViewport, camera: Camera3D, kind: int, color: Color)
+
+Point a capture viewport and its camera at one of the CaptureBackground kinds.
+
+TRANSPARENT keeps alpha, so a camera image can show through and the world's own background is dropped. The other two clear opaquely: SCENE lets the world draw whatever it puts behind the holograms, and SOLID overrides that with `color` through an Environment set on the capture camera alone, leaving the wearer's view untouched. The camera Environment is cleared for the other two, so a component can switch kinds without rebuilding its viewport.
+
 <a id="method-apply_rgb_camera_geometry"></a>
 
 ### static apply_rgb_camera_geometry(system: Object, cam: Camera3D) -> Vector3
@@ -144,6 +152,16 @@ Whether the desktop preview window stands in for the glasses, which is any run o
 | <a id="constant-MIDDLE"></a>`MIDDLE` | `1` |  |
 | <a id="constant-HIGH"></a>`HIGH` | `2` |  |
 | <a id="constant-CUSTOM"></a>`CUSTOM` | `3` |  |
+
+<a id="enum-CaptureBackground"></a>
+
+### enum CaptureBackground
+
+| Constant | Value | Description |
+| --- | --- | --- |
+| <a id="constant-TRANSPARENT"></a>`TRANSPARENT` | `0` |  |
+| <a id="constant-SCENE"></a>`SCENE` | `1` |  |
+| <a id="constant-SOLID"></a>`SOLID` | `2` |  |
 
 <a id="enum-AudioState"></a>
 

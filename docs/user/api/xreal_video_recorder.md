@@ -25,6 +25,17 @@ The HW encoder is process-global and single-instance, shared with xreal_stream, 
 
 Which audio ends up in the file (SDK VideoCapture's Audio State). The SDK's encoder captures and mixes both sources natively: MIC needs RECORD_AUDIO granted, and APP needs an Android MediaProjection, which means a consent dialog (see XrealShared.request_app_audio_consent). Either one is dropped silently when its prerequisite is missing.
 
+<a id="property-background"></a>
+
+### background: XrealVideoRecorder.Background = 0
+
+
+<a id="property-background_color"></a>
+
+### background_color: Color = Color(0, 0, 0, 1)
+
+Fill for Background.SOLID.
+
 <a id="property-blend_mode"></a>
 
 ### blend_mode: XrealVideoRecorder.BlendMode = 0
@@ -127,3 +138,13 @@ Toggle recording. The resulting state comes back through active_changed, since a
 | <a id="constant-BLEND"></a>`BLEND` | `0` |  |
 | <a id="constant-RGB_ONLY"></a>`RGB_ONLY` | `1` |  |
 | <a id="constant-VIRTUAL_ONLY"></a>`VIRTUAL_ONLY` | `2` |  |
+
+<a id="enum-Background"></a>
+
+### enum Background
+
+| Constant | Value | Description |
+| --- | --- | --- |
+| <a id="constant-TRANSPARENT"></a>`TRANSPARENT` | `0` |  |
+| <a id="constant-SCENE"></a>`SCENE` | `1` |  |
+| <a id="constant-SOLID"></a>`SOLID` | `2` |  |
