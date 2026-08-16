@@ -51,7 +51,7 @@ SDK 内部の session を保持していない）。`EnableTearedFrameCount` と
 - `bool GetHandJointsPose(int32 handType, HandJointsPose* out)` — `0x47ff4` → `InputManager::GetHandJointsPose`
 
 `HandType`: Left=0 / Right=1。`HandJointsPose` = `int32 isTracked` + `Pose[26]`（各 `Pose` = position xyz +
-rotation xyzw の 7 float、C# 既定マーシャリングで確定）。pose は SDK が既に **Unity 空間**へ変換済なので、
+rotation xyzw の 7 float、C# デフォルトマーシャリングで確定）。pose は SDK が既に **Unity 空間**へ変換済なので、
 Godot へは pos `(x, y, -z)` / quat `(-x, -y, z, w)` で変換。配列は **Unity `XRHandJointID` 順**
 （`[0]=Wrist, [1]=Palm, [2..25]=fingers`）で、Godot は `PALM=0, WRIST=1`（指の順は同一）なので**先頭2つだけ swap**。
 
@@ -70,7 +70,7 @@ Godot へは pos `(x, y, -z)` / quat `(-x, -y, z, w)` で変換。配列は **Un
 `0x802dc`–`0x80308`）。SDK は perception 設定時に `NRConfigSetHandTrackingEnabled(session, config, true)`
 （`0x9719c`、session/config は `NativePerception` 内部保持）で有効化するが、我々はその経路を駆動していない。
 export された有効化ラッパーは**無い**（`SetDominantHand` はあるが別物）。よって Air 2 Ultra bring-up の**最初のタスク**は:
-(a) Air 2 Ultra の通常 session init で既定有効かを確認（`update()` の戻り値をログ）、無効なら
+(a) Air 2 Ultra の通常 session init でデフォルト有効になっているかを確認（`update()` の戻り値をログ）、無効なら
 (b) `NativePerception` シングルトンから session/config を回収して `NRConfigSetHandTrackingEnabled` を呼ぶ、
 または `InputManager+0x290` を立てる。現コードは毎フレーム `UpdateHandPose()` を試み、`false` の間は手を報告しない
 （有効化されれば自動で流れ始める防御的設計）。
@@ -191,7 +191,7 @@ NR joint type は OpenXR/Godot の `XRHandTracker::HandJoint` 値と一致する
 
 根拠は `InputManager::GetHandJointsPose`。Unity array は Wrist-first なので key 1 を array[0] (`0x803b0`–`0x80444`)、key 0 を array[1] (`0x80448`–`0x804b0`)、その後 key 2..25 を array[2..25] (`0x804b4`–`0x80540`) に書く。Godot/OpenXR は Palm=0, Wrist=1 のため flat API の type を直接使え、Unity 用 swap は不要である。
 
-Godot 4.3+ の integration target は左右各 1 個の `XRHandTracker`。hand type から handedness を設定し、各 type 0..25 に `set_hand_joint_transform` と tracking flags を設定する。Palm/Wrist のどちらを tracker root として別途公開するかは Godot の tracker API に従い、Unity wrapper の「Wrist を root」という都合を引き継がない。radius は NR API に無いため未設定または保守的な既定値とする。
+Godot 4.3+ の integration target は左右各 1 個の `XRHandTracker`。hand type から handedness を設定し、各 type 0..25 に `set_hand_joint_transform` と tracking flags を設定する。Palm/Wrist のどちらを tracker root として別途公開するかは Godot の tracker API に従い、Unity wrapper の「Wrist を root」という都合を引き継がない。radius は NR API に無いため未設定または保守的なデフォルト値とする。
 
 ## Enable、session、tracking mode
 

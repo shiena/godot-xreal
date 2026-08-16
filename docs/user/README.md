@@ -9,9 +9,9 @@ Poses come from `XRCamera3D` and `XRController3D`, hand joints from `XRHandTrack
 InputMap actions. The addon supplies the XREAL runtime behind those nodes.
 
 Set the renderer to Compatibility before anything else. The glasses path hands its eye textures to
-the XREAL compositor as GL texture names, which only that renderer's context supplies, and under
-Forward+ or Mobile the glasses stay black while tracking and the phone display carry on as if all
-were well.
+the XREAL compositor as GL texture names, which only that renderer's context supplies, Under
+Forward+ or Mobile the glasses stay black, while tracking and the phone display keep working, which
+makes the cause hard to identify.
 
 The application owns the hierarchy. Add
 `addons/godot_xreal/features/xreal_xr_runtime.tscn` under your `XROrigin3D` and it attaches to what
@@ -22,7 +22,7 @@ XROrigin3D                     # yours
 ├── XRCamera3D
 ├── LeftController  (XRController3D, tracker = left_hand)
 ├── RightController (XRController3D, tracker = right_hand)
-└── XrealXRRuntime             # the XREAL bootstrap, attached to the above
+└── XrealXRRuntime             # the XREAL bootstrap, attached to this hierarchy
 ```
 
 Each controller tracker publishes the `aim`, `grip`, and `default` poses, the set an OpenXR runtime
@@ -84,7 +84,7 @@ is `false` until the native session is up, which is what `session_available` rep
 there means "not known yet" rather than "not supported".
 
 The feature scenes already gate themselves on the capability each needs, so this is for application
-code that wants the whole picture at once, such as building a menu.
+code that needs the whole picture at once, such as building a menu.
 
 ## Hands
 
@@ -115,7 +115,7 @@ The `XRInputRouter` node inside `xreal_xr_runtime.tscn` exports `hand_aim` to tu
 $XrealXRRuntime.set_hand_aim(false)   # every controller falls back to the phone
 ```
 
-An app whose UI moves off the glasses wants that. Hands busy holding a phone keep pointing a ray at
+An app whose UI moves off the glasses needs that. Hands busy holding a phone keep pointing a ray at
 the scene behind it and pinching by accident, which the phone's own touches then compete with.
 
 ### Wiring up hand models
@@ -145,7 +145,7 @@ XROrigin3D                     # yours
 ```
 
 Those demo hands carry no `Palm` bone, so Godot logs `Couldn't obtain bone for LeftPalm` once per
-hand at start-up. The modifier skips the bones it cannot find, and the other 25 drive the hand.
+hand at start-up. The modifier skips the bones it cannot find, and the other 25 joints drive the hand.
 
 godot-xr-tools' hand models do not work here. Their 26 bones correspond one for one, which makes
 renaming look sufficient, but their bind pose sits at a fixed rotation from the convention the

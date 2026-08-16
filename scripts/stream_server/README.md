@@ -4,7 +4,7 @@ Receives the Godot app's first-person-view stream: H.264 video *and* AAC audio o
 ported `libmedia_codec` HW encoder (codecType 2 = RTP).
 
 Everything here is open source: python 3 (stdlib only) plus ffmpeg. No vendor SDK, no
-StreamingReceiver.exe. This is dev and verification tooling, and two twins do the same thing:
+StreamingReceiver.exe. This is dev and verification tooling. Two equivalent scripts do the same thing:
 `receive.ps1` (Windows / PowerShell) and `receive.sh` (mac / Linux).
 
 ## Requirements
@@ -15,7 +15,7 @@ StreamingReceiver.exe. This is dev and verification tooling, and two twins do th
 
 | | |
 |---|---|
-| `fpv_server.py` | **Watch it in a browser.** RTP in, FLV over WebSocket out; the browser decodes. No codec library is linked, so no codec copyright or patent licence attaches to the server. |
+| `fpv_server.py` | **Watch it in a browser.** RTP in, FLV over WebSocket out; the browser decodes. No codec library is linked, so no codec copyright or patent license attaches to the server. |
 | `receive.ps1` / `receive.sh` | **Watch or record locally** with ffplay/ffmpeg. |
 
 ### Browser: `fpv_server.py`
@@ -24,7 +24,7 @@ StreamingReceiver.exe. This is dev and verification tooling, and two twins do th
 python scripts/stream_server/fpv_server.py     # then open http://localhost:8080
 ```
 
-Pairing runs in-process, so this is the only thing to start. Open the page, hit **Stream** in the
+Pairing runs in-process, so this is the only thing to start. Open the page, click **Stream** in the
 app, and the video appears. Viewers may join and leave at any time, each one served from the next
 keyframe with its own timeline rebased to zero.
 
@@ -51,10 +51,10 @@ match the encoder's `audioSampleRate`, default 16000 mono), `--ip` to force the 
    pwsh scripts/stream_server/receive.ps1 -Record  # Windows
    scripts/stream_server/receive.sh --record       # mac / Linux
    ```
-2. Hit **Stream** in the app (Camera tab). That is all: you never type an address into the app.
+2. Click **Stream** in the app (Camera tab). That is all: you never type an address into the app.
 
-The ordering is not cosmetic. The app finds this PC itself, and ffmpeg fed an SDP starts probing
-immediately and gives up long before a hand-driven app gets around to sending. So `pair_server.py`
+The ordering is not cosmetic. The app finds this PC itself, ffmpeg fed an SDP starts probing
+immediately and gives up long before a person can start the stream from the app. So `pair_server.py`
 holds the handshake and launches ffplay/ffmpeg (`--then`) at the moment the app actually starts
 sending.
 
@@ -71,16 +71,16 @@ That stops either receiver, `fpv_server.py` included, since both share the same 
 before starting another: two servers can bind the same port and then split the app's discovery
 reply between them, which looks like the app timing out for no reason.
 
-It **asks** the server to stop rather than killing it, and that distinction is the whole reason it
-exists. The server owns the ffmpeg it launched, so it can hand it a Ctrl+Break and wait, and ffmpeg
-then finalises the file (`Exiting normally, received signal 2`). Nothing outside that process can do
+It **asks** the server to stop rather than terminating it, and that distinction is the whole reason
+it exists. The server owns the ffmpeg it launched, so it can hand it a Ctrl+Break and wait, and ffmpeg
+then finalizes the file (`Exiting normally, received signal 2`). Nothing outside that process can do
 the same on Windows, which has no way to deliver a console interrupt to another process's group; a
 receiver torn down with `Stop-Process` mid-record leaves an unplayable file. Measured: 0 bytes when
-killed, a complete 12.09 s recording when stopped this way.
+terminated, a complete 12.09 s recording when stopped this way.
 
 The server listens for that request on **loopback only** (`127.0.0.1:6004`, `--control-port` to
 change). Keeping it off the LAN is deliberate: whoever stops a receiver is sitting at the machine
-running it, and an unauthenticated stop endpoint open to the network would be a gift. By hand:
+running it, and an unauthenticated stop endpoint open to the network would be a security risk. By hand:
 
 ```
 curl -X POST http://127.0.0.1:6004/shutdown      # stop
@@ -136,9 +136,9 @@ AAC-LC / 16 kHz / mono / 1024-sample frames, which is what ffmpeg reports back.
   (`adb shell dumpsys audio` shows this under `RecordActivityMonitor`), and that gate floors ambient
   noise to exact zeros, every sample identical, ffmpeg reporting mean == max == -91 dB. Measured:
   dead silence with the room quiet, then -40.9 dB mean / -25.3 dB peak the moment a tone played
-  nearby. Make a noise before concluding the audio path is broken.
+  nearby. Make a noise before concluding the audio path is not working.
 - Keep every `print()` in `pair_server.py` ASCII. On a Japanese Windows console (cp932) a stray
-  em dash raises `UnicodeEncodeError`, which kills the control thread mid-session: discovery keeps
+  em dash raises `UnicodeEncodeError`, which stops the control thread mid-session: discovery keeps
   answering while the app times out on the handshake, a thoroughly misleading symptom.
 - For a first bring-up you can skip the network entirely: stream **codecType 0 (local mp4)** in the
   app, which records on-device, pull the file with `adb pull`, and play it. That validates the
