@@ -25,6 +25,10 @@ XROrigin3D                     # yours
 └── XrealXRRuntime             # the XREAL bootstrap, attached to the above
 ```
 
+Each controller tracker publishes the `aim`, `grip`, and `default` poses, the set an OpenXR runtime
+publishes, and `default` carries the aim pose. A plain `XRController3D` is therefore aimed without
+setting its `pose` property.
+
 Hanging your own nodes off the controllers in `xr_origin.tscn` needs **Editable Children** on that
 instance, since they belong to an instanced scene. Without it the node is dropped on load and
 nothing reports why. Other Godot XR addons attach to these nodes normally; a stock godot-xr-tools
@@ -59,6 +63,28 @@ Add the other scenes under `addons/godot_xreal/features/` for camera, planes, an
 tracking, depth mesh, hands, capture, recording, and streaming. They remain self-contained and may
 be configured from the Inspector without writing initialization code, and they stay inert off
 device so scenes remain runnable in the editor.
+
+### Device capabilities
+
+XREAL devices differ in what they carry: the One series has an RGB camera, the Air 2 Ultra has hand
+tracking and AR perception. `XrealSystem.get_capabilities()` reports the lot as one `Dictionary` of
+`bool`, keyed by `session_available`, `head_tracking_rotation`, `head_tracking_position`,
+`rgb_camera`, `hand_tracking`, `plane_detection`, `spatial_anchors`, `image_tracking`, `depth_mesh`
+and `render_texture_encoder`:
+
+```gdscript
+var caps: Dictionary = $XrealXRRuntime.get_xreal_system().get_capabilities()
+if caps.get("hand_tracking", false):
+	...
+```
+
+Read entries with `get()` and a default, so a key added after the build you ship against reads
+`false` rather than raising. Take the snapshot where you use it rather than at startup: every entry
+is `false` until the native session is up, which is what `session_available` reports, so `false`
+there means "not known yet" rather than "not supported".
+
+The feature scenes already gate themselves on the capability each needs, so this is for application
+code that wants the whole picture at once, such as building a menu.
 
 ## Hands
 

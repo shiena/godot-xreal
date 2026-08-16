@@ -52,6 +52,18 @@ A `COMPONENT_*` camera's intrinsics as `[fx, fy, cx, cy]` in pixels (empty when 
 
 A `COMPONENT_*` camera's 4x4 projection matrix (16 floats, Unity column-major) for `[near, far]`. Empty when unavailable.
 
+<a id="method-get_capabilities"></a>
+
+### get_capabilities() -> Dictionary
+
+What this pair of glasses can do, as one `Dictionary` of `bool`, keyed by `session_available`, `head_tracking_rotation`, `head_tracking_position`, `rgb_camera`, `hand_tracking`, `plane_detection`, `spatial_anchors`, `image_tracking`, `depth_mesh` and `render_texture_encoder`.
+
+The per-feature getters remain, and a component gating one subsystem should keep calling its own. This is for the code that needs the whole picture at once, such as building a menu or logging what a device turned out to support, where the alternative is a line per subsystem.
+
+Read entries with `caps.get("depth_mesh", false)` rather than `caps["depth_mesh"]`: a key added after the build an application ships against then reads `false` instead of raising.
+
+Take the snapshot at the point of use, not at startup. Every entry is `false` until the native session is up, which is what `session_available` reports, so `false` there means "not known yet" rather than "not supported". `head_tracking_*` and `rgb_camera` come from the SDK's own per-device gate; the AR-perception entries follow the heuristic documented on `is_ar_perception_available()`; `render_texture_encoder` depends on the renderer rather than the device.
+
 <a id="method-get_device_pose_from_head"></a>
 
 ### get_device_pose_from_head(component: int) -> PackedFloat32Array

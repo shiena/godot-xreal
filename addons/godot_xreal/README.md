@@ -57,6 +57,10 @@ InputMap actions. The
 raw NRController button bitfield is not mapped because its current-device layout is not yet
 verified. The old `xreal_rig.tscn` remains for existing projects.
 
+Each controller tracker publishes the `aim`, `grip`, and `default` poses, matching what an OpenXR
+runtime publishes, with `default` carrying the aim pose. A plain `XRController3D` is aimed without
+setting its `pose` property.
+
 A tracked hand aims and clicks the same controller, the way an OpenXR runtime synthesises controller
 poses and buttons from hands when none is held (Air 2 Ultra). While a hand is tracked it owns that
 side's `aim` and `grip` poses, and a thumb-to-index pinch raises `trigger_click`; the phone keeps

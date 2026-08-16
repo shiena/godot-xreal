@@ -127,6 +127,7 @@ static const StubMethod _m_XrealSystem[] = {
   {"set_glasses_space_mode",2,"",1,_a_XrealSystem_set_glasses_space_mode},
   {"is_hmd_feature_supported",1,"",1,_a_XrealSystem_is_hmd_feature_supported},
   {"is_camera_supported",1,"",0,0},
+  {"get_capabilities",27,"",0,0},
   {"get_device_resolution",24,"Vector2i",1,_a_XrealSystem_get_device_resolution},
   {"get_camera_intrinsics",32,"",1,_a_XrealSystem_get_camera_intrinsics},
   {"get_device_pose_from_head",32,"",1,_a_XrealSystem_get_device_pose_from_head},
@@ -214,8 +215,8 @@ static const StubMembers stub_members[] = {
   {"XrealCameraFeed",_m_XrealCameraFeed,5,0,0,0,0},
   {"XrealHandTracker",0,0,0,0,0,0},
   {"XrealHeadTracker",_m_XrealHeadTracker,4,_s_XrealHeadTracker,10,_c_XrealHeadTracker,9},
-  {"XrealSystem",_m_XrealSystem,71,0,0,_c_XrealSystem,26},
+  {"XrealSystem",_m_XrealSystem,72,0,0,_c_XrealSystem,26},
   {"XrealXrInterface",_m_XrealXrInterface,1,0,0,0,0},
 };
 enum { STUB_MEMBERS_COUNT = sizeof(stub_members) / sizeof(stub_members[0]) };
-#define STUB_SN_POOL 565
+#define STUB_SN_POOL 569
