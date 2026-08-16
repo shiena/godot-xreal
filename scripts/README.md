@@ -8,17 +8,17 @@ cargo ndk build  ->  Godot APK export  ->  adb install  ->  launch on the glasse
 ```
 
 `build.ps1` (Windows / PowerShell) and `build.sh` (Git Bash) wrap all four stages and the two
-workarounds that bite every time: the Godot export hang, and the force-stop-before-launch
-requirement (relaunching a not-fully-dead instance leaves the glasses black).
+workarounds this always needs: the Godot export hang, and the force-stop-before-launch requirement.
+Relaunching an instance that has not fully stopped leaves the glasses black.
 
 `vendor_xreal_libs.ps1` / `vendor_xreal_libs.sh` is the one-time prerequisite. It stages every
-XREAL runtime piece (4 `.so` → `addons/godot_xreal/jniLibs/arm64-v8a/`, 7 `.aar` → `addons/godot_xreal/android/`,
+XREAL runtime piece (four `.so` → `addons/godot_xreal/jniLibs/arm64-v8a/`, seven `.aar` → `addons/godot_xreal/android/`,
 with the aars also carrying the NR native libs into the APK) out of a local copy of the SDK
 package, either the extracted `package/` dir or the `com.xreal.xr.tar.gz` archive itself, which it
 extracts to a temp dir. The build scripts wrap it as `-Extract` / `--extract`. The export's gradle
 build compiles the XrealBridge Java sources, so they need no vendoring step.
 
-> No terminal? The addon ships an in-editor equivalent. The **`XREAL Import`** dock
+> No terminal? The addon ships an in-editor equivalent. The **XREAL Import** dock
 > (`addons/godot_xreal/editor/vendor_import_dock.gd`) runs the same vendoring from a file dialog:
 > pick `com.xreal.xr(.tgz|.tar.gz)` (or an extracted `package/` folder) and it extracts with the
 > system `tar` and copies the same `.so`, `.aar`, and tool into place. The developer docs
@@ -33,7 +33,7 @@ host with just clang and lld; rerun it only when the dummy sources or the `entry
 `gen_stub_classes.ps1` / `gen_stub_classes.sh` regenerates the placeholder class list,
 `dummy/stub_classes.inc`, from the `#[class(base = ...)]` declarations in `src/`. The matching
 `build_dummy_libs` script runs it automatically, and `-Check` / `--check` verifies the committed
-file. Keep the two scripts' output byte-identical when editing either.
+file. Keep the two scripts' output byte-identical when editing either one.
 
 The two documentation generators take the doc comments as their single source of truth, and both
 support `-Check` / `--check` to verify that the committed output is in sync:
@@ -51,11 +51,11 @@ support `-Check` / `--check` to verify that the committed output is in sync:
 ## Prerequisites (assumed installed and on PATH)
 
 - **Rust + cargo-ndk**: `cargo install cargo-ndk`; `ANDROID_NDK_HOME` set (NDK r27).
-- **adb**: use scrcpy's adb (v37). Mixing adb versions kills the server and drops the Wi-Fi link.
+- **adb**: use scrcpy's adb (v37). Mixing adb versions shuts down the server and drops the Wi-Fi link.
 - **Godot 4.7-stable** (console binary): it must match the templates, and 4.8.dev fails with a
   version mismatch. The scripts call `godot` by default; override with `-Godot` / `$env:GODOT` (PS)
   or `GODOT=…` (sh) if it isn't on PATH under that name.
-- **XREAL runtime pieces vendored**: the 4 `.so` in `addons/godot_xreal/jniLibs/arm64-v8a/` plus the 7 `.aar`
+- **XREAL runtime pieces vendored**: the four `.so` in `addons/godot_xreal/jniLibs/arm64-v8a/` plus the seven `.aar`
   in `addons/godot_xreal/android/`, none of which are in the repo.
   `vendor_xreal_libs.ps1 -XrealPackage <…>/package` (or `-XrealPackage <…>/com.xreal.xr.tar.gz`,
   or the build scripts' `-Extract` / `--extract <tar.gz>`) stages all of them from a local copy of
@@ -108,5 +108,5 @@ Env overrides: `GODOT`, `ADB`, `XREAL_DEVICE`, `APK_OUT`, `EXPORT_PRESET`.
 
 - The APK exports to `../godot-build/godot-xreal.apk` (matches the export preset).
 - The export runs headless and is **polled to completion** (fresh mtime + stable size + a valid ZIP
-  EOCD) before the Godot process is killed, because killing mid-write corrupts the APK.
+  EOCD) before the Godot process is stopped, because stopping it mid-write corrupts the APK.
 - The recommended runtime config is **6DoF**: `-All -TrackingType 0`. Stereo is always Multipass.

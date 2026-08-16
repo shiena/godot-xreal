@@ -36,7 +36,7 @@ Quest 流の `LeftHand` / `LeftAim` のような命名や、aim と grip を別�
 controller tracker が publish する pose は `aim`、`grip`、`default` の 3 つである。
 `default` は `aim` と同じ姿勢を運ぶ。
 Godot の OpenXR が全 interaction profile で `default_pose` を `.../input/aim/pose` に bind し、tracker 上では `default` へ改名するためである（`openxr_interface.cpp`）。
-`XRNode3D.pose` の既定値が `default` なので、これが無いとアプリが素の `XRController3D` を置いたときだけ pose が来ない。
+`XRNode3D.pose` のデフォルト値が `default` なので、これが無いとアプリが素の `XRController3D` を置いたときだけ pose が来ない。
 同梱の `xr_origin.tscn` は `pose = &"aim"` を明示しているため、どちらでも動く。
 見つけた `XRCamera3D` は `xreal_shared_xr_camera` group へ登録するので、feature 群はアプリが名前を知らせなくても head を引ける。
 ゼロから始める場合は `addons/godot_xreal/xr_origin.tscn` を配置する。
@@ -51,7 +51,7 @@ OpenXR 機向けのビルドでは、そちら側のプロジェクト設定と�
 
 標準ノードを使うため、他の Godot XR アドオンはそのまま取り付く。
 2026-08-08 に godot-xr-tools 4.5.1 の `function_pointer.tscn` を無改造で実機検証した。
-`XRHelpers` が tracker 名 `right_hand` から我々の `XRController3D` を見つけ、既定の `active_button_action = "trigger_click"` も公開名と一致し、両眼に視差付きでレーザーが描画された。
+`XRHelpers` が tracker 名 `right_hand` から我々の `XRController3D` を見つけ、デフォルトの `active_button_action = "trigger_click"` も公開名と一致し、両眼に視差付きでレーザーが描画された。
 
 2 点の罠がある。
 

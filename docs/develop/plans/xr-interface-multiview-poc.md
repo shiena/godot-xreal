@@ -23,7 +23,7 @@ one offscreen SubViewport (use_xr=true, shared World3D)
 ## 有効化
 
 Project Settingsの`xreal/xr_multiview_poc`を有効にして、Mobile rendererを使う。addonとしての
-既定値は`false`である。Mobile rendererは`Android Vulkan`プリセットの`--rendering-method mobile`が
+デフォルト値は`false`である。Mobile rendererは`Android Vulkan`プリセットの`--rendering-method mobile`が
 選択する。
 実機比較用にAndroid property `debug.xreal.xr_multiview=0/1`がProject Settingを上書きする。
 
@@ -127,7 +127,7 @@ Multiviewが5.9%高速だった。よって、Multiviewの効果は**content特�
 - 3DGSやhigh-poly meshのようにGPUが重い: Beam ProではMultipassが有利。
 
 「重い3DGS contentを動かす」という当初目的に対する現在の採用判定は**No-Go**のままで、
-Multipassを既定に維持するのが良い。MultiviewはCPU draw-bound content用のopt-in候補としてのみ価値がある。
+Multipassをデフォルトに維持するのが良い。MultiviewはCPU draw-bound content用のopt-in候補としてのみ価値がある。
 
 ## 意図的な制限
 
@@ -170,7 +170,7 @@ scene一式（`demo/multiview_benchmark.*`、`demo/multiview_verify*`、`demo/mu
 - scale path: 有効化直後はgodot-bilinear、bridge init後に
   `multiview scale path upgraded to bridge-linear (1476x851)`、eye-src probeは
   `1476x851 layers=0/1 same_image=true srgb=false`。
-- Project FPS 57-60（`vk_sync`既定=wait-idle、軽いscene）。
+- Project FPS 57-60（`vk_sync`デフォルト=wait-idle、軽いscene）。
 
 3DGSは`demo/multiview_verify_3dgs.tscn`で確認した（2026-08-05、godot_gsplat +
 `samples/3dgs/scene_v3.gsplatpack` 100k budget。いずれもlocal-only assetで、無ければmarkerのみ描画）。

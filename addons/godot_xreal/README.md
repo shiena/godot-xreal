@@ -12,7 +12,7 @@ See the repository root for build and RE details.
 2. Provide the GDExtension binary and the vendored XREAL `.so` files (see the repo's
    developer docs, indexed at `docs/develop/README.md`). For local dev the repo ships a `godot_xreal.gdextension`
    at the project root pointing at `res://target/...`.
-3. Enable **Godot XREAL** in *Project > Project Settings > Plugins*. This step is optional: the
+3. Enable **Godot XREAL** in **Project > Project Settings > Plugins**. This step is optional: the
    runtime classes load with the GDExtension either way, and the plugin adds the editor docks and
    the Android export hooks.
 
@@ -41,7 +41,7 @@ feature components look the head up in.
 Instancing `xr_origin.tscn` makes its controllers part of an instanced scene, so hanging your own
 nodes off them needs **Editable Children** on that instance, from its context menu in the scene
 tree. Without it the editor accepts the node and then drops it on load, with no error anywhere: the
-first sign is something that simply is not there at runtime. Building the hierarchy yourself avoids
+first sign is a node that is not there at runtime. Building the hierarchy yourself avoids
 the question entirely.
 
 Other Godot XR addons work against these nodes, since they are the standard ones. A stock
@@ -50,18 +50,18 @@ godot-xr-tools `function_pointer` was checked on device: it found the controller
 disabled though, because enabling it writes `xr/openxr/enabled=true` into your project, which is the
 one setting the glasses path needs left alone. Its scenes and scripts work without the plugin.
 
-Controller pose and raw XR input come from the standard nodes. The runtime polls and fuses the native phone IMU, publishes its touchpad, maps glasses keys, and accepts app-owned phone
-UI controls through `set_controller_button/axis/hand`. `xr_input_router.gd` maps `trigger_click` or
+Controller pose and raw XR input come from the standard nodes. The runtime polls and fuses the
+native phone IMU, publishes its touchpad, maps glasses keys, and accepts app-owned phone UI controls
+through `set_controller_button/axis/hand`. `xr_input_router.gd` maps `trigger_click` or
 `primary_click`, `grip_click`, and `menu_button` to the `xr_select`, `xr_grab`, and `xr_menu`
-InputMap actions. The
-raw NRController button bitfield is not mapped because its current-device layout is not yet
-verified. The old `xreal_rig.tscn` remains for existing projects.
+InputMap actions. The raw NRController button bitfield is not mapped, because its current-device
+layout is not yet verified. The old `xreal_rig.tscn` remains for existing projects.
 
 Each controller tracker publishes the `aim`, `grip`, and `default` poses, matching what an OpenXR
 runtime publishes, with `default` carrying the aim pose. A plain `XRController3D` is aimed without
 setting its `pose` property.
 
-A tracked hand aims and clicks the same controller, the way an OpenXR runtime synthesises controller
+A tracked hand aims and clicks the same controller, the way an OpenXR runtime synthesizes controller
 poses and buttons from hands when none is held (Air 2 Ultra). While a hand is tracked it owns that
 side's `aim` and `grip` poses, and a thumb-to-index pinch raises `trigger_click`; the phone keeps
 whichever hand the cameras cannot see, so putting a hand down hands the ray back. The ray runs from
@@ -76,14 +76,15 @@ The current app `Camera3D` remains the source for its transform, near/far clippi
 environment, camera attributes and offsets. Runtime changes are mirrored to both eye cameras;
 XREAL's calibrated asymmetric projection and eye separation remain SDK-controlled.
 
-Then add only the feature sub-scenes you need (below). The repo's `demo/` scene wires every feature
+Then add only the feature sub-scenes you need, listed in
+[Feature sub-scenes](#feature-sub-scenes-featurestscn). The repo's `demo/` scene wires every feature
 to a phone touch-controller UI as a complete example.
 
 ## Feature sub-scenes (`features/*.tscn`)
 
 Each feature is a self-contained scene: instance it from the editor or from code, call
 `set_enabled(true)` (or tick `enabled` in the inspector), and delete what you don't use. They find
-their shared plumbing themselves, with no wiring:
+their shared internals themselves, with no wiring:
 
 - A single shared `XrealAR` poller and `XrealHandTracker` are find-or-created under the tree
   root on first use (groups `xreal_shared_ar` and `xreal_shared_hand_tracker`).
@@ -143,13 +144,13 @@ Start with the renderer. `renderer/rendering_method` has to be `gl_compatibility
 override as well: the glasses path hands its eye-viewport textures to the XREAL compositor as GL
 texture names, and only that renderer gives Godot the context those names live in. Nothing errors
 out under Forward+ or Mobile. The session starts, head tracking runs, the phone display draws, and
-the glasses simply stay black, which makes it an expensive setting to get wrong. Vulkan reaches the
+the glasses stay black, which makes it an expensive setting to get wrong. Vulkan reaches the
 glasses only through the opt-in vk_bridge, behind the Android property
 `debug.xreal.vulkan_glasses=1`.
 
 This addon targets XREAL glasses only.
 
-With the plugin enabled, `xreal/tracking_type` appears in *Project > Project Settings*
+With the plugin enabled, `xreal/tracking_type` appears in **Project > Project Settings**
 (SDK default / 6DoF / 3DoF / 0DoF, applied at boot). It is read at runtime with the same
 default, so a project without it saved behaves identically.
 
@@ -163,20 +164,21 @@ the controller.
 
 `xreal/xr_multiview_poc` (default off) is experimental: on the Mobile (Vulkan) renderer it renders
 both eyes in one scene pass through Godot's XR multiview instead of two viewports. Enabling it
-requires two XR settings. Set `xr/shaders/enabled=true` in *Project Settings* (an advanced
+requires two XR settings. Set `xr/shaders/enabled=true` in **Project Settings** (an advanced
 setting), and set **XR Mode** to `OpenXR` in the Android export preset; without them the exporter
 strips the XR shaders and 3D stops rendering. Leave `xr/openxr/enabled` at its `false` default for
 this path: the preset flag only preserves the shaders, and the OpenXR runtime itself stays off.
-The Compatibility renderer ignores the setting, logs a warning and keeps
-the regular two-viewport Multipass path, which is fully supported there. The Android property `debug.xreal.xr_multiview` (0/1) overrides the setting for
-same-APK A/B comparison. Dynamic render scale does not apply to this path; `xreal/render_scale` is
+The Compatibility renderer ignores the setting, logs a warning, and keeps the regular two-viewport
+Multipass path, which is fully supported there. The Android property `debug.xreal.xr_multiview`
+(0/1) overrides the setting for same-APK A/B comparison. Dynamic render scale does not apply to this path; `xreal/render_scale` is
 sampled once at startup.
 
 ### Editor tooling
 
-The plugin adds two editor docks: **XREAL Vendor** (imports SDK `.aar`/`.so` packages) and
-**XREAL Image DB** (builds image-tracking reference databases). Their default paths point at the
-repo's `demo/image_tracking/`; adjust them in the docks for your own project layout.
+The plugin adds three editor docks: **XREAL Import** (imports SDK `.aar`/`.so` packages),
+**XREAL Image DB** (builds image-tracking reference databases), and **XREAL Mesh Snapshot**
+(converts a saved depth-mesh scan to an `ArrayMesh` or a `.glb`). The image-tracking default paths
+point at the repo's `demo/image_tracking/`; adjust them in the dock for your own project layout.
 
 ## Platform
 
@@ -194,8 +196,8 @@ shows a 3D mirror.
 
 A PC run has no eye viewports, and `xreal_xr_runtime.tscn` marks its `XRCamera3D` current, so the
 root viewport would draw the world behind a full-screen phone UI that hides it. The same setting
-therefore applies on desktop as well, but only once the preview window below is in the scene, since
-the 3D then has somewhere else to go. Without a preview the root viewport is the only view the app
+therefore applies on desktop as well, but only once the preview window described in this section is
+in the scene, since the 3D then has somewhere else to go. Without a preview the root viewport is the only view the app
 has, so it keeps drawing. Only the drawing is switched off either way, never `current`.
 
 Add `addons/godot_xreal/xreal_desktop_preview.tscn` to your scene to get it back. It opens a second
