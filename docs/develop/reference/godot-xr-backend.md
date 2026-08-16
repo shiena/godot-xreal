@@ -32,6 +32,12 @@ XROrigin3D                 # アプリが所有。OpenXR ビルドでは bootstr
 
 controller は node 名ではなく `tracker` で照合する。
 Quest 流の `LeftHand` / `LeftAim` のような命名や、aim と grip を別ノードに分ける構成でもそのまま繋がる。
+
+controller tracker が publish する pose は `aim`、`grip`、`default` の 3 つである。
+`default` は `aim` と同じ姿勢を運ぶ。
+Godot の OpenXR が全 interaction profile で `default_pose` を `.../input/aim/pose` に bind し、tracker 上では `default` へ改名するためである（`openxr_interface.cpp`）。
+`XRNode3D.pose` の既定値が `default` なので、これが無いとアプリが素の `XRController3D` を置いたときだけ pose が来ない。
+同梱の `xr_origin.tscn` は `pose = &"aim"` を明示しているため、どちらでも動く。
 見つけた `XRCamera3D` は `xreal_shared_xr_camera` group へ登録するので、feature 群はアプリが名前を知らせなくても head を引ける。
 ゼロから始める場合は `addons/godot_xreal/xr_origin.tscn` を配置する。
 標準階層に bootstrap を入れたものである。

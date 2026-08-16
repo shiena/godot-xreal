@@ -308,6 +308,52 @@ impl XrealSystem {
             && !self.is_camera_supported()
     }
 
+    /// What this pair of glasses can do, as one `Dictionary` of `bool`, keyed by
+    /// `session_available`, `head_tracking_rotation`, `head_tracking_position`, `rgb_camera`,
+    /// `hand_tracking`, `plane_detection`, `spatial_anchors`, `image_tracking`, `depth_mesh` and
+    /// `render_texture_encoder`.
+    ///
+    /// The per-feature getters remain, and a component gating one subsystem should keep calling its
+    /// own. This is for the code that needs the whole picture at once, such as building a menu or
+    /// logging what a device turned out to support, where the alternative is a line per subsystem.
+    ///
+    /// Read entries with `caps.get("depth_mesh", false)` rather than `caps["depth_mesh"]`: a key
+    /// added after the build an application ships against then reads `false` instead of raising.
+    ///
+    /// Take the snapshot at the point of use, not at startup. Every entry is `false` until the
+    /// native session is up, which is what `session_available` reports, so `false` there means "not
+    /// known yet" rather than "not supported". `head_tracking_*` and `rgb_camera` come from the
+    /// SDK's own per-device gate; the AR-perception entries follow the heuristic documented on
+    /// [`Self::is_ar_perception_available`]; `render_texture_encoder` depends on the renderer
+    /// rather than the device.
+    #[func]
+    fn get_capabilities(&self) -> VarDictionary {
+        let mut caps = VarDictionary::new();
+        let mut put = |key: &str, value: bool| {
+            caps.set(&key.to_variant(), &value.to_variant());
+        };
+        put("session_available", self.is_available());
+        put(
+            "head_tracking_rotation",
+            self.is_hmd_feature_supported(Self::FEATURE_HEAD_TRACKING_ROTATION),
+        );
+        put(
+            "head_tracking_position",
+            self.is_hmd_feature_supported(Self::FEATURE_HEAD_TRACKING_POSITION),
+        );
+        put("rgb_camera", self.is_camera_supported());
+        put("hand_tracking", crate::hand_tracking::is_supported());
+        put("plane_detection", self.is_plane_detection_available());
+        put("spatial_anchors", self.is_anchor_available());
+        put("image_tracking", self.is_image_tracking_available());
+        put("depth_mesh", self.is_meshing_supported());
+        put(
+            "render_texture_encoder",
+            self.is_render_texture_encoder_supported(),
+        );
+        caps
+    }
+
     // --- Device and camera geometry in Unity space; see docs/develop/plans/coordinate-systems-notes.md. The
     // poses are in Unity's left-handed system, so convert on the Godot side. They are useful for
     // aligning the AR to the RGB camera view, its FOV and offset, in the blend. ---

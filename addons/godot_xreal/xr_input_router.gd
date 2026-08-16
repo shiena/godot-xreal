@@ -251,8 +251,7 @@ func set_active_hand(is_right: bool) -> void:
 			old.set_input(input_name, 0.0)
 		old.set_input(&"primary", Vector2.ZERO)
 		old.set_input(&"touchpad", Vector2.ZERO)
-		old.invalidate_pose(&"aim")
-		old.invalidate_pose(&"grip")
+		_invalidate_controller_poses(old)
 	_active_hand = XRPositionalTracker.TRACKER_HAND_RIGHT if is_right else XRPositionalTracker.TRACKER_HAND_LEFT
 	_publish_state()
 	if _valid_pose:
@@ -328,12 +327,35 @@ func set_aim_transform(transform: Transform3D) -> void:
 	# overwrite the hand's pose every frame and the ray would sit wherever the phone points.
 	if hand_aim and _hand_tracker(_active_hand) != null:
 		return
+	_publish_controller_poses(tracker, transform, transform)
+
+## Write one controller tracker's poses: `aim`, `grip`, and `default`.
+##
+## `default` carries the aim pose, because that is what an OpenXR runtime publishes there. Godot's
+## OpenXR binds its `default_pose` action to `.../input/aim/pose` on every interaction profile and
+## renames the action to `default` on the tracker (`openxr_interface.cpp`). Publishing it matters
+## because [member XRNode3D.pose] defaults to `default`: without it an application that drops a
+## plain XRController3D into its scene would get no pose at all, and would have to know to set
+## `pose = "aim"` on XREAL alone. The bundled `xr_origin.tscn` sets it either way.
+func _publish_controller_poses(
+	tracker: XRControllerTracker, aim: Transform3D, grip: Transform3D
+) -> void:
 	tracker.set_pose(
-		&"aim", transform, Vector3.ZERO, Vector3.ZERO,
+		&"aim", aim, Vector3.ZERO, Vector3.ZERO,
 		XRPose.XR_TRACKING_CONFIDENCE_HIGH)
 	tracker.set_pose(
-		&"grip", transform, Vector3.ZERO, Vector3.ZERO,
+		&"default", aim, Vector3.ZERO, Vector3.ZERO,
 		XRPose.XR_TRACKING_CONFIDENCE_HIGH)
+	tracker.set_pose(
+		&"grip", grip, Vector3.ZERO, Vector3.ZERO,
+		XRPose.XR_TRACKING_CONFIDENCE_HIGH)
+
+## Drop every pose `_publish_controller_poses` writes, so a controller node reading any of them
+## goes inactive rather than freezing at the last one.
+func _invalidate_controller_poses(tracker: XRControllerTracker) -> void:
+	tracker.invalidate_pose(&"aim")
+	tracker.invalidate_pose(&"default")
+	tracker.invalidate_pose(&"grip")
 
 ## The tracked hand for one side, or null when it is absent, untracked, or hand aiming is off.
 func _hand_tracker(hand: XRPositionalTracker.TrackerHand) -> XRHandTracker:
@@ -368,17 +390,13 @@ func _publish_hand_aim(head_transform: Transform3D) -> void:
 			# The phone still drives the hand it is standing in for; the other has no pose at all,
 			# which is the state it was in before hand tracking existed.
 			if hand != _active_hand:
-				controller.invalidate_pose(&"aim")
-				controller.invalidate_pose(&"grip")
+				_invalidate_controller_poses(controller)
 			continue
 		_update_pinch(hand, hand_tracker)
 		var grip: Transform3D = hand_tracker.get_hand_joint_transform(
 			XRHandTracker.HAND_JOINT_PALM)
 		var aim := _hand_aim_pose(hand_tracker, hand, head_transform)
-		controller.set_pose(
-			&"aim", aim, Vector3.ZERO, Vector3.ZERO, XRPose.XR_TRACKING_CONFIDENCE_HIGH)
-		controller.set_pose(
-			&"grip", grip, Vector3.ZERO, Vector3.ZERO, XRPose.XR_TRACKING_CONFIDENCE_HIGH)
+		_publish_controller_poses(controller, aim, grip)
 
 ## Watch one hand's thumb and index finger and publish the pinch as a button press.
 func _update_pinch(hand: XRPositionalTracker.TrackerHand, hand_tracker: XRHandTracker) -> void:

@@ -494,22 +494,28 @@ func _check_switch_timeouts() -> void:
 			_end_switch(control_name)
 
 ## Grey out (make inert) the phone-menu controls whose capability the device lacks, once the
-## session is up and the capabilities are known. Each control maps to a native capability query:
-## camera, plane, anchor, image, mesh. The camera-dependent capture buttons (Photo, Blend Photo)
-## follow the camera. Streaming and recording cast and record the AR view even without a camera,
-## so no *device* disables them; the *renderer* can, though: under Vulkan the HW encoder has no GL
-## texture to read (until the vulkan-path stage-4 bridge), so both follow the encoder capability.
-func _apply_capabilities(cam: bool, plane: bool, anchor: bool, image: bool, mesh: bool) -> void:
+## session is up and `XrealSystem.get_capabilities()` can answer. Each control maps to one entry of
+## that snapshot. The camera-dependent capture buttons (Photo, Blend Photo) follow the camera.
+## Streaming and recording cast and record the AR view even without a camera, so no *device*
+## disables them; the *renderer* can, though: under Vulkan the HW encoder has no GL texture to read
+## (until the vulkan-path stage-4 bridge), so both follow the encoder capability.
+##
+## Missing keys fall back the way the control should behave on an extension that predates them:
+## a device capability to "absent", the renderer-side encoder to "usable".
+func _apply_capabilities(caps: Dictionary) -> void:
 	var ps := get_node_or_null(^"PhoneScreen")
 	if ps == null or not ps.has_method(&"set_disabled"):
 		return
-	var enc: bool = true
-	if _system and _system.has_method(&"is_render_texture_encoder_supported"):
-		enc = _system.is_render_texture_encoder_supported()
+	var cam: bool = caps.get("rgb_camera", false)
+	var anchor: bool = caps.get("spatial_anchors", false)
+	var image: bool = caps.get("image_tracking", false)
+	var enc: bool = caps.get("render_texture_encoder", true)
 	var avail := {
 		"camera": cam, "capture": cam, "blend": cam,
-		"plane": plane, "anchor": anchor, "place": anchor,
-		"image": image, "image_cycle": image, "mesh": mesh,
+		"plane": caps.get("plane_detection", false),
+		"anchor": anchor, "place": anchor,
+		"image": image, "image_cycle": image,
+		"mesh": caps.get("depth_mesh", false),
 		"stream": enc, "record": enc,
 	}
 	for control_name in avail:
@@ -559,13 +565,10 @@ func _process(_delta: float) -> void:
 		_ar_diag_frames += 1
 		if _ar_diag_frames == 120:
 			_ar_diag_frames = -1  # done
-			var cam: bool = _system.is_camera_supported() if _system.has_method(&"is_camera_supported") else false
-			var plane: bool = _system.is_plane_detection_available() if _system.has_method(&"is_plane_detection_available") else false
-			var anchor: bool = _system.is_anchor_available() if _system.has_method(&"is_anchor_available") else false
-			var image: bool = _system.is_image_tracking_available() if _system.has_method(&"is_image_tracking_available") else false
-			var mesh: bool = _system.is_meshing_supported() if _system.has_method(&"is_meshing_supported") else false
-			print("[demo] AR features: camera=%s plane=%s anchor=%s image=%s mesh=%s" % [cam, plane, anchor, image, mesh])
-			_apply_capabilities(cam, plane, anchor, image, mesh)
+			var caps: Dictionary = (_system.get_capabilities()
+				if _system.has_method(&"get_capabilities") else {})
+			print("[demo] capabilities: %s" % caps)
+			_apply_capabilities(caps)
 	# Desktop only: re-apply the mouse-aimed pointer every frame, so it keeps hanging off the preview
 	# head and follows the flycam even while the mouse is flying it rather than aiming.
 	if _pointer_aimed:
