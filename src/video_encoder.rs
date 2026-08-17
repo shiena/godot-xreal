@@ -195,6 +195,13 @@ const AUDIO_SAMPLE_RATE: i32 = 48_000;
 /// alpha top-and-bottom for the ObserverView MRC composite; the input texture has to carry a real
 /// alpha channel, meaning a transparent-background viewport. See
 /// docs/develop/plans/observer-view-notes.md.
+///
+/// `useLinnerTexture` (sic) declares that the frame arrives in linear space, and it is false here
+/// for the same reason `session.rs` declares `color_space: 0` to the compositor: Godot hands over
+/// display-ready, sRGB-encoded values, so a second gamma encode washes the picture out. The SDK
+/// sample says true because Unity renders in linear space. Format and declaration have to agree,
+/// and neither is meaningful alone; see [`crate::gl::alloc_texture`] for the display-side twin of
+/// this pairing.
 #[allow(clippy::too_many_arguments)]
 fn config_json(
     output: &str,
@@ -214,7 +221,7 @@ fn config_json(
     format!(
         concat!(
             "{{\"width\":{},\"height\":{},\"bitRate\":{},\"fps\":{},\"codecType\":{},",
-            "\"outPutPath\":\"{}\",\"useStepTime\":0,\"useAlpha\":{},\"useLinnerTexture\":true,",
+            "\"outPutPath\":\"{}\",\"useStepTime\":0,\"useAlpha\":{},\"useLinnerTexture\":false,",
             "\"addMicphoneAudio\":{},\"addInternalAudio\":{},\"audioSampleRate\":{},",
             "\"audioBitRate\":128000}}"
         ),
@@ -690,6 +697,8 @@ mod tests {
             "\"fps\":30",
             "\"codecType\":2", // rtp -> 2
             "\"outPutPath\":\"rtp://10.0.0.2:6000\"",
+            // Gamma, not linear: Godot hands over sRGB-encoded values (see config_json).
+            "\"useLinnerTexture\":false",
             "\"addMicphoneAudio\":true",
             "\"addInternalAudio\":false",
             "\"audioSampleRate\":48000",
