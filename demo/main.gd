@@ -40,9 +40,12 @@ const XREAL_ACTION_LONG_PRESS: int = 3
 var _tracker: Node3D
 var _system: Object
 var _extension_loaded: bool = false
-# One-shot AR-feature availability diagnostic: logs which native AR ABIs resolved on this device,
-# a short delay after boot (so the session has come up). See docs/develop/plans/ar-features-plan.md.
-var _ar_diag_frames: int = 0
+# AR-feature availability diagnostic and phone-control gating. Capability values are unknown until
+# the native session is available, so this retries periodically until it can apply a real snapshot.
+# See docs/develop/plans/ar-features-plan.md.
+const CAPABILITY_RETRY_S := 2.0
+var _capability_retry_elapsed := 0.0
+var _capabilities_applied := false
 var _phone_pointer: Node3D
 var _cursor_mat: StandardMaterial3D
 # Desktop only: the phone pointer has no IMU to follow off device, so the preview window's mouse
@@ -536,6 +539,9 @@ func _on_display_started() -> void:
 	# The glasses display and tracking are live, so disarm the no-glasses watchdog. This is the
 	# reliable "glasses up" event, for when is_tracking() lags past the timeout on a slow cold start.
 	_tracking_seen = true
+	# Capabilities report false while the native session is unavailable. Apply them now that the
+	# display-start signal proves the session is live; _process keeps a retry for a missed signal.
+	_try_apply_capabilities()
 	# Make the current head direction "forward".
 	_xr_runtime.recenter()
 
@@ -559,16 +565,13 @@ func _on_wearing_changed(wearing: bool) -> void:
 func _process(_delta: float) -> void:
 	_check_no_glasses(_delta)
 	_check_switch_timeouts()
-	# One-shot AR-feature availability diagnostic, ~2 s in (once the session has had time to come up),
-	# so a glance at logcat shows which native AR ABIs this device exposes.
-	if _ar_diag_frames >= 0 and _system:
-		_ar_diag_frames += 1
-		if _ar_diag_frames == 120:
-			_ar_diag_frames = -1  # done
-			var caps: Dictionary = (_system.get_capabilities()
-				if _system.has_method(&"get_capabilities") else {})
-			print("[demo] capabilities: %s" % caps)
-			_apply_capabilities(caps)
+	# Retry the capability snapshot about every 2 s until the native session is available. A cold
+	# start can take longer than the first interval, and false means "unknown" before that point.
+	if not _capabilities_applied and _system:
+		_capability_retry_elapsed += _delta
+		if _capability_retry_elapsed >= CAPABILITY_RETRY_S:
+			_capability_retry_elapsed = 0.0
+			_try_apply_capabilities()
 	# Desktop only: re-apply the mouse-aimed pointer every frame, so it keeps hanging off the preview
 	# head and follows the flycam even while the mouse is flying it rather than aiming.
 	if _pointer_aimed:
@@ -581,3 +584,15 @@ func _process(_delta: float) -> void:
 		var controller: XRController3D = _xr_runtime.get_active_controller()
 		if controller != null and controller.get_is_active():
 			_phone_pointer.aim_from_transform(controller.global_transform)
+
+## Apply capability-dependent phone controls once a native session can answer accurately. Before
+## that, every device capability is false and must not be interpreted as unsupported.
+func _try_apply_capabilities() -> void:
+	if _capabilities_applied or _system == null or not _system.has_method(&"get_capabilities"):
+		return
+	var caps: Dictionary = _system.get_capabilities()
+	if not bool(caps.get("session_available", false)):
+		return
+	_capabilities_applied = true
+	print("[demo] capabilities: %s" % caps)
+	_apply_capabilities(caps)
