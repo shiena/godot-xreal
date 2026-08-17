@@ -58,13 +58,13 @@ signal exit_confirmed()
 
 ## Backdrop fill. Opaque by default so the phone shows only the controller (the glasses-bound
 ## 3D preview behind it is hidden); set a translucent alpha to let the 3D show through instead.
-@export var background_color := Color(0.05, 0.06, 0.09, 1.0):
+@export var background_color: Color = Color(0.05, 0.06, 0.09, 1.0):
 	set(value):
 		background_color = value
 		queue_redraw()
 
 # Momentary buttons (name -> label). Add/remove/rename here to customize the controller.
-const _buttons := {
+const _buttons: Dictionary = {
 	"trigger": "TRIGGER",
 	"grip": "GRIP",
 	"menu": "MENU",
@@ -81,7 +81,7 @@ const _buttons := {
 # Toggle buttons (name -> label). Unlike the momentary buttons above they hold an on/off state
 # (highlighted while on) and fire once on press. They drive the camera, plane and anchor
 # switches; main.gd makes the actual XrealSystem calls and can push state back with set_toggle().
-const _toggles := {
+const _toggles: Dictionary = {
 	"camera": "Camera",
 	"plane": "Plane",
 	"anchor": "Anchor",
@@ -103,7 +103,7 @@ const _toggles := {
 # Streaming (FPV) and Record (mp4 -> gallery) live in the Camera tab because they cast and record
 # the camera+AR blend when the camera is on. They do NOT require the camera, though: they feed on
 # our own SubViewport (the AR-only view), so they work on the camera-less Air 2 Ultra too.
-const _tabs := [
+const _tabs: Array = [
 	{"label": "Control", "items": ["trigger", "grip", "menu", "hand_l", "hand_r", "exit"]},
 	{"label": "Camera", "items": ["capture", "blend", "camera", "record", "stream"]},
 	{"label": "AR", "items": ["plane", "anchor", "place", "image", "image_cycle", "mesh", "mesh_save"]},
@@ -114,24 +114,24 @@ const _tabs := [
 # drop-at-fingertip), image/image_cycle (image-tracking mode + set cycle) and mesh/mesh_save
 # (meshing mode + save the scan). Both names of a pair must sit next to each other, in this order,
 # in the tab's `items`.
-const _paired_rows := [
+const _paired_rows: Array = [
 	["hand_l", "hand_r"], ["anchor", "place"], ["image", "image_cycle"], ["mesh", "mesh_save"],
 ]
 
 var _theme: Theme
-var _controls := {}                    # button/toggle name -> its Button node
+var _controls: Dictionary = {}                    # button/toggle name -> its Button node
 # The two independent reasons a control is inert, kept apart so neither can hand back what the
 # other still holds: _unsupported = the device lacks the feature, _busy = it is mid-switch.
-var _unsupported := {}
-var _busy := {}
+var _unsupported: Dictionary = {}
+var _busy: Dictionary = {}
 var _pages: Array[VBoxContainer] = []  # one per tab, only the active one visible
 var _tab_buttons: Array[Button] = []   # the tab-bar radio Buttons
 var _pair_boxes: Array[HBoxContainer] = []
-var _active_tab := 0
+var _active_tab: int = 0
 # trigger/grip currently held down. Needed because hiding a pressed Button (tab switch) resets its
 # state WITHOUT emitting button_up, so _show_page releases held ones explicitly and the consumer
 # never sees a stuck-held trigger.
-var _held := {}
+var _held: Dictionary = {}
 var _margin: MarginContainer
 var _column: VBoxContainer
 var _pad: Touchpad
@@ -186,9 +186,9 @@ func _build_ui() -> void:
 	_tab_row.name = "TabRow"
 	_tab_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_column.add_child(_tab_row)
-	var group := ButtonGroup.new()
-	for i in _tabs.size():
-		var tab := Button.new()
+	var group: ButtonGroup = ButtonGroup.new()
+	for i: int in _tabs.size():
+		var tab: Button = Button.new()
 		tab.name = "Tab%d" % i
 		tab.theme_type_variation = &"TabButton"
 		tab.toggle_mode = true
@@ -203,18 +203,18 @@ func _build_ui() -> void:
 	_tab_buttons[0].set_pressed_no_signal(true)
 
 	# One page (button column) per tab; `_paired_rows` pairs share one 2-column row.
-	for tab_def in _tabs:
-		var page := VBoxContainer.new()
+	for tab_def: Dictionary in _tabs:
+		var page: VBoxContainer = VBoxContainer.new()
 		page.name = "Page%s" % tab_def["label"]
 		page.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		var items: Array = tab_def["items"]
-		var i := 0
+		var i: int = 0
 		while i < items.size():
 			if _pair_at(items, i):
-				var row := HBoxContainer.new()
+				var row: HBoxContainer = HBoxContainer.new()
 				row.mouse_filter = Control.MOUSE_FILTER_IGNORE
-				for pair_name in [items[i], items[i + 1]]:
-					var paired := _make_button(pair_name)
+				for pair_name: String in [items[i], items[i + 1]]:
+					var paired: Button = _make_button(pair_name)
 					paired.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 					row.add_child(paired)
 				_pair_boxes.append(row)
@@ -228,7 +228,7 @@ func _build_ui() -> void:
 
 ## One control Button (momentary or toggle) wired to its signal. Kept in `_controls` by name.
 func _make_button(control_name: String) -> Button:
-	var btn := Button.new()
+	var btn: Button = Button.new()
 	btn.name = control_name
 	btn.focus_mode = Control.FOCUS_NONE
 	btn.clip_text = true
@@ -263,12 +263,12 @@ func _build_exit_overlay() -> void:
 	_overlay.mouse_filter = Control.MOUSE_FILTER_STOP
 	_overlay.visible = false
 	add_child(_overlay)
-	var dim := ColorRect.new()
+	var dim: ColorRect = ColorRect.new()
 	dim.color = Color(0, 0, 0, 0.65)
 	dim.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	dim.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_overlay.add_child(dim)
-	var center := CenterContainer.new()
+	var center: CenterContainer = CenterContainer.new()
 	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	center.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_overlay.add_child(center)
@@ -276,20 +276,20 @@ func _build_exit_overlay() -> void:
 	_dialog.theme_type_variation = &"DialogPanel"
 	_dialog.mouse_filter = Control.MOUSE_FILTER_STOP
 	center.add_child(_dialog)
-	var inner := MarginContainer.new()
+	var inner: MarginContainer = MarginContainer.new()
 	inner.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_dialog.add_child(inner)
-	var vbox := VBoxContainer.new()
+	var vbox: VBoxContainer = VBoxContainer.new()
 	vbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	inner.add_child(vbox)
-	var label := Label.new()
+	var label: Label = Label.new()
 	label.text = "Exit the app?"
 	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	label.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	vbox.add_child(label)
-	var row := HBoxContainer.new()
+	var row: HBoxContainer = HBoxContainer.new()
 	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	row.alignment = BoxContainer.ALIGNMENT_CENTER
 	vbox.add_child(row)
@@ -306,7 +306,7 @@ func _build_exit_overlay() -> void:
 	row.add_child(_yes_button)
 
 func _make_dialog_button(text: String, variation: StringName) -> Button:
-	var btn := Button.new()
+	var btn: Button = Button.new()
 	btn.text = text
 	btn.theme_type_variation = variation
 	btn.focus_mode = Control.FOCUS_NONE
@@ -316,7 +316,7 @@ func _make_dialog_button(text: String, variation: StringName) -> Button:
 # ---------------------------------------------------------------- theme / metrics ---
 
 func _flat(fill: Color, border: Color, border_width: int) -> StyleBoxFlat:
-	var sb := StyleBoxFlat.new()
+	var sb: StyleBoxFlat = StyleBoxFlat.new()
 	sb.bg_color = fill
 	sb.border_color = border
 	sb.set_border_width_all(border_width)
@@ -326,40 +326,40 @@ func _flat(fill: Color, border: Color, border_width: int) -> StyleBoxFlat:
 ## "MomentaryButton" (gray, flashing while down), "ToggleButton" (gray OFF, green ON),
 ## "TabButton" (dim, active blue), "DangerButton" (the red Yes) and "DialogPanel".
 func _build_theme() -> Theme:
-	var t := Theme.new()
-	var disabled_style := _flat(Color(0.15, 0.15, 0.17, 0.5), Color(1, 1, 1, 0.12), 2)
-	for variation in [&"MomentaryButton", &"ToggleButton", &"TabButton", &"DangerButton"]:
+	var t: Theme = Theme.new()
+	var disabled_style: StyleBoxFlat = _flat(Color(0.15, 0.15, 0.17, 0.5), Color(1, 1, 1, 0.12), 2)
+	for variation: StringName in [&"MomentaryButton", &"ToggleButton", &"TabButton", &"DangerButton"]:
 		t.set_type_variation(variation, &"Button")
 		t.set_stylebox(&"focus", variation, StyleBoxEmpty.new())
 		t.set_stylebox(&"disabled", variation, disabled_style)
-		for color_name in [&"font_color", &"font_hover_color", &"font_pressed_color",
+		for color_name: StringName in [&"font_color", &"font_hover_color", &"font_pressed_color",
 				&"font_hover_pressed_color", &"font_focus_color"]:
 			t.set_color(color_name, variation, Color.WHITE)
 		t.set_color(&"font_disabled_color", variation, Color(1, 1, 1, 0.3))
-	var momentary := _flat(Color(0.5, 0.5, 0.5, 0.16), Color(1, 1, 1, 0.85), 3)
-	var momentary_down := _flat(Color(0.9, 0.9, 0.9, 0.28), Color(1, 1, 1, 0.85), 3)
+	var momentary: StyleBoxFlat = _flat(Color(0.5, 0.5, 0.5, 0.16), Color(1, 1, 1, 0.85), 3)
+	var momentary_down: StyleBoxFlat = _flat(Color(0.9, 0.9, 0.9, 0.28), Color(1, 1, 1, 0.85), 3)
 	t.set_stylebox(&"normal", &"MomentaryButton", momentary)
 	t.set_stylebox(&"hover", &"MomentaryButton", momentary)
 	t.set_stylebox(&"pressed", &"MomentaryButton", momentary_down)
 	t.set_stylebox(&"hover_pressed", &"MomentaryButton", momentary_down)
-	var toggle_off := _flat(Color(0.5, 0.5, 0.5, 0.16), Color(1, 1, 1, 0.6), 3)
-	var toggle_on := _flat(Color(0.2, 0.7, 0.4, 0.45), Color(0.5, 1.0, 0.7, 0.95), 3)
+	var toggle_off: StyleBoxFlat = _flat(Color(0.5, 0.5, 0.5, 0.16), Color(1, 1, 1, 0.6), 3)
+	var toggle_on: StyleBoxFlat = _flat(Color(0.2, 0.7, 0.4, 0.45), Color(0.5, 1.0, 0.7, 0.95), 3)
 	# hover_pressed slightly brighter: the drawn version's press flash while the finger is down.
-	var toggle_on_down := _flat(Color(0.2, 0.7, 0.4, 0.6), Color(0.5, 1.0, 0.7, 0.95), 3)
+	var toggle_on_down: StyleBoxFlat = _flat(Color(0.2, 0.7, 0.4, 0.6), Color(0.5, 1.0, 0.7, 0.95), 3)
 	t.set_stylebox(&"normal", &"ToggleButton", toggle_off)
 	t.set_stylebox(&"hover", &"ToggleButton", toggle_off)
 	t.set_stylebox(&"pressed", &"ToggleButton", toggle_on)
 	t.set_stylebox(&"hover_pressed", &"ToggleButton", toggle_on_down)
-	var tab_idle := _flat(Color(0.4, 0.4, 0.45, 0.18), Color(1, 1, 1, 0.35), 3)
-	var tab_active := _flat(Color(0.3, 0.55, 0.9, 0.5), Color(0.6, 0.8, 1.0, 0.95), 3)
+	var tab_idle: StyleBoxFlat = _flat(Color(0.4, 0.4, 0.45, 0.18), Color(1, 1, 1, 0.35), 3)
+	var tab_active: StyleBoxFlat = _flat(Color(0.3, 0.55, 0.9, 0.5), Color(0.6, 0.8, 1.0, 0.95), 3)
 	t.set_stylebox(&"normal", &"TabButton", tab_idle)
 	t.set_stylebox(&"hover", &"TabButton", tab_idle)
 	t.set_stylebox(&"pressed", &"TabButton", tab_active)
 	t.set_stylebox(&"hover_pressed", &"TabButton", tab_active)
 	t.set_color(&"font_color", &"TabButton", Color(1, 1, 1, 0.6))
 	t.set_color(&"font_hover_color", &"TabButton", Color(1, 1, 1, 0.6))
-	var danger := _flat(Color(0.7, 0.25, 0.25, 0.45), Color(1, 0.6, 0.6, 0.95), 2)
-	var danger_down := _flat(Color(0.7, 0.25, 0.25, 0.6), Color(1, 0.6, 0.6, 0.95), 2)
+	var danger: StyleBoxFlat = _flat(Color(0.7, 0.25, 0.25, 0.45), Color(1, 0.6, 0.6, 0.95), 2)
+	var danger_down: StyleBoxFlat = _flat(Color(0.7, 0.25, 0.25, 0.6), Color(1, 0.6, 0.6, 0.95), 2)
 	t.set_stylebox(&"normal", &"DangerButton", danger)
 	t.set_stylebox(&"hover", &"DangerButton", danger)
 	t.set_stylebox(&"pressed", &"DangerButton", danger_down)
@@ -375,14 +375,14 @@ func _build_theme() -> Theme:
 ## the app runs at native resolution, so everything scales off the control's size like the drawn
 ## version did.
 func _apply_metrics() -> void:
-	var s := size
+	var s: Vector2 = size
 	if s.x <= 0.0 or s.y <= 0.0:
 		return
-	var base := int(maxf(24.0, minf(s.x, s.y) * 0.045))
+	var base: int = int(maxf(24.0, minf(s.x, s.y) * 0.045))
 	_theme.set_font_size(&"font_size", &"Button", base)
 	_theme.set_font_size(&"font_size", &"TabButton", int(maxf(20.0, base * 0.9)))
 	_theme.set_font_size(&"font_size", &"Label", base)
-	var pad := s.x * 0.86
+	var pad: float = s.x * 0.86
 	_pad.custom_minimum_size = Vector2(pad, pad)
 	_pad.label_font_size = base
 	_margin.add_theme_constant_override(&"margin_left", int((s.x - pad) * 0.5))
@@ -390,28 +390,28 @@ func _apply_metrics() -> void:
 	_margin.add_theme_constant_override(&"margin_top", int(s.y * 0.03))
 	_margin.add_theme_constant_override(&"margin_bottom", int(s.y * 0.02))
 	_column.add_theme_constant_override(&"separation", int(s.y * 0.02))
-	var gap := int(s.y * 0.016)
-	for page in _pages:
+	var gap: int = int(s.y * 0.016)
+	for page: VBoxContainer in _pages:
 		page.add_theme_constant_override(&"separation", gap)
-	for row in _pair_boxes:
+	for row: HBoxContainer in _pair_boxes:
 		row.add_theme_constant_override(&"separation", int(pad * 0.03))
-	var tab_h := s.y * 0.055
-	for tab in _tab_buttons:
+	var tab_h: float = s.y * 0.055
+	for tab: Button in _tab_buttons:
 		tab.custom_minimum_size = Vector2(0, tab_h)
 	# Row height: fit the tallest page into the space under the tab bar, capped at 9% of the
 	# screen so a sparse tab keeps normal-sized buttons instead of giant ones. That is the drawn
 	# version's clamp, needed on tall 20:9 phones where 5 fixed-height rows would overflow.
-	var rows := 0
-	for tab_def in _tabs:
+	var rows: int = 0
+	for tab_def: Dictionary in _tabs:
 		rows = maxi(rows, _row_count(tab_def["items"]))
-	var avail := s.y * 0.98 - (s.y * 0.03 + pad + s.y * 0.02 + tab_h + s.y * 0.02)
-	var bh := maxf(minf((avail - gap * (rows - 1)) / rows, s.y * 0.09), 0.0)
-	for control_name in _controls:
+	var avail: float = s.y * 0.98 - (s.y * 0.03 + pad + s.y * 0.02 + tab_h + s.y * 0.02)
+	var bh: float = maxf(minf((avail - gap * (rows - 1)) / rows, s.y * 0.09), 0.0)
+	for control_name: String in _controls:
 		(_controls[control_name] as Button).custom_minimum_size = Vector2(0, bh)
-	var dw := s.x * 0.82
-	var dh := minf(s.y * 0.24, s.x * 0.55)
+	var dw: float = s.x * 0.82
+	var dh: float = minf(s.y * 0.24, s.x * 0.55)
 	_dialog.custom_minimum_size = Vector2(dw, dh)
-	for btn in [_no_button, _yes_button]:
+	for btn: Button in [_no_button, _yes_button]:
 		btn.custom_minimum_size = Vector2(dw * 0.4, dh * 0.3)
 
 # ---------------------------------------------------------------- behavior ---
@@ -420,15 +420,15 @@ func _apply_metrics() -> void:
 func _pair_at(items: Array, i: int) -> bool:
 	if i + 1 >= items.size():
 		return false
-	for pair in _paired_rows:
+	for pair: Array in _paired_rows:
 		if items[i] == pair[0] and items[i + 1] == pair[1]:
 			return true
 	return false
 
 ## Number of stacked rows for `items`: each `_paired_rows` pair collapses two items into one row.
 func _row_count(items: Array) -> int:
-	var rows := 0
-	var i := 0
+	var rows: int = 0
+	var i: int = 0
 	while i < items.size():
 		i += 2 if _pair_at(items, i) else 1
 		rows += 1
@@ -452,7 +452,7 @@ func _show_page(idx: int) -> void:
 	# trigger and grip explicitly first and the consumer never sees them stuck held.
 	_release_held()
 	_active_tab = idx
-	for i in _pages.size():
+	for i: int in _pages.size():
 		_pages[i].visible = i == idx
 
 ## Synthesize the release signals for a held trigger/grip (see _show_page).
@@ -596,12 +596,12 @@ class Touchpad extends Control:
 	signal released()
 
 	## Caption font size, driven by the owner's _apply_metrics.
-	var label_font_size := 24:
+	var label_font_size: int = 24:
 		set(value):
 			label_font_size = value
 			queue_redraw()
-	var _touch := -1               # claiming touch index (-1 none, -2 mouse)
-	var _value := Vector2.ZERO
+	var _touch: int = -1               # claiming touch index (-1 none, -2 mouse)
+	var _value: Vector2 = Vector2.ZERO
 
 	func _gui_input(event: InputEvent) -> void:
 		if event is InputEventScreenTouch:
@@ -634,7 +634,7 @@ class Touchpad extends Control:
 				accept_event()
 
 	func _update_value(pos: Vector2) -> void:
-		var n := pos / size * 2.0 - Vector2.ONE
+		var n: Vector2 = pos / size * 2.0 - Vector2.ONE
 		n.y = -n.y
 		if n.length() > 1.0:
 			n = n.normalized()
@@ -649,13 +649,13 @@ class Touchpad extends Control:
 		queue_redraw()
 
 	func _draw() -> void:
-		var active := _touch != -1
+		var active: bool = _touch != -1
 		draw_rect(Rect2(Vector2.ZERO, size), Color(0.25, 0.55, 0.9, 0.18 if active else 0.10))
 		draw_rect(Rect2(Vector2.ZERO, size), Color(0.5, 0.75, 1.0, 0.9), false, 3.0)
-		var center := size * 0.5
+		var center: Vector2 = size * 0.5
 		draw_line(center - Vector2(12, 0), center + Vector2(12, 0), Color(1, 1, 1, 0.25), 2.0)
 		draw_line(center - Vector2(0, 12), center + Vector2(0, 12), Color(1, 1, 1, 0.25), 2.0)
-		var dot := center + Vector2(_value.x, -_value.y) * size * 0.5 * 0.92
+		var dot: Vector2 = center + Vector2(_value.x, -_value.y) * size * 0.5 * 0.92
 		draw_circle(dot, size.x * 0.09, Color(0.4, 0.85, 1.0, 0.95))
 		draw_string(get_theme_default_font(), Vector2(0, size.y - label_font_size * 1.2),
 			"TOUCHPAD", HORIZONTAL_ALIGNMENT_CENTER, size.x, label_font_size, Color(1, 1, 1, 0.5))
