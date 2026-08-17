@@ -24,6 +24,7 @@ const TIP_INDEX := 10
 const PINCH_ON := 0.025
 const PINCH_OFF := 0.045
 const HANDS := ["/user/hand_tracker/right", "/user/hand_tracker/left"]
+const FEATURE_OWNER := &"anchors"
 
 ## Enable at boot (applied in _ready). At runtime call set_enabled().
 @export var enabled := false
@@ -58,6 +59,10 @@ func set_enabled(on: bool) -> bool:
 			error.emit("[xreal-anchors] spatial anchors unavailable on this device (Air 2 Ultra only)")
 		return false
 	if on:
+		if not XrealShared.claim_feature(FEATURE_OWNER, self):
+			_fail("[xreal-anchors] another XrealAnchors instance owns spatial anchors")
+			enabled = false
+			return false
 		_ensure_ar()
 		XrealShared.get_hand_tracker(get_tree())  # fingertip/pinch placement needs the hand trackers
 		if not _initialized:
@@ -70,7 +75,7 @@ func set_enabled(on: bool) -> bool:
 	else:
 		_enabled = false
 		visible = false  # hide markers but keep them + the subsystem alive
-	if _ar:
+	if _ar and XrealShared.is_feature_owner(FEATURE_OWNER, self):
 		_ar.set(&"anchors", _enabled)  # only let the shared XrealAR poll the anchor stream while on
 	enabled = _enabled
 	return _enabled
@@ -268,9 +273,11 @@ func _persist_guids() -> void:
 		f.close()
 
 func _exit_tree() -> void:
-	# Release the shared stream switch; the shared XrealAR outlives us.
-	if _enabled and _ar and is_instance_valid(_ar):
-		_ar.set(&"anchors", false)
+	# Only the exclusive owner may stop the shared process-global stream.
+	if XrealShared.is_feature_owner(FEATURE_OWNER, self):
+		if _ar and is_instance_valid(_ar):
+			_ar.set(&"anchors", false)
+		XrealShared.release_feature(FEATURE_OWNER, self)
 
 ## Push a warning AND emit `error`, so the load site can detect the failure instead of only seeing
 ## it in the log.

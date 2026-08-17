@@ -21,6 +21,8 @@ signal error(message: String)
 ## cycle_set), so the load site can label a "cycle" button with the current set.
 signal set_changed(name: String)
 
+const FEATURE_OWNER := &"image_tracking"
+
 ## Enable at boot (applied in _ready). At runtime call set_enabled().
 @export var enabled := false
 ## The reference-image manifest (JSON). It is required: set_enabled(true) refuses while it is
@@ -58,9 +60,14 @@ func set_enabled(on: bool) -> bool:
 			_fail("[xreal-image] manifest_path not set, so point it at a reference.json")
 			enabled = false
 			return false
+		if not XrealShared.claim_feature(FEATURE_OWNER, self):
+			_fail("[xreal-image] another XrealImageTracking instance owns image tracking")
+			enabled = false
+			return false
 		_ensure_ar()
 		if not _initialized:
 			if not _load_sets():
+				XrealShared.release_feature(FEATURE_OWNER, self)
 				enabled = false
 				return false
 			_initialized = true
@@ -69,7 +76,7 @@ func set_enabled(on: bool) -> bool:
 	else:
 		_enabled = false
 		visible = false  # keep the databases active; just hide the markers
-	if _ar:
+	if _ar and XrealShared.is_feature_owner(FEATURE_OWNER, self):
 		_ar.set(&"images", _enabled)  # only let the shared XrealAR poll the image stream while on
 	enabled = _enabled
 	return _enabled
@@ -239,14 +246,18 @@ func _clear_markers() -> void:
 	_markers.clear()
 
 func _exit_tree() -> void:
-	# Release the shared stream switch, then deactivate and free every registered database.
-	if _enabled and _ar and is_instance_valid(_ar):
+	# Only the exclusive owner may deactivate the process-global database and shared stream.
+	var owns_feature := XrealShared.is_feature_owner(FEATURE_OWNER, self)
+	if owns_feature and _ar and is_instance_valid(_ar):
 		_ar.set(&"images", false)
 	if _system and not _sets.is_empty():
-		_system.set_image_database(0)
+		if owns_feature:
+			_system.set_image_database(0)
 		for s in _sets:
 			_system.release_image_database(s.handle)
 		_sets.clear()
+	if owns_feature:
+		XrealShared.release_feature(FEATURE_OWNER, self)
 
 ## Push a warning AND emit `error`, so the load site can detect the failure instead of only seeing
 ## it in the log.

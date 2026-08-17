@@ -20,19 +20,19 @@ extends RefCounted
 ## two media collections, because Images$Media and Video$Media implement their own column
 ## interfaces, but MediaStore$Files merely *nests* FileColumns rather than implementing it, so a
 ## non-media save has to read its column names off the nested interface.
-const _IMAGES := "android.provider.MediaStore$Images$Media"
-const _VIDEOS := "android.provider.MediaStore$Video$Media"
-const _FILES := "android.provider.MediaStore$Files"
-const _FILE_COLUMNS := "android.provider.MediaStore$Files$FileColumns"
+const _IMAGES: String = "android.provider.MediaStore$Images$Media"
+const _VIDEOS: String = "android.provider.MediaStore$Video$Media"
+const _FILES: String = "android.provider.MediaStore$Files"
+const _FILE_COLUMNS: String = "android.provider.MediaStore$Files$FileColumns"
 
 ## Move an image at `src_path` into the phone gallery under Pictures/godot-xreal.
 ## Returns whether it was saved. No-op off Android.
-static func save_image(src_path: String, mime := "image/jpeg") -> bool:
+static func save_image(src_path: String, mime: String = "image/jpeg") -> bool:
 	return _save(src_path, mime, _IMAGES, _IMAGES, "Pictures/godot-xreal")
 
 ## Move a video at `src_path` into the phone gallery under Movies/godot-xreal.
 ## Returns whether it was saved. No-op off Android.
-static func save_video(src_path: String, mime := "video/mp4") -> bool:
+static func save_video(src_path: String, mime: String = "video/mp4") -> bool:
 	return _save(src_path, mime, _VIDEOS, _VIDEOS, "Movies/godot-xreal")
 
 ## Move a non-media file, a mesh snapshot for instance, into shared storage under
@@ -44,11 +44,11 @@ static func save_video(src_path: String, mime := "video/mp4") -> bool:
 ## it on a stock device, neither of which is true of the app-private directory a snapshot lands in.
 ## The lifetime differs too, in that a shared item survives an uninstall and is the user's to
 ## delete, where app-private storage is wiped with the app.
-static func save_document(src_path: String, mime := "application/json") -> bool:
+static func save_document(src_path: String, mime: String = "application/json") -> bool:
 	return _save(src_path, mime, _FILES, _FILE_COLUMNS, "Documents/godot-xreal")
 
 ## Copy chunk size: recordings can run to hundreds of MB, so never load the whole file at once.
-const _CHUNK := 4 * 1024 * 1024
+const _CHUNK: int = 4 * 1024 * 1024
 
 ## Why the Java call just made threw, as a warning suffix, or "" when it did not throw. Always
 ## call this IMMEDIATELY after the call being checked, and before branching on that call's result
@@ -63,48 +63,48 @@ const _CHUNK := 4 * 1024 * 1024
 ## (a JavaObject's string form goes through Java toString()), which is why the reference is taken
 ## before the string is built.
 static func _java_reason() -> String:
-	var ex := JavaClassWrapper.get_exception()
+	var ex: Object = JavaClassWrapper.get_exception()
 	return "" if ex == null else ": %s" % ex
 
 static func _save(src_path: String, mime: String, uri_class_name: String,
 		columns_class_name: String, rel_dir: String) -> bool:
 	if OS.get_name() != "Android":
 		return false
-	var src := FileAccess.open(src_path, FileAccess.READ)
+	var src: FileAccess = FileAccess.open(src_path, FileAccess.READ)
 	if src == null or src.get_length() == 0:
 		push_warning("[demo-storage] cannot read %s" % src_path)
 		return false
-	var name := src_path.get_file()
-	var activity := XrealAndroidBridge.get_activity()
-	var content_values_class := JavaClassWrapper.wrap("android.content.ContentValues")
-	var uri_class := JavaClassWrapper.wrap(uri_class_name)
-	var columns_class := JavaClassWrapper.wrap(columns_class_name)
+	var name: String = src_path.get_file()
+	var activity: Object = XrealAndroidBridge.get_activity()
+	var content_values_class: Object = JavaClassWrapper.wrap("android.content.ContentValues")
+	var uri_class: Object = JavaClassWrapper.wrap(uri_class_name)
+	var columns_class: Object = JavaClassWrapper.wrap(columns_class_name)
 	if activity == null or content_values_class == null or uri_class == null or columns_class == null:
 		push_warning("[demo-storage] Android runtime/classes unavailable")
 		return false
-	var resolver = activity.getContentResolver()
+	var resolver: Object = activity.getContentResolver()
 	# Column names are the real MediaStore.MediaColumns constants, read straight off `columns_class`:
 	# JavaClassWrapper exposes a Java class's public static fields as properties, and Images$Media,
 	# Video$Media and Files$FileColumns all inherit MediaColumns'. It exposes only primitive and
 	# String constants, though, so the volume below stays a literal ("external_primary" is the value
 	# of MediaStore.VOLUME_EXTERNAL_PRIMARY) and getContentUri() still resolves the collection Uri,
 	# because a Uri-typed constant like EXTERNAL_CONTENT_URI is out of reach.
-	var values = content_values_class.ContentValues()
+	var values: Object = content_values_class.ContentValues()
 	values.put(columns_class.DISPLAY_NAME, name)
 	values.put(columns_class.MIME_TYPE, mime)
 	values.put(columns_class.RELATIVE_PATH, rel_dir)
 	values.put(columns_class.IS_PENDING, 1)
-	var item = resolver.insert(uri_class.getContentUri("external_primary"), values)
-	var reason := _java_reason()
+	var item: Object = resolver.insert(uri_class.getContentUri("external_primary"), values)
+	var reason: String = _java_reason()
 	if item == null:
 		push_warning("[demo-storage] MediaStore insert failed for %s%s" % [name, reason])
 		return false
 	# NB: JavaClassWrapper cannot pass null for String or String[] parameters ("Cannot convert
 	# argument from Nil to String"), so the no-selection update and delete calls below pass "" plus
 	# an empty PackedStringArray instead; providers treat an empty selection like a null one.
-	var no_where := ""
-	var no_args := PackedStringArray()
-	var out = resolver.openOutputStream(item)
+	var no_where: String = ""
+	var no_args: PackedStringArray = PackedStringArray()
+	var out: Object = resolver.openOutputStream(item)
 	reason = _java_reason()
 	if out == null:
 		resolver.delete(item, no_where, no_args)
@@ -134,7 +134,7 @@ static func _save(src_path: String, mime: String, uri_class_name: String,
 	values.put(columns_class.IS_PENDING, 0)
 	# Clear IS_PENDING to publish the item. While it is pending, other apps (the gallery) cannot
 	# see it, and it sits on disk as ".pending-<epoch>-<name>". Verify the row really updated.
-	var updated = resolver.update(item, values, no_where, no_args)
+	var updated: Variant = resolver.update(item, values, no_where, no_args)
 	reason = _java_reason()
 	if updated == null or int(updated) < 1:
 		resolver.delete(item, no_where, no_args)
@@ -147,7 +147,7 @@ static func _save(src_path: String, mime: String, uri_class_name: String,
 	# capture stays in user:// and can be retried, which a delete-then-verify would not allow.
 	# A removal that fails is not a save failure. The item is already in the gallery, so warn and
 	# still report success rather than let the caller think the capture was lost.
-	var err := DirAccess.remove_absolute(src_path)
+	var err: int = DirAccess.remove_absolute(src_path)
 	if err != OK:
 		push_warning("[demo-storage] saved, but could not remove the original %s (err %d)"
 			% [src_path, err])

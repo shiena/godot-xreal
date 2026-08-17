@@ -58,3 +58,4 @@ Toggle anchor mode and return the resulting state, which is false when the ancho
 | <a id="constant-PINCH_ON"></a>`PINCH_ON` | `0.025` |  |
 | <a id="constant-PINCH_OFF"></a>`PINCH_OFF` | `0.045` |  |
 | <a id="constant-HANDS"></a>`HANDS` | `["/user/hand_tracker/right", "/user/hand_tracker/left"]` |  |
+| <a id="constant-FEATURE_OWNER"></a>`FEATURE_OWNER` | `&"anchors"` |  |

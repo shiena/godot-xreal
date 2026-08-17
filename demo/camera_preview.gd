@@ -12,7 +12,7 @@ extends Node3D
 ## not-yet-fed shader would show pink.
 
 ## Show the head-locked preview quad. Turn off to keep the shared camera feed running with no preview.
-@export var show_preview := true
+@export var show_preview: bool = true
 
 var _panel: MeshInstance3D
 
@@ -28,17 +28,17 @@ func _process(_delta: float) -> void:
 		return
 	# Discovered per frame (like the photo/blend/stream features), so camera on/off just toggles the
 	# preview with no wiring. Off device this is always null, so the panel stays hidden.
-	var feed := XrealShared.find_camera_feed(get_tree())
-	var live := feed != null and is_instance_valid(feed) and feed.has_method(&"get_y_texture")
-	var yt = feed.get_y_texture() if live else null
-	var ct = feed.get_cbcr_texture() if live else null
+	var feed: Object = XrealShared.find_camera_feed(get_tree())
+	var live: bool = feed != null and is_instance_valid(feed) and feed.has_method(&"get_y_texture")
+	var yt: Texture2D = feed.get_y_texture() if live else null
+	var ct: Texture2D = feed.get_cbcr_texture() if live else null
 	if yt == null or ct == null:
 		# Camera off, not started, or no frame yet: keep the unset-sampler (pink) panel hidden.
 		if _panel.visible:
 			_panel.visible = false
 		return
 	# Head-lock to the common XR camera, including any XROrigin3D world-space adjustment.
-	var head := XrealShared.find_tracking_head(get_tree())
+	var head: Node3D = XrealShared.find_tracking_head(get_tree())
 	if head and _panel.get_parent() != head:
 		_panel.reparent(head, false)
 	# The XrealCameraFeed keeps these ImageTextures updated in place; re-set them each frame so a

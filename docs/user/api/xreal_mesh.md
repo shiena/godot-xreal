@@ -117,3 +117,8 @@ Marker and schema revision written into every snapshot, checked by the editor co
 
 ### SNAPSHOT_VERSION = 1
 
+
+<a id="constant-FEATURE_OWNER"></a>
+
+### FEATURE_OWNER = &"mesh"
+

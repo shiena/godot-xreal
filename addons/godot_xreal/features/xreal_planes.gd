@@ -23,6 +23,7 @@ signal error(message: String)
 const PLANE_NONE := 0
 const PLANE_BOTH := 3   # horizontal | vertical
 const TRACKING_6DOF := 0
+const FEATURE_OWNER := &"planes"
 
 ## Enable the plane overlay at boot (applied in _ready). At runtime call set_enabled().
 @export var enabled := false
@@ -51,10 +52,16 @@ func set_enabled(on: bool) -> bool:
 	if not on:
 		_on = false
 		_clear()
-		_sync()
+		if XrealShared.is_feature_owner(FEATURE_OWNER, self):
+			_sync()
+		enabled = false
+		return false
+	if not XrealShared.claim_feature(FEATURE_OWNER, self):
+		_fail("[xreal-planes] another XrealPlanes instance owns plane detection")
 		enabled = false
 		return false
 	if not _start_detection():
+		XrealShared.release_feature(FEATURE_OWNER, self)
 		enabled = false
 		return false
 	_on = true
@@ -186,12 +193,13 @@ func _material() -> StandardMaterial3D:
 	return _mat
 
 func _exit_tree() -> void:
-	# Stop detection and release the shared stream switch; the shared XrealAR outlives us.
-	if _on:
+	# Only the exclusive owner may stop the process-global detector and shared stream.
+	if XrealShared.is_feature_owner(FEATURE_OWNER, self):
 		if _system and _system.has_method(&"set_plane_detection_mode"):
 			_system.set_plane_detection_mode(PLANE_NONE)
 		if _ar and is_instance_valid(_ar):
 			_ar.set(&"planes", false)
+		XrealShared.release_feature(FEATURE_OWNER, self)
 
 ## Push a warning AND emit `error`, so the load site can detect the failure instead of only seeing
 ## it in the log.

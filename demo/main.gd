@@ -29,28 +29,31 @@ extends Node3D
 # recorder and mesh components return the saved file's path and the demo forwards it into the phone
 # gallery or, for a mesh snapshot, Documents. It stays out of the addon on purpose, because
 # publishing an app's files to shared storage is the app's decision.
-const StorageHelper := preload("res://demo/storage_helper.gd")
+const StorageHelper: GDScript = preload("res://demo/storage_helper.gd")
 
 # XrealHeadTracker key/action constants, mirrored locally so this script parses even
 # when the GDExtension is absent (desktop editor).
-const XREAL_KEY_MULTI := 1
-const XREAL_KEY_MENU := 4
-const XREAL_ACTION_LONG_PRESS := 3
+const XREAL_KEY_MULTI: int = 1
+const XREAL_KEY_MENU: int = 4
+const XREAL_ACTION_LONG_PRESS: int = 3
 
 var _tracker: Node3D
 var _system: Object
-var _extension_loaded := false
-# One-shot AR-feature availability diagnostic: logs which native AR ABIs resolved on this device,
-# a short delay after boot (so the session has come up). See docs/develop/plans/ar-features-plan.md.
-var _ar_diag_frames := 0
+var _extension_loaded: bool = false
+# AR-feature availability diagnostic and phone-control gating. Capability values are unknown until
+# the native session is available, so this retries periodically until it can apply a real snapshot.
+# See docs/develop/plans/ar-features-plan.md.
+const CAPABILITY_RETRY_S := 2.0
+var _capability_retry_elapsed := 0.0
+var _capabilities_applied := false
 var _phone_pointer: Node3D
 var _cursor_mat: StandardMaterial3D
 # Desktop only: the phone pointer has no IMU to follow off device, so the preview window's mouse
 # aims it instead, once Tab has handed the mouse over. Angles in degrees, zeroed by R.
-const PREVIEW_POINTER_SENSITIVITY := 0.15
-var _pointer_yaw := 0.0
-var _pointer_pitch := 0.0
-var _pointer_aimed := false
+const PREVIEW_POINTER_SENSITIVITY: float = 0.15
+var _pointer_yaw: float = 0.0
+var _pointer_pitch: float = 0.0
+var _pointer_aimed: bool = false
 var _preview: Node  # the desktop preview window component, null on device
 # No-glasses watchdog: the head-tracking session only comes up with the glasses connected, so if
 # tracking has not started within this window we take them to be absent, show a message and quit
@@ -61,18 +64,18 @@ var _preview: Node  # the desktop preview window component, null on device
 # separate, unhandled case. The window is 15 s because session bring-up takes ~4-6 s normally but
 # a cold first launch after a (re)install is slower, and a false "no glasses" quit while they ARE
 # connected costs more than a couple of extra seconds of waiting.
-const NO_GLASSES_TIMEOUT_S := 15.0
-const NO_GLASSES_QUIT_DELAY_S := 3.0
-var _boot_elapsed := 0.0
-var _tracking_seen := false
-var _no_glasses := false
+const NO_GLASSES_TIMEOUT_S: float = 15.0
+const NO_GLASSES_QUIT_DELAY_S: float = 3.0
+var _boot_elapsed: float = 0.0
+var _tracking_seen: bool = false
+var _no_glasses: bool = false
 
 ## Backstop for a toggle whose component never reports back. Every failure path in xreal_camera.gd
 ## and xreal_stream.gd does emit active_changed, apart from stopping a stream that is still
 ## pairing, which returns silently, so this covers the quiet paths rather than the normal route.
 ## It has to clear the slowest honest wait: pairing gives itself 4 s of discovery, 5 s to connect
 ## and 5 s of handshake before it gives up.
-const SWITCH_TIMEOUT_MS := 20000
+const SWITCH_TIMEOUT_MS: int = 20000
 ## Toggles that are mid-switch: tapped, but the component has not yet said what actually happened.
 ## Maps the control name to the deadline (Time.get_ticks_msec) past which it is handed back anyway.
 var _switching: Dictionary = {}
@@ -109,7 +112,7 @@ func _ready() -> void:
 	# actions (xr_select, xr_grab) are published too, but a click coming from the glasses callback
 	# is a mid-process pulse, so polling is_action_just_pressed() would miss it; the signal is
 	# synchronous and never does.
-	for controller in _xr_controllers:
+	for controller: XRController3D in _xr_controllers:
 		controller.button_pressed.connect(_on_xr_button_pressed)
 		controller.button_released.connect(_on_xr_button_released)
 	# Async feature states (camera start is lazy, stream pairing is async) are reflected back onto
@@ -122,7 +125,7 @@ func _ready() -> void:
 	# Surface each feature component's `error` signal at the load site, here the debug Status label
 	# and logcat. A real app might disable a control or show a toast; the point is that the failure
 	# is detectable rather than buried in a warning.
-	for feature in [_camera, _planes, _anchors, _image_tracking, _mesh, _photo_capture, _blend_capture, _stream, _recorder]:
+	for feature: Node in [_camera, _planes, _anchors, _image_tracking, _mesh, _photo_capture, _blend_capture, _stream, _recorder]:
 		if feature and feature.has_signal(&"error"):
 			feature.error.connect(_on_feature_error)
 	# Label the "Cycle Image" button with the active image-tracking set as it changes.
@@ -165,7 +168,7 @@ func _setup_touch_controller() -> void:
 ## aims it instead. Tab hands that mouse between flying the camera and aiming the pointer, and R
 ## zeroes whichever of the two holds it.
 func _setup_desktop_pointer() -> void:
-	var preview := get_node_or_null(^"XrealDesktopPreview")
+	var preview: Node = get_node_or_null(^"XrealDesktopPreview")
 	if _extension_loaded or preview == null or not preview.has_signal(&"app_input"):
 		return
 	_preview = preview
@@ -181,14 +184,14 @@ func _on_preview_flycam_changed(active: bool) -> void:
 ## Aim the phone pointer with the preview window's mouse; R points it forward again. This stands in
 ## for tilting the phone, which is what drives it on device.
 func _on_preview_app_input(event: InputEvent) -> void:
-	var motion := event as InputEventMouseMotion
+	var motion: InputEventMouseMotion = event as InputEventMouseMotion
 	if motion:
-		var s := PREVIEW_POINTER_SENSITIVITY
+		var s: float = PREVIEW_POINTER_SENSITIVITY
 		_pointer_yaw = wrapf(_pointer_yaw - motion.relative.x * s, -180.0, 180.0)
 		_pointer_pitch = clampf(_pointer_pitch - motion.relative.y * s, -89.0, 89.0)
 		_pointer_aimed = true
 		return
-	var key := event as InputEventKey
+	var key: InputEventKey = event as InputEventKey
 	if key and key.pressed and not key.echo and key.physical_keycode == KEY_R:
 		_pointer_yaw = 0.0
 		_pointer_pitch = 0.0
@@ -292,7 +295,7 @@ func _on_mesh_snapshot_saved(path: String, block_count: int) -> void:
 	# the app's own directory and into Documents/godot-xreal, where the Files app and a plain
 	# `adb pull` reach it. A refusal is not fatal: the snapshot is still on disk at `path`, so the
 	# status line reports whichever location actually holds it.
-	var location := path
+	var location: String = path
 	if StorageHelper.save_document(path):
 		location = "Documents/godot-xreal/%s" % path.get_file()
 	if _status:
@@ -365,20 +368,20 @@ func _check_no_glasses(delta: float) -> void:
 ## controller.
 func _show_no_glasses_and_quit() -> void:
 	print("[demo] no XREAL glasses detected within %.0fs, quitting" % NO_GLASSES_TIMEOUT_S)
-	var layer := CanvasLayer.new()
+	var layer: CanvasLayer = CanvasLayer.new()
 	layer.layer = 128
-	var bg := ColorRect.new()
+	var bg: ColorRect = ColorRect.new()
 	bg.color = Color(0, 0, 0, 1)
 	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	layer.add_child(bg)
-	var label := Label.new()
+	var label: Label = Label.new()
 	label.text = "No XREAL glasses connected.\nExiting the app."
 	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	# Scale the font to the screen (≈5% of the shorter side) so it's legible at any resolution
 	# instead of the tiny theme default.
-	var vp := get_viewport().get_visible_rect().size
+	var vp: Vector2 = get_viewport().get_visible_rect().size
 	label.add_theme_font_size_override(&"font_size", int(minf(vp.x, vp.y) * 0.05))
 	label.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	layer.add_child(label)
@@ -395,7 +398,7 @@ func _show_no_glasses_and_quit() -> void:
 
 ## The active image-tracking set changed, so show its name on the phone-menu "Cycle Image" button.
 func _on_image_set_changed(image_set_name: String) -> void:
-	var ps := get_node_or_null(^"PhoneScreen")
+	var ps: Node = get_node_or_null(^"PhoneScreen")
 	if ps and ps.has_method(&"set_button_label"):
 		ps.set_button_label("image_cycle", "Cycle: %s" % image_set_name)
 
@@ -425,9 +428,9 @@ func _show_error_dialog(text: String) -> void:
 	if _error_dialog == null:
 		_error_dialog = AcceptDialog.new()
 		_error_dialog.title = "XREAL"
-		var vp := get_viewport().get_visible_rect().size
-		var font_px := int(minf(vp.x, vp.y) * 0.04)
-		var label := _error_dialog.get_label()
+		var vp: Vector2 = get_viewport().get_visible_rect().size
+		var font_px: int = int(minf(vp.x, vp.y) * 0.04)
+		var label: Label = _error_dialog.get_label()
 		label.add_theme_font_size_override(&"font_size", font_px)
 		# Wrap instead of stretching the window past the screen edge (the default label never wraps).
 		label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -436,26 +439,26 @@ func _show_error_dialog(text: String) -> void:
 		add_child(_error_dialog)
 	_error_dialog.dialog_text = text
 	# Fixed width (85% of the shorter screen side) so wrapping has something to wrap against.
-	var s := get_viewport().get_visible_rect().size
+	var s: Vector2 = get_viewport().get_visible_rect().size
 	_error_dialog.popup_centered(Vector2i(int(minf(s.x, s.y) * 0.85), 0))
 
 ## Push a toggle's on/off state onto the phone-menu controller. It keeps the UI in sync when the
 ## app, not the user, changes it, e.g. after a failed camera start or an unsupported plane mode.
 func _set_controller_toggle(control_name: String, on: bool) -> void:
-	var ps := get_node_or_null(^"PhoneScreen")
+	var ps: Node = get_node_or_null(^"PhoneScreen")
 	if ps and ps.has_method(&"set_toggle"):
 		ps.set_toggle(control_name, on)
 
 ## Grey out a phone-menu control, for a state its own toggle governs rather than the device: "Save
 ## Mesh" is inert until meshing is on. Capability gating goes through _apply_capabilities instead.
 func _set_controller_disabled(control_name: String, disabled: bool) -> void:
-	var ps := get_node_or_null(^"PhoneScreen")
+	var ps: Node = get_node_or_null(^"PhoneScreen")
 	if ps and ps.has_method(&"set_disabled"):
 		ps.set_disabled(control_name, disabled)
 
 ## Mark a phone-menu control as mid-switch (inert, labelled "…").
 func _set_controller_busy(control_name: String, busy: bool) -> void:
-	var ps := get_node_or_null(^"PhoneScreen")
+	var ps: Node = get_node_or_null(^"PhoneScreen")
 	if ps and ps.has_method(&"set_busy"):
 		ps.set_busy(control_name, busy)
 
@@ -486,8 +489,8 @@ func _end_switch(control_name: String) -> void:
 func _check_switch_timeouts() -> void:
 	if _switching.is_empty():
 		return
-	var now := Time.get_ticks_msec()
-	for control_name in _switching.keys():  # keys() copies, so _end_switch may erase while we walk it
+	var now: int = Time.get_ticks_msec()
+	for control_name: String in _switching.keys():  # keys() copies, so _end_switch may erase while we walk it
 		if now >= int(_switching[control_name]):
 			push_warning("[demo] %s never reported a state within %d s - re-enabling its toggle"
 				% [control_name, SWITCH_TIMEOUT_MS / 1000.0])
@@ -503,14 +506,14 @@ func _check_switch_timeouts() -> void:
 ## Missing keys fall back the way the control should behave on an extension that predates them:
 ## a device capability to "absent", the renderer-side encoder to "usable".
 func _apply_capabilities(caps: Dictionary) -> void:
-	var ps := get_node_or_null(^"PhoneScreen")
+	var ps: Node = get_node_or_null(^"PhoneScreen")
 	if ps == null or not ps.has_method(&"set_disabled"):
 		return
 	var cam: bool = caps.get("rgb_camera", false)
 	var anchor: bool = caps.get("spatial_anchors", false)
 	var image: bool = caps.get("image_tracking", false)
 	var enc: bool = caps.get("render_texture_encoder", true)
-	var avail := {
+	var avail: Dictionary = {
 		"camera": cam, "capture": cam, "blend": cam,
 		"plane": caps.get("plane_detection", false),
 		"anchor": anchor, "place": anchor,
@@ -518,7 +521,7 @@ func _apply_capabilities(caps: Dictionary) -> void:
 		"mesh": caps.get("depth_mesh", false),
 		"stream": enc, "record": enc,
 	}
-	for control_name in avail:
+	for control_name: String in avail:
 		ps.set_disabled(control_name, not bool(avail[control_name]))
 
 ## Reveal the phone-IMU 3D pointer (demo/phone_pointer.gd), defined in ar_scene.tscn and hidden
@@ -536,6 +539,9 @@ func _on_display_started() -> void:
 	# The glasses display and tracking are live, so disarm the no-glasses watchdog. This is the
 	# reliable "glasses up" event, for when is_tracking() lags past the timeout on a slow cold start.
 	_tracking_seen = true
+	# Capabilities report false while the native session is unavailable. Apply them now that the
+	# display-start signal proves the session is live; _process keeps a retry for a missed signal.
+	_try_apply_capabilities()
 	# Make the current head direction "forward".
 	_xr_runtime.recenter()
 
@@ -559,16 +565,13 @@ func _on_wearing_changed(wearing: bool) -> void:
 func _process(_delta: float) -> void:
 	_check_no_glasses(_delta)
 	_check_switch_timeouts()
-	# One-shot AR-feature availability diagnostic, ~2 s in (once the session has had time to come up),
-	# so a glance at logcat shows which native AR ABIs this device exposes.
-	if _ar_diag_frames >= 0 and _system:
-		_ar_diag_frames += 1
-		if _ar_diag_frames == 120:
-			_ar_diag_frames = -1  # done
-			var caps: Dictionary = (_system.get_capabilities()
-				if _system.has_method(&"get_capabilities") else {})
-			print("[demo] capabilities: %s" % caps)
-			_apply_capabilities(caps)
+	# Retry the capability snapshot about every 2 s until the native session is available. A cold
+	# start can take longer than the first interval, and false means "unknown" before that point.
+	if not _capabilities_applied and _system:
+		_capability_retry_elapsed += _delta
+		if _capability_retry_elapsed >= CAPABILITY_RETRY_S:
+			_capability_retry_elapsed = 0.0
+			_try_apply_capabilities()
 	# Desktop only: re-apply the mouse-aimed pointer every frame, so it keeps hanging off the preview
 	# head and follows the flycam even while the mouse is flying it rather than aiming.
 	if _pointer_aimed:
@@ -578,6 +581,18 @@ func _process(_delta: float) -> void:
 	# The addon owns XREAL controller polling and fusion. The demo consumes only the standard
 	# XRController3D pose to draw its optional ray visualization.
 	if _phone_pointer and _extension_loaded:
-		var controller := _xr_runtime.get_active_controller()
+		var controller: XRController3D = _xr_runtime.get_active_controller()
 		if controller != null and controller.get_is_active():
 			_phone_pointer.aim_from_transform(controller.global_transform)
+
+## Apply capability-dependent phone controls once a native session can answer accurately. Before
+## that, every device capability is false and must not be interpreted as unsupported.
+func _try_apply_capabilities() -> void:
+	if _capabilities_applied or _system == null or not _system.has_method(&"get_capabilities"):
+		return
+	var caps: Dictionary = _system.get_capabilities()
+	if not bool(caps.get("session_available", false)):
+		return
+	_capabilities_applied = true
+	print("[demo] capabilities: %s" % caps)
+	_apply_capabilities(caps)

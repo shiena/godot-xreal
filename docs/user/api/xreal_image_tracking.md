@@ -60,3 +60,9 @@ Cycle to the next set. It does nothing when there are fewer than two sets.
 ### set_enabled(on: bool) -> bool
 
 Toggle image-tracking mode and return the resulting state. It returns false when the ABI, the manifest or the blobs are unavailable, so a UI toggle can flip itself back off.
+
+## Constants
+
+| Constant | Value | Description |
+| --- | --- | --- |
+| <a id="constant-FEATURE_OWNER"></a>`FEATURE_OWNER` | `&"image_tracking"` |  |

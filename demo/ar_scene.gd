@@ -17,11 +17,11 @@ func _ready() -> void:
 ## Each box gets its OWN material, because phone_pointer.gd mutates it per box (hover emission,
 ## select recolor); sharing one material would highlight the whole ring at once.
 func _color_room_boxes() -> void:
-	var boxes := $Room.get_children()
-	for i in boxes.size():
-		var box := boxes[i] as MeshInstance3D
+	var boxes: Array[Node] = $Room.get_children()
+	for i: int in boxes.size():
+		var box: MeshInstance3D = boxes[i] as MeshInstance3D
 		if box == null:
 			continue
-		var material := StandardMaterial3D.new()
+		var material: StandardMaterial3D = StandardMaterial3D.new()
 		material.albedo_color = Color.from_hsv(float(i) / float(boxes.size()), 0.7, 0.9)
 		box.material_override = material

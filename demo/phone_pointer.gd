@@ -11,41 +11,41 @@ extends Node3D
 ## highlights whatever it hits, and `select()` clicks it.
 
 ## Complementary-filter gain: how strongly gravity corrects pitch/roll each frame (0 = gyro only).
-@export var gravity_gain := 0.06
+@export var gravity_gain: float = 0.06
 ## Ray length (m).
-@export var ray_length := 6.0
+@export var ray_length: float = 6.0
 ## Where the beam originates relative to the head. Negative Y puts the origin below the head, at
 ## hand height. The X sign picks the hand (negative = left, the default), and `set_hand` flips it.
 ##
 ## This used to read +0.32, back when the eye image was mirrored vertically on its way to the
 ## compositor (fixed in src/gl.rs and src/vk_bridge.rs); the mirror inverted every vertical offset
 ## along with the scene.
-@export var hand_offset := Vector3(-0.28, -0.32, -0.3)
+@export var hand_offset: Vector3 = Vector3(-0.28, -0.32, -0.3)
 ## Gyro drift suppression: a rate (rad/s, after bias) below this counts as noise. Then the bias
 ## learn rate.
-@export var gyro_deadzone := 0.012
-@export var bias_learn := 0.02
+@export var gyro_deadzone: float = 0.012
+@export var bias_learn: float = 0.02
 
 signal aim_changed(origin: Vector3, direction: Vector3)
 
-var _q := Quaternion.IDENTITY        # fused phone orientation (phone frame -> filter frame)
-var _ref := Quaternion.IDENTITY      # recenter offset
-var _have_ref := false
-var _gyro_bias := Vector3.ZERO       # learned resting gyro bias (drift suppression)
+var _q: Quaternion = Quaternion.IDENTITY    # fused phone orientation (phone frame -> filter frame)
+var _ref: Quaternion = Quaternion.IDENTITY  # recenter offset
+var _have_ref: bool = false
+var _gyro_bias: Vector3 = Vector3.ZERO      # learned resting gyro bias (drift suppression)
 var _ray: MeshInstance3D
 var _tip: MeshInstance3D
 var _raycast: RayCast3D
 var _hover: MeshInstance3D           # box currently under the ray
-var _hover_emission := Color.BLACK   # its emission before we highlighted it
+var _hover_emission: Color = Color.BLACK  # its emission before we highlighted it
 
 func _ready() -> void:
-	var beam := BoxMesh.new()
+	var beam: BoxMesh = BoxMesh.new()
 	beam.size = Vector3(0.012, 0.012, ray_length)
 	_ray = MeshInstance3D.new()
 	_ray.name = "PointerBeam"
 	_ray.mesh = beam
 	_ray.position = Vector3(0, 0, -ray_length * 0.5)
-	var mat := StandardMaterial3D.new()
+	var mat: StandardMaterial3D = StandardMaterial3D.new()
 	mat.albedo_color = Color(0.2, 1.0, 0.45, 0.85)
 	mat.emission_enabled = true
 	mat.emission = Color(0.2, 1.0, 0.45)
@@ -53,7 +53,7 @@ func _ready() -> void:
 	_ray.material_override = mat
 	add_child(_ray)
 
-	var tip := SphereMesh.new()
+	var tip: SphereMesh = SphereMesh.new()
 	tip.radius = 0.07
 	tip.height = 0.14
 	_tip = MeshInstance3D.new()
@@ -74,20 +74,20 @@ func update_imu(accel: Vector3, gyro: Vector3, dt: float, head_transform: Transf
 	# the deadzone.
 	if gyro.length() < 0.1:
 		_gyro_bias = _gyro_bias.lerp(gyro, bias_learn)
-	var g := gyro - _gyro_bias
+	var g: Vector3 = gyro - _gyro_bias
 	if g.length() < gyro_deadzone:
 		g = Vector3.ZERO
 
 	# 1) integrate the (bias-corrected) gyro
-	var wl := g.length()
+	var wl: float = g.length()
 	if wl > 0.000001 and dt > 0.0:
 		_q = (_q * Quaternion(g / wl, wl * dt)).normalized()
 	# 2) correct pitch and roll toward gravity: nudge predicted world-up onto measured up (phone frame)
 	if accel.length() > 1.0:
-		var up_meas := accel.normalized()
-		var up_pred := (_q.inverse() * Vector3.UP).normalized()
-		var axis := up_pred.cross(up_meas)
-		var al := axis.length()
+		var up_meas: Vector3 = accel.normalized()
+		var up_pred: Vector3 = (_q.inverse() * Vector3.UP).normalized()
+		var axis: Vector3 = up_pred.cross(up_meas)
+		var al: float = axis.length()
 		if al > 0.000001:
 			_q = (_q * Quaternion(axis / al, asin(clampf(al, -1.0, 1.0)) * gravity_gain)).normalized()
 
@@ -97,9 +97,9 @@ func update_imu(accel: Vector3, gyro: Vector3, dt: float, head_transform: Transf
 	# negated here, because tilting the phone up sent the beam down. That was the eye image arriving
 	# mirrored vertically (fixed in src/gl.rs and src/vk_bridge.rs): the beam was going the right way
 	# and the view was upside-down. With the image upright, pitch is direct, as in xr_input_router.gd.
-	var rel := _ref * _q
-	var to_godot := Basis(Vector3(1, 0, 0), Vector3(0, 0, -1), Vector3(0, 1, 0))
-	var e := (to_godot * Basis(rel) * to_godot.transposed()).get_euler()
+	var rel: Quaternion = _ref * _q
+	var to_godot: Basis = Basis(Vector3(1, 0, 0), Vector3(0, 0, -1), Vector3(0, 1, 0))
+	var e: Vector3 = (to_godot * Basis(rel) * to_godot.transposed()).get_euler()
 	_apply_aim(Basis.from_euler(e), head_transform)
 
 ## Aim the beam directly instead of from the IMU, for a host that has no phone sensors: the desktop
@@ -120,7 +120,7 @@ func aim_from_transform(aim_transform: Transform3D) -> void:
 ## and highlight what it hits. Shared by the IMU path and the direct one.
 func _apply_aim(aim_basis: Basis, head_transform: Transform3D) -> void:
 	# Origin at a "hand" offset from the head, not from the eye or the camera.
-	var origin := head_transform.origin + head_transform.basis * hand_offset
+	var origin: Vector3 = head_transform.origin + head_transform.basis * hand_offset
 	global_transform = Transform3D(aim_basis, origin)
 	# The origin now sits at the hand offset rather than the default head position, so showing the
 	# beam is safe. It stays hidden until here, and main.gd never reveals it, so it cannot block the
@@ -134,7 +134,7 @@ func _apply_aim(aim_basis: Basis, head_transform: Transform3D) -> void:
 func _update_hover() -> void:
 	var hit: MeshInstance3D = null
 	if _raycast.is_colliding():
-		var collider := _raycast.get_collider()
+		var collider: Node = _raycast.get_collider() as Node
 		if collider:
 			hit = collider.get_parent() as MeshInstance3D  # StaticBody3D -> box
 		_tip.global_position = _raycast.get_collision_point()
@@ -144,7 +144,7 @@ func _update_hover() -> void:
 		_restore_hover()
 		_hover = hit
 		if _hover:
-			var m := _hover.material_override as StandardMaterial3D
+			var m: StandardMaterial3D = _hover.material_override as StandardMaterial3D
 			if m:
 				_hover_emission = m.emission
 				m.emission_enabled = true
@@ -152,7 +152,7 @@ func _update_hover() -> void:
 
 func _restore_hover() -> void:
 	if _hover:
-		var m := _hover.material_override as StandardMaterial3D
+		var m: StandardMaterial3D = _hover.material_override as StandardMaterial3D
 		if m:
 			m.emission = _hover_emission
 			m.emission_enabled = _hover_emission.r + _hover_emission.g + _hover_emission.b > 0.001
@@ -161,7 +161,7 @@ func _restore_hover() -> void:
 ## Click the hovered object; wire this to a trigger. It recolors the object as visible feedback.
 func select() -> void:
 	if _hover:
-		var m := _hover.material_override as StandardMaterial3D
+		var m: StandardMaterial3D = _hover.material_override as StandardMaterial3D
 		if m:
 			m.albedo_color = Color.from_hsv(randf(), 0.75, 0.95)
 			_hover_emission = Color.BLACK  # refresh so hover highlight recomputes
