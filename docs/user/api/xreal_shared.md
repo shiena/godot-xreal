@@ -41,6 +41,12 @@ Drive a Camera3D from the glasses RGB camera's real geometry, so rendered hologr
 ### static audio_wants_mic(state: int) -> bool
 
 
+<a id="method-claim_feature"></a>
+
+### static claim_feature(feature: StringName, owner: Node) -> bool
+
+Claim one process-global feature for `owner`. Repeated claims by the same owner are idempotent; a stale owner is discarded automatically. Returns false while another live node owns it.
+
 <a id="method-eye_offsets"></a>
 
 ### static eye_offsets(system: Object) -> Array
@@ -97,6 +103,12 @@ Find-or-create the ONE shared XrealHandTracker, which registers the XRServer han
 
 Whether app audio can be captured right now. False until consent is granted, and again if the user revokes it from the status bar.
 
+<a id="method-is_feature_owner"></a>
+
+### static is_feature_owner(feature: StringName, owner: Node) -> bool
+
+Whether `owner` currently holds a process-global feature.
+
 <a id="method-is_mic_granted"></a>
 
 ### static is_mic_granted() -> bool
@@ -120,6 +132,12 @@ A fresh XrealSystem, a stateless facade over process-global native state, so eac
 ### static read_setting(name: String, default: Variant) -> Variant
 
 Read a project setting with feature overrides resolved. ProjectSettings.get_setting() skips `name.feature` entries and hands back the base value, which would quietly ignore a project that scopes a setting per build, which projects shared with another XR target commonly do. Every runtime read goes through here.
+
+<a id="method-release_feature"></a>
+
+### static release_feature(feature: StringName, owner: Node) -> bool
+
+Release one process-global feature. Only its current owner can release it.
 
 <a id="method-request_app_audio_consent"></a>
 

@@ -52,3 +52,4 @@ Toggle the plane overlay and return the resulting state. It returns false when t
 | <a id="constant-PLANE_NONE"></a>`PLANE_NONE` | `0` |  |
 | <a id="constant-PLANE_BOTH"></a>`PLANE_BOTH` | `3` |  |
 | <a id="constant-TRACKING_6DOF"></a>`TRACKING_6DOF` | `0` |  |
+| <a id="constant-FEATURE_OWNER"></a>`FEATURE_OWNER` | `&"planes"` |  |

@@ -27,6 +27,30 @@ const GROUP_DESKTOP_PREVIEW := &"xreal_desktop_preview_head"
 # frame would both miss the group. These caches arbitrate between creation and tree entry.
 static var _ar: Node = null
 static var _hand_tracker: Node = null
+# Process-global native subsystems accept one configuration at a time. Feature nodes claim their
+# subsystem on first enable and keep it until they leave the tree, so a duplicate cannot overwrite
+# or stop the active owner's state.
+static var _feature_owners: Dictionary = {}
+
+## Claim one process-global feature for `owner`. Repeated claims by the same owner are idempotent;
+## a stale owner is discarded automatically. Returns false while another live node owns it.
+static func claim_feature(feature: StringName, owner: Node) -> bool:
+	var current: Node = _feature_owners.get(feature)
+	if is_instance_valid(current):
+		return current == owner
+	_feature_owners[feature] = owner
+	return true
+
+## Whether `owner` currently holds a process-global feature.
+static func is_feature_owner(feature: StringName, owner: Node) -> bool:
+	return is_instance_valid(owner) and _feature_owners.get(feature) == owner
+
+## Release one process-global feature. Only its current owner can release it.
+static func release_feature(feature: StringName, owner: Node) -> bool:
+	if not is_feature_owner(feature, owner):
+		return false
+	_feature_owners.erase(feature)
+	return true
 
 ## Capture resolution presets, mirroring the SDK VideoCapture sample's Resolution Level. `High` is
 ## the RGB camera's own 1280x720, and going above that only upscales, so it tops the range.

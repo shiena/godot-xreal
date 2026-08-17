@@ -90,6 +90,7 @@ const OVERLAY_ALPHA := 0.22
 ## it reads anything else. Bump the version whenever the block schema changes.
 const SNAPSHOT_FORMAT := "godot-xreal.mesh-snapshot"
 const SNAPSHOT_VERSION := 1
+const FEATURE_OWNER := &"mesh"
 
 var _system: Object                 # XrealSystem (this feature's own stateless instance)
 var _ar: Object                     # the shared XrealAR poller
@@ -117,13 +118,17 @@ func set_enabled(on: bool) -> bool:
 	if not on:
 		_enabled = false
 		_clear_meshes()
-		if _ar:
+		if _ar and XrealShared.is_feature_owner(FEATURE_OWNER, self):
 			_ar.set(&"mesh", false)  # stop the shared XrealAR polling the mesh stream
 		enabled = false
 		return false
 	if not _system or not _system.has_method(&"is_meshing_supported") or not _system.is_meshing_supported():
 		enabled = false
 		error.emit("[xreal-mesh] depth meshing unsupported on this device (Air 2 Ultra only)")
+		return false
+	if not XrealShared.claim_feature(FEATURE_OWNER, self):
+		_fail("[xreal-mesh] another XrealMesh instance owns depth meshing")
+		enabled = false
 		return false
 	_ensure_ar()
 	if not _initialized:
@@ -398,8 +403,16 @@ func _make_material(albedo: Color) -> StandardMaterial3D:
 	return mat
 
 func _exit_tree() -> void:
-	# Release the shared stream switch and stop meshing on clean shutdown.
-	if _enabled and _ar and is_instance_valid(_ar):
-		_ar.set(&"mesh", false)
-	if _initialized and _system:
-		_system.set_meshing_enabled(false)
+	# Only the exclusive owner may stop the process-global mesher and shared stream.
+	if XrealShared.is_feature_owner(FEATURE_OWNER, self):
+		if _ar and is_instance_valid(_ar):
+			_ar.set(&"mesh", false)
+		if _initialized and _system:
+			_system.set_meshing_enabled(false)
+		XrealShared.release_feature(FEATURE_OWNER, self)
+
+## Push a warning AND emit `error`, so the load site can detect the failure instead of only seeing
+## it in the log.
+func _fail(msg: String) -> void:
+	push_warning(msg)
+	error.emit(msg)
