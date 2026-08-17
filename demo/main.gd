@@ -43,9 +43,9 @@ var _extension_loaded: bool = false
 # AR-feature availability diagnostic and phone-control gating. Capability values are unknown until
 # the native session is available, so this retries periodically until it can apply a real snapshot.
 # See docs/develop/plans/ar-features-plan.md.
-const CAPABILITY_RETRY_S := 2.0
-var _capability_retry_elapsed := 0.0
-var _capabilities_applied := false
+const CAPABILITY_RETRY_S: float = 2.0
+var _capability_retry_elapsed: float = 0.0
+var _capabilities_applied: bool = false
 var _phone_pointer: Node3D
 var _cursor_mat: StandardMaterial3D
 # Desktop only: the phone pointer has no IMU to follow off device, so the preview window's mouse
