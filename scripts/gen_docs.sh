@@ -6,7 +6,7 @@
 # The dummy registers the members and loads the XML so the editor F1 help shows the full API.
 #
 # The generator itself is in-crate Rust (src/doc_gen.rs): gdext's `register-docs` assembles the XML
-# from the doc comments and `godot::docs::gather_xml_docs` hands it over without a live engine, so
+# from the doc comments and `godot::docs::__gather_xml_docs` hands it over without a live engine, so
 # this runs it as a host `cargo test`. This is a thin, cross-platform entry point: the Rust side
 # produces the bytes, so the .ps1 twin needs no output-parity dance. It needs a host Rust toolchain.
 #
