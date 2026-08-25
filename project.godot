@@ -48,8 +48,8 @@ pointing/emulate_mouse_from_touch=false
 
 [rendering]
 
-renderer/rendering_method="gl_compatibility"
-renderer/rendering_method.mobile="gl_compatibility"
+rendering_device/vulkan/additional_device_extensions=PackedStringArray("VK_KHR_external_semaphore_fd")
+renderer/rendering_method="mobile"
 textures/vram_compression/import_etc2_astc=true
 
 [xr]

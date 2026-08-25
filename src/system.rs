@@ -847,9 +847,9 @@ impl XrealSystem {
     /// texture-name push ([`Self::stream_push_frame`]), `2` = the Vulkan bridge
     /// (vulkan-path-plan.md stage 4), where components publish the source viewport each frame
     /// through [`Self::stream_publish_viewport`] instead. Backend 2 is reported whenever the
-    /// renderer is Vulkan with a live `RenderingDevice`, independent of the glasses kill switch
-    /// (the encoder works in encoder-only mode too); the bridge itself initializes lazily at
-    /// `stream_start`, and a hard init failure there turns the stream off through its error path.
+    /// renderer is Vulkan with a live `RenderingDevice`, independent of whether the glasses are
+    /// drawing; the bridge itself initializes lazily at `stream_start`, and a hard init failure
+    /// there turns the stream off through its error path.
     #[func]
     fn get_render_texture_encoder_backend(&self) -> i64 {
         if crate::gl::renderer_is_gl() {
@@ -943,7 +943,7 @@ impl XrealSystem {
     /// is 3DoF, IMU orientation only with no position; and `2` is 0DoF.
     /// **Call it before the session starts**, for instance in an autoload `_ready`, before the XR rig
     /// enters the tree, because it is read once at `InitUserDefinedSettings`. It is equivalent to the
-    /// ProjectSetting `xreal/tracking_type` or to `adb shell setprop debug.xreal.tracking_type <n>`.
+    /// ProjectSetting `xreal/tracking_type`.
     /// Use `get_tracking_type()` for the mode actually active on the running session, and
     /// `switch_tracking_type()` to change it at runtime, an SDK call that may be unavailable
     /// mid-session.
@@ -955,7 +955,7 @@ impl XrealSystem {
     /// Which input sources `InitUserDefinedSettings` asks the SDK for: `1` is Controller, the default,
     /// `2` is Hands and `3` is ControllerAndHands. It must be called **before** the XR rig starts the
     /// session, because it is read once at bootstrap. It is also settable with
-    /// `adb shell setprop debug.xreal.input_source <n>`.
+    /// the ProjectSetting `xreal/input_source`.
     ///
     /// **Ask for Hands only if you actually use hand tracking.** The Hands bit makes the SDK call
     /// `NativePerception::SetHandTrackingEnabled(true)` synchronously during input start, measured at
@@ -1296,7 +1296,7 @@ fn mesh_block_to_dict(b: &crate::depth_mesh::MeshBlock) -> VarDictionary {
     }
     // A trailing partial triangle cannot be drawn, so it is dropped rather than emitted short.
     let mut idx = PackedInt32Array::new();
-    for tri in b.indices.chunks_exact(3) {
+    for tri in b.indices.as_chunks::<3>().0 {
         idx.push(tri[0] as i32);
         idx.push(tri[1] as i32);
         idx.push(tri[2] as i32);

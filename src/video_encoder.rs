@@ -67,7 +67,7 @@ static FLIP_SCRATCH: Mutex<(u32, i32, i32)> = Mutex::new((0, 0, 0));
 // through `libmediandk.so` and ask for a sync frame ~once a second.
 //
 // This depends on that opaque C++ layout, so it is a toggle: the `xreal/idr_workaround`
-// ProjectSetting (default ON), overridable at runtime by `debug.xreal.idr_hack` (0/1). It is
+// ProjectSetting (default ON). It is
 // pinned to the analyzed build (GNU Build ID 75a6536f531fa7de046db96609c7e119ad5287f4); an SDK
 // bump needs the offsets re-checked. `request-sync` failing or the layout being wrong at
 // worst produces no key frame - the pointers are null-checked, so a changed layout degrades to
@@ -263,13 +263,10 @@ struct EncoderConfig {
 }
 
 /// Resolve the periodic-IDR workaround setting, MAIN THREAD ONLY (it reads `ProjectSettings`).
-/// Priority: the `debug.xreal.idr_hack` system property overrides at runtime (0/1); otherwise the
+/// The `xreal/idr_workaround` ProjectSetting decides it, ON by default. See
 /// `xreal/idr_workaround` ProjectSetting; otherwise ON by default. See
 /// docs/develop/archive/codex-idr-analysis.md.
 fn resolve_idr_hack() -> bool {
-    if let Some(v) = crate::session::android_prop_i32(b"debug.xreal.idr_hack\0") {
-        return v == 1;
-    }
     use godot::classes::ProjectSettings;
     use godot::obj::Singleton;
     let ps = ProjectSettings::singleton();
@@ -321,8 +318,8 @@ pub fn start(
     };
     if !crate::gl::renderer_is_gl() {
         // The stage-4 Vulkan path needs the bridge machinery (the tick, the private EGL context,
-        // the opaque-fd bundles), but NOT the glasses kill switch: ensure_init brings the bridge
-        // up on demand, so the encoder works in encoder-only mode too (glasses rendering off).
+        // the opaque-fd bundles), but not the eye rendering: ensure_init brings the bridge up on
+        // demand, which is why the encoder gates on bridge_ready() rather than glasses_enabled().
         if !crate::vk_bridge::ensure_init() {
             godot::global::godot_warn!(
                 "[xreal] FPV encoder unavailable: Vulkan bridge failed to initialize"

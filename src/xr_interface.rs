@@ -72,7 +72,7 @@ fn projection_array(projection: Projection) -> PackedFloat64Array {
 /// The addon always registers and activates it internally for pose delivery; scenes never
 /// instantiate it directly. It claims Godot's primary interface slot, so `XrealXRRuntime` hands
 /// that slot back first when a startup OpenXR interface holds it. When the ProjectSetting
-/// `xreal/xr_multiview_poc`, or the Android property `debug.xreal.xr_multiview`, enables the
+/// `xreal/xr_multiview_poc` enables the
 /// Vulkan-only multiview renderer, it also needs `xr/shaders/enabled=true` and an export preset
 /// whose XR Mode is `OpenXR`. The established two-SubViewport Multipass path remains the default.
 #[derive(GodotClass)]

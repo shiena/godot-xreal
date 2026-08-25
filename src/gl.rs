@@ -256,8 +256,8 @@ pub fn has_current_context() -> Option<bool> {
 /// texture names, which requires Godot itself to own an EGL context. Under the Vulkan renderers
 /// (Forward+ / Mobile) that context does not exist, so this GL path is skipped; the vk_bridge (an
 /// opaque-fd VkImage shared into a private EGL context; see `docs/develop/plans/vulkan-path-plan.md`)
-/// renders the glasses instead when `debug.xreal.vulkan_glasses=1`, otherwise phone display and
-/// tracking only. Head tracking, the SDK session and the phone display stay renderer-independent.
+/// renders the glasses instead. Head tracking, the SDK session and the phone display stay
+/// renderer-independent.
 pub fn renderer_is_gl() -> bool {
     use godot::classes::RenderingServer;
     use godot::obj::Singleton;
@@ -272,8 +272,7 @@ pub fn renderer_is_gl() -> bool {
             if is_gl {
                 "ENABLED"
             } else {
-                "DISABLED (Vulkan: glasses render via the vk_bridge when \
-                 debug.xreal.vulkan_glasses=1, else phone display + tracking only)"
+                "DISABLED (Vulkan: the glasses render through the vk_bridge instead)"
             }
         );
         is_gl

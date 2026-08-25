@@ -1431,8 +1431,8 @@ pub fn run_render_thread_tick() {
 /// the bridge orders its copy against Godot's eye rendering purely by same-queue submission
 /// order; see `vk_bridge.rs`.
 pub fn run_vulkan_render_thread_tick() {
-    // The bridge machinery must be up (glasses rendering OR encoder-only mode). node.rs only
-    // registers this callback once ensure_init() succeeded, so bridge_ready() holds here.
+    // The bridge machinery must be up. node.rs only registers this callback once ensure_init()
+    // succeeded, so bridge_ready() holds here.
     if !crate::vk_bridge::bridge_ready() {
         return;
     }
@@ -1445,15 +1445,11 @@ pub fn run_vulkan_render_thread_tick() {
     // here, with the private context bound.
     crate::vk_bridge::wait_entry_fence();
     crate::video_encoder::vk_tick();
-    if crate::vk_bridge::glasses_enabled() {
-        // Glasses rendering: the SDK compositor is driven and fill_eyes records both the eye
-        // copies and (piggybacked) the encoder copy in one submission.
-        ensure_gfx_thread_started();
-        run_frame_tick_with(FillBackend::Vulkan);
-    } else {
-        // Encoder-only mode: no eyes, no SDK compositor - just the encoder-bundle copy.
-        crate::vk_bridge::submit_encoder_only();
-    }
+    // The SDK compositor is driven and fill_eyes records both the eye copies and (piggybacked) the
+    // encoder copy in one submission. This tick only runs under Vulkan (node.rs), where
+    // glasses_enabled() holds by definition, so there is no second case to pick.
+    ensure_gfx_thread_started();
+    run_frame_tick_with(FillBackend::Vulkan);
     crate::egl_context::unbind();
 }
 
@@ -1526,13 +1522,6 @@ fn run_frame_tick_with(backend: FillBackend) {
     // patch the main thread wrote (SubmitCurrentFrame → UpdateMetrics runs here and otherwise SIGBUSes
     // on a null metrics callback ~1 s in).
     crate::signal_guard::reassert_update_metrics_on_render_thread();
-
-    // One-shot stage-0 Vulkan-path probe (AHardwareBuffer -> EGLImage -> GL bridge), a few seconds
-    // in, on this render/GL thread. GL backend only: under Vulkan the bridge itself IS the
-    // production form of what the probe proves.
-    if backend == FillBackend::Gl {
-        crate::ahb_probe::maybe_run(n);
-    }
 
     // Drive the per-frame HMD input update (→ DisplayManager::OnBeforeRender) BEFORE populating the
     // frame, so the render pose the compositor reprojects against is refreshed to the live head pose
@@ -1691,8 +1680,9 @@ fn run_frame_tick_with(backend: FillBackend) {
     }
     if backend == FillBackend::Vulkan && !vk_targets.is_empty() {
         // One command buffer for both eyes: foreign acquire -> copy (or solid-color clear)
-        // -> foreign release, then the sync-v1 queue wait, so everything the compositor will
-        // sample has completed before SubmitCurrentFrame below.
+        // -> foreign release, then the sync mode's ordering - sync v2 (default) queues a SYNC_FD
+        // wait on this context so the compositor's GL sampling executes after the copies;
+        // vk_sync=0 instead waits the queue idle - before SubmitCurrentFrame below.
         filled = crate::vk_bridge::fill_eyes(&vk_targets);
     }
 

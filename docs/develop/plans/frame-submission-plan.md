@@ -27,16 +27,14 @@ Deltas found on device after this was written:
   dimensions and performs the upscale directly into the fixed 1968x1134 compositor image. GLES
   uses its existing linear framebuffer blit; Vulkan uses core `vkCmdBlitImage` only when the
   physical device reports RGBA8 optimal-tiling BLIT_SRC, BLIT_DST and linear-filter support. A
-  missing command/capability, an sRGB-typed source, or `debug.xreal.scale_blit=0` retains the
+  missing command/capability or an sRGB-typed source retains the
   full-size SubViewport plus Godot bilinear scaling and `vkCmdCopyImage`. No additional Vulkan
   device extension is required.
 - `xreal/dynamic_render_scale` is an opt-in Project Setting sampled when the stereo rig is created.
   It treats the persisted `xreal/render_scale` as the quality ceiling and 0.5 as an internal floor,
   so projects do not need to choose separate min/max/target values. The controller calibrates its
   target from valid XREAL compositor rates, steps down by 0.05 after 0.75 s below 90% of target, and
-  steps up only after 4 s above 97%, with a cooldown after every resize. An explicit
-  `debug.xreal.render_scale` override disables it so fixed-scale device comparisons remain
-  reproducible.
+  steps up only after 4 s above 97%, with a cooldown after every resize.
 
 ## TL;DR
 

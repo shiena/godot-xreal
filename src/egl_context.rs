@@ -233,6 +233,12 @@ pub fn available() -> bool {
     context().is_some()
 }
 
+/// The private context's `EGLDisplay`, for EGL operations issued outside this module while the
+/// context is bound (the bridge's sync-v2 native-fence waits).
+pub fn display() -> Option<*mut c_void> {
+    context().map(|c| c.display)
+}
+
 /// Make the private context current on the calling thread. Returns `false` (with a warning) on
 /// failure. Call [`unbind`] when the SDK graphics operation is done; the pair is what keeps the
 /// context from ever *lingering* current.

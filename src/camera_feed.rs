@@ -198,12 +198,11 @@ impl ICameraFeed for XrealCameraFeed {
             return false;
         }
         // Sampled per capture start, so a `setprop` plus a camera off and on cycle takes effect at once.
-        self.timing_report = crate::session::android_prop_i32(TIMING_PROP).unwrap_or(0) != 0;
+        self.timing_report = false;
         // Stage-3b path selection, also per capture start. The Vulkan RD path needs the Vulkan
         // renderer, the standard-CameraServer route off (that route needs Image objects), a live
         // RenderingDevice, and no latched structural failure.
         self.vk_enabled = !crate::gl::renderer_is_gl()
-            && crate::session::android_prop_i32(VK_CAMERA_PROP) != Some(0)
             && !self.feed_camera_server
             && RenderingServer::singleton()
                 .get_rendering_device()
@@ -223,7 +222,7 @@ impl ICameraFeed for XrealCameraFeed {
                     broken: AtomicBool::new(false),
                 }));
             }
-            godot_print!("[xreal] camera: vk_rd upload path enabled (debug.xreal.vulkan_camera=0 to disable)");
+            godot_print!("[xreal] camera: vk_rd upload path enabled");
         }
         match session.rgb_camera_start() {
             Some(handle) => {
@@ -801,18 +800,6 @@ struct DirectStages {
     size: (i32, i32, i32, i32),
     mean: u64,
 }
-
-/// Run `adb shell setprop debug.xreal.camera_timing 1`, then toggle the camera off and on, to print
-/// the per-stage grab breakdown every 120 frames. It is off by default, being a diagnostic rather
-/// than telemetry.
-const TIMING_PROP: &[u8] = b"debug.xreal.camera_timing\0";
-
-/// Stage-3b kill switch (vulkan-path-plan.md): `adb shell setprop debug.xreal.vulkan_camera 0`
-/// disables the RD upload path under the Vulkan renderer (default ON since the 2026-07-31
-/// device pass: 5 min soak clean, colors identical to the Image path, per-grab total 2004 us vs
-/// 2219 us and main-thread cost 871 us vs 2200 us). Sampled at capture start like
-/// [`TIMING_PROP`], so a camera off/on cycle applies it.
-const VK_CAMERA_PROP: &[u8] = b"debug.xreal.vulkan_camera\0";
 
 /// The Vulkan RD upload path's cross-thread state (stage 3b, see the design review in
 /// vulkan-path-plan.md): a two-slot latest-wins mailbox between the main thread (SDK grab) and
