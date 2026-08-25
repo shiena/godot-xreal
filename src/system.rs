@@ -1296,7 +1296,7 @@ fn mesh_block_to_dict(b: &crate::depth_mesh::MeshBlock) -> VarDictionary {
     }
     // A trailing partial triangle cannot be drawn, so it is dropped rather than emitted short.
     let mut idx = PackedInt32Array::new();
-    for tri in b.indices.chunks_exact(3) {
+    for tri in b.indices.as_chunks::<3>().0 {
         idx.push(tri[0] as i32);
         idx.push(tri[1] as i32);
         idx.push(tri[2] as i32);

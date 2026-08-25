@@ -464,7 +464,12 @@ pub fn interleave_cbcr(u: &[u8], v: &[u8], width: i32, height: i32, out: &mut Ve
     if out.len() != m * 2 {
         out.resize(m * 2, 0);
     }
-    for (dst, (&cb, &cr)) in out.chunks_exact_mut(2).zip(u[..m].iter().zip(&v[..m])) {
+    for (dst, (&cb, &cr)) in out
+        .as_chunks_mut::<2>()
+        .0
+        .iter_mut()
+        .zip(u[..m].iter().zip(&v[..m]))
+    {
         dst[0] = cb; // Cb = U
         dst[1] = cr; // Cr = V
     }
@@ -479,7 +484,12 @@ pub fn interleave_cbcr_rgba(u: &[u8], v: &[u8], width: i32, height: i32, out: &m
     if out.len() != m * 4 {
         out.resize(m * 4, 0);
     }
-    for (dst, (&cb, &cr)) in out.chunks_exact_mut(4).zip(u[..m].iter().zip(&v[..m])) {
+    for (dst, (&cb, &cr)) in out
+        .as_chunks_mut::<4>()
+        .0
+        .iter_mut()
+        .zip(u[..m].iter().zip(&v[..m]))
+    {
         dst[0] = cb; // Cb = U -> .r
         dst[1] = cr; // Cr = V -> .g
         dst[2] = 0;
