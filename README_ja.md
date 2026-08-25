@@ -45,7 +45,7 @@ XREAL SDK for Unity 3.1.0 のネイティブライブラリを用い、XREAL One
 | **トラッキングモード**（6DoF / 3DoF / 0DoF） | ✅ | `xreal/tracking_type` または `XrealSystem.set_tracking_type` で選択します。 |
 | **ステレオ表示**（ヘッドロックの表示領域） | ✅ | グラス越しにワールド固定の 3D を表示します。デフォルトは Multipass（両眼）です。 |
 | **Multiview** ステレオ（single-pass-instanced） | ✅ Vulkan Mobile のみ、利得はコンテンツ依存 | デフォルトは Multipass で、どちらのレンダラーでも動作します。真の single-pass multiview に対応するのは Vulkan Mobile レンダラーだけです。プロジェクト設定 `xreal/xr_multiview_poc`（または `setprop debug.xreal.xr_multiview 1`）を有効にすると、自前の `XRInterfaceExtension` を通じて Godot が両眼を 1 パスで 2-layer ターゲットへ描画します。実機では draw call が半減し、draw call 律速のシーンは 5.9% 高速、100k splat の 3DGS シーンもわずかに高速でした。GPU 律速のシーンは Adreno 710 で 13% 低速です。有効化には `xr/shaders/enabled=true` と、エクスポートプリセットの XR Mode を `OpenXR` にする設定が必要です（詳細は[アドオンの README](addons/godot_xreal/README.md#project-settings)）。Compatibility（GL）レンダラーではこの設定を警告付きで無視し、Multipass で動作します。 |
-| **Vulkan Mobile レンダラー** | ✅ 実機検証済み、デフォルト | 第 2 のエクスポートプリセット「Android Vulkan」が、移植全体を Godot の Forward Mobile Vulkan レンダラーで動作させます。出荷版の Compatibility ビルドと同居してインストールできます。グラス描画、RGB カメラ、FPV 配信と録画のいずれも実機で動作し、色は Compatibility ビルドと一致します。グラスはティアリングなしの 60 FPS で描画されます。この同期には `VK_KHR_external_semaphore_fd` デバイス拡張が必要で、`rendering/rendering_device/vulkan/additional_device_extensions` プロジェクト設定から要求します。この設定は `project.godot` に記載済みです。そのためエクスポートテンプレートは、この設定を備えた Godot のものが必要です。拡張が無いとグラスのブリッジはフォールバックせず停止するため、その場合は Compatibility を選びます。Compatibility は引き続き完全にサポートしています。本リポジトリではこれがデフォルトのレンダリング方式で、Android のエクスポートプリセットは両方ともこれを出力します。Compatibility レンダラーにはない `RenderingDevice` と GPU コンピュートが使用でき、描画経路が Android XR や Project Aura と揃います。 |
+| **Vulkan Mobile レンダラー** | ✅ 実機検証済み、デフォルト | 第 2 のエクスポートプリセット「Android Vulkan」が、移植全体を Godot の Forward Mobile Vulkan レンダラーで動作させます。出荷版の Compatibility ビルドと同居してインストールできます。グラス描画、RGB カメラ、FPV 配信と録画のいずれも実機で動作し、色は Compatibility ビルドと一致します。グラスはティアリングなしで描画されます。同期方式は起動時に自動選択され、`VK_KHR_external_semaphore_fd` デバイス拡張が有効なら 60 FPS、無い場合は約 52 FPS で動作します。この拡張は `rendering/rendering_device/vulkan/additional_device_extensions` プロジェクト設定から要求し、`project.godot` に記載済みです。60 FPS で動作させるには、この設定を備えた Godot のエクスポートテンプレートが必要です。本リポジトリではこれがデフォルトのレンダリング方式で、Android のエクスポートプリセットは両方ともこれを出力します。Compatibility レンダラーにはない `RenderingDevice` と GPU コンピュートが使用でき、描画経路が Android XR や Project Aura と揃います。 |
 | **Recenter** | ✅ | 正面方向をリセットします（SDK の `NativePerception::Recenter`）。 |
 | **レンダーメトリクス**（present FPS、dropped、early、latency） | ✅ | コンポジタの実測値を `NRMetrics*` API で直接取得します（Unity の `UpdateMetrics` sink は使用しません）。`XrealSystem` の `get_present_fps()` や `get_dropped_frame_count()` などで読み取れます。 |
 | **フォーカス平面**（コンポジタの再投影） | ✅ 実機検証待ち | コンポジタは VSync のたびに、直前のフレームを最新の頭部ポーズへワープします。その基準となる平面を SDK は 1.4 m に固定しています。そのため、平面から離れた表示ほど残像が残り、二重像が発生します。`XrealSystem.set_focus_plane()` に頭部ローカル座標を渡せば、毎フレーム移動できます。`XrealFocusPlane` コンポーネントは、SDK の `FocusManager` と同じく前方レイキャストの結果で更新します。`SetFocusPlane` export の引数は値渡しの `UnityXRVector3` 2 個（点と法線）です。Unity 側のラッパーが取る 3 個目の velocity は、ここへ届く前に破棄されます。 |
@@ -160,11 +160,11 @@ GDExtension 部分は素の godot-rust です。
 
 1. アドオンを導入し（[プリビルト](#インストールプリビルト) か [ソースからビルド](#ビルドソースから)）、ライブラリを vendoring します。
 2. レンダラーを選びます。
-   デフォルトは **Mobile** で、グラスをティアリングなしの 60 FPS で描画します。
-   Vulkan からグラスへの同期には `VK_KHR_external_semaphore_fd` が必要です。
+   デフォルトは **Mobile** で、グラスをティアリングなしで描画します。
+   同期方式は起動時に自動選択されます。
+   `VK_KHR_external_semaphore_fd` デバイス拡張が有効なら 60 FPS、無い場合は約 52 FPS で動作します。
    この拡張は `rendering/rendering_device/vulkan/additional_device_extensions` プロジェクト設定から要求します。
-   そのためエクスポートテンプレートは、この設定を備えた Godot のものが必要です。
-   設定が無い場合、ブリッジはフォールバックせず停止します。そのときは **Compatibility** を選びます。
+   60 FPS で動作させるには、この設定を備えた Godot のエクスポートテンプレートが必要です。
    Forward+ は選べません。セッション、ヘッドトラッキング、スマホ側の表示は動作しますが、グラスは黒いままになります。
 3. `XROrigin3D` の下に `XRCamera3D` とコントローラを配置します。
    ノード名は任意です。階層はアプリ側が所有します。

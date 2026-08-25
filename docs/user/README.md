@@ -8,11 +8,11 @@ device support.
 Poses come from `XRCamera3D` and `XRController3D`, hand joints from `XRHandTracker`, buttons from
 InputMap actions. The addon supplies the XREAL runtime behind those nodes.
 
-Pick the renderer before anything else. Mobile is the default and renders the glasses tear-free at
-60 FPS. Its Vulkan-to-glasses sync needs the `VK_KHR_external_semaphore_fd` extension, requested
-through the `rendering/rendering_device/vulkan/additional_device_extensions` project setting. The
-export template therefore has to come from a Godot that offers that setting. Where it does not, the
-sync stops rather than falling back, and Compatibility is the choice there. Under Forward+ the
+Pick the renderer before anything else. Mobile is the default and renders the glasses tear-free.
+The sync mode is selected at startup: 60 FPS with the `VK_KHR_external_semaphore_fd` device
+extension, about 52 FPS without it. Godot enables the extension through the
+`rendering/rendering_device/vulkan/additional_device_extensions` project setting, so 60 FPS needs
+an export template from a Godot that offers that setting. Under Forward+ the
 glasses stay black, while tracking and the phone display keep working, which makes the cause hard
 to identify.
 

@@ -13,11 +13,12 @@
 //! submission signals an exportable semaphore, exported as a `SYNC_FD` (`vkGetSemaphoreFdKHR`)
 //! and queued as a server-side `eglWaitSyncKHR` on the private context before
 //! `SubmitCurrentFrame`, so the compositor's GL sampling waits on the copies with no CPU stall.
-//! This needs `VK_KHR_external_semaphore_fd`, which only the custom 4.7 template enables (the
-//! `additional_device_extensions` project setting, PR #114940 backport); without it the bridge
-//! latches [`BROKEN`] - deliberately no fallback.
-//! tear-free 52 FPS) and `1` (bare pipelined fence, 60 FPS but tears) remain as measurement
-//! overrides (see `fill_eyes`). The design history and its alternatives (a fullscreen sampled
+//! This needs `VK_KHR_external_semaphore_fd`, which Godot enables only through the
+//! `additional_device_extensions` project setting (PR #114940 backport, the custom 4.7
+//! template). `load_vk` probes the device for it - `vkGetSemaphoreFdKHR` resolving through
+//! `vkGetDeviceProcAddr` is the device truth - and when the extension is missing, `fill_eyes`
+//! falls back to queue-wait-idle sync: still tear-free, at ~52 FPS instead of 60, so a stock
+//! template runs, only slower. The design history and its alternatives (a fullscreen sampled
 //! pass as fill v2, the sync-v2 extension blockage before the custom template) are recorded in
 //! `docs/develop/plans/vulkan-path-plan.md` and `docs/develop/archive/codex-vulkan-stage2-design.md`.
 //!
@@ -453,14 +454,14 @@ struct VkApi {
     command_pool: VkHandle,
     command_buffer: VkPtr,
     /// Fence signaled by the fill submission; guards the next tick's command-buffer reset and
-    /// bundle teardown (pipelined sync and sync v2, vk_sync=1/2).
+    /// bundle teardown (sync v2 only; the wait-idle fallback proves completion in-frame).
     fence: VkHandle,
     /// Whether optimal-tiled RGBA8 UNORM supports source/destination blit and linear filtering.
     linear_blit_rgba8: bool,
     /// Sync v2's exporter, `vkGetSemaphoreFdKHR`. Resolves only when
     /// `VK_KHR_external_semaphore_fd` is enabled on Godot's device, which takes the custom 4.7
     /// template plus the `additional_device_extensions` project setting (PR #114940 backport);
-    /// stock Godot never enables it.
+    /// stock Godot never enables it. `None` selects the wait-idle fallback in [`fill_eyes`].
     get_semaphore_fd: Option<FnVkGetSemaphoreFdKHR>,
     /// The exportable binary semaphore the fill submission signals each frame (sync v2). SYNC_FD
     /// export has copy transference, so each export resets the payload for the next frame's
@@ -643,11 +644,13 @@ static BROKEN: AtomicBool = AtomicBool::new(false);
 static FILL_LOG: AtomicU32 = AtomicU32::new(0);
 /// One-shot "Vulkan side initialized" log gate (ensure_init is idempotent, may be called often).
 static VK_INIT_LOGGED: AtomicBool = AtomicBool::new(false);
-/// Set while a fill submission's fence has not been waited on yet (pipelined sync and sync v2,
-/// vk_sync=1/2).
+/// Set while a fill submission's fence has not been waited on yet (sync v2; the wait-idle
+/// fallback never pipelines).
 static FENCE_PENDING: AtomicBool = AtomicBool::new(false);
 /// One-shot eye-source format log gate.
 static SRC_LOGGED: AtomicBool = AtomicBool::new(false);
+/// One-shot wait-idle fallback log gate (no `VK_KHR_external_semaphore_fd` on the device).
+static WAIT_IDLE_LOGGED: AtomicBool = AtomicBool::new(false);
 /// One-shot direct scale-blit log gate.
 static SCALE_BLIT_LOGGED: AtomicBool = AtomicBool::new(false);
 /// The raw-copy fallback cannot mirror the eye image, so say once that the view is upside-down.
@@ -900,9 +903,10 @@ fn load_vk() -> Result<VkApi, String> {
         }
 
         // Sync v2 wiring: vkGetSemaphoreFdKHR resolving is the device-truth probe for
-        // VK_KHR_external_semaphore_fd. Unresolved is not an init failure - the encoder path and
-        // the vk_sync=0/1 measurement overrides need none of this - but sync v2 is the default
-        // glasses sync, and fill_eyes latches BROKEN if it runs without the exporter.
+        // VK_KHR_external_semaphore_fd (unenabled device extensions resolve to null through
+        // vkGetDeviceProcAddr, device-verified for the AHB case above). Unresolved is not an
+        // init failure: fill_eyes falls back to queue-wait-idle sync, and the encoder path
+        // needs none of this.
         let get_semaphore_fd: Option<FnVkGetSemaphoreFdKHR> = {
             let p = gdpa(device as VkPtr, c"vkGetSemaphoreFdKHR".as_ptr().cast());
             if p.is_null() {
@@ -945,7 +949,7 @@ fn load_vk() -> Result<VkApi, String> {
             if sync_semaphore != 0 {
                 "available"
             } else {
-                "UNAVAILABLE (stock template? sync v2 will latch broken)"
+                "unavailable (stock template? falling back to wait-idle sync)"
             }
         );
         Ok(VkApi {
@@ -1648,10 +1652,10 @@ unsafe fn sync_fd_gl_wait(api: &VkApi) -> bool {
 
 /// Copy the published eye sources into the acquired slots, then order the SDK compositor's GL
 /// sampling after the copies: sync v2 (the default) signals an exportable semaphore and queues a
-/// `SYNC_FD` wait on the private EGL context; `vk_sync=0` waits the queue idle and `vk_sync=1`
-/// pipelines a bare fence (both kept as measurement overrides). `targets` pairs each acquired
-/// slot's GL name with its eye index. Tick thread only, after Godot's frame submission. Returns
-/// the number of eyes filled.
+/// `SYNC_FD` wait on the private EGL context; a device without `VK_KHR_external_semaphore_fd`
+/// (stock template) falls back to waiting the queue idle - tear-free too, at ~52 FPS. `targets`
+/// pairs each acquired slot's GL name with its eye index. Tick thread only, after Godot's frame
+/// submission. Returns the number of eyes filled.
 pub fn fill_eyes(targets: &[(u32, usize)]) -> u32 {
     let Some(api) = vk() else { return 0 };
     if BROKEN.load(Ordering::Relaxed) {
@@ -1661,14 +1665,16 @@ pub fn fill_eyes(targets: &[(u32, usize)]) -> u32 {
     // a SYNC_FD and queues a server-side eglWaitSyncKHR on the private context before
     // SubmitCurrentFrame, so the compositor's GL sampling orders after the copies with no CPU
     // stall: tear-free at full rate. It needs VK_KHR_external_semaphore_fd, which the
-    // additional_device_extensions project setting requests; without it this latches BROKEN,
-    // deliberately with no fallback.
-    if api.sync_semaphore == 0 {
-        broken(
-            "sync v2 needs VK_KHR_external_semaphore_fd, which this device did not enable; \
-             the additional_device_extensions project setting requests it",
+    // additional_device_extensions project setting requests; a device without it (stock
+    // template, no such setting) falls back to queue-wait-idle sync at the submit below -
+    // tear-free too, at ~52 FPS instead of 60.
+    let sync_fd = api.sync_semaphore != 0;
+    if !sync_fd && !WAIT_IDLE_LOGGED.swap(true, Ordering::Relaxed) {
+        godot::global::godot_warn!(
+            "[xreal] vk_bridge: VK_KHR_external_semaphore_fd is not enabled on this device (a \
+             Godot without the additional_device_extensions setting?); glasses sync falls back \
+             to queue-wait-idle - tear-free, ~52 FPS instead of 60"
         );
-        return 0;
     }
     let n = FILL_LOG.fetch_add(1, Ordering::Relaxed);
 
@@ -1961,20 +1967,35 @@ pub fn fill_eyes(targets: &[(u32, usize)]) -> u32 {
             p_wait_dst_stage_mask: std::ptr::null(),
             command_buffer_count: 1,
             p_command_buffers: &api.command_buffer,
-            signal_semaphore_count: 1,
-            p_signal_semaphores: &api.sync_semaphore,
+            signal_semaphore_count: if sync_fd { 1 } else { 0 },
+            p_signal_semaphores: if sync_fd {
+                &api.sync_semaphore
+            } else {
+                std::ptr::null()
+            },
         };
-        let r = (api.queue_submit)(api.queue, 1, &submit, api.fence);
+        let r = (api.queue_submit)(api.queue, 1, &submit, if sync_fd { api.fence } else { 0 });
         if r != VK_SUCCESS {
             broken(&format!("vkQueueSubmit -> {r}"));
             return 0;
         }
-        // The CPU-side fence wait happens at the next tick's entry and guards only the
-        // command-buffer reset and bundle teardown. What keeps the compositor off a half-copied
-        // slot is the GL-side wait queued below.
-        FENCE_PENDING.store(true, Ordering::Relaxed);
-        if !sync_fd_gl_wait(api) {
-            return 0; // BROKEN latched inside
+        if sync_fd {
+            // The CPU-side fence wait happens at the next tick's entry and guards only the
+            // command-buffer reset and bundle teardown. What keeps the compositor off a
+            // half-copied slot is the GL-side wait queued below.
+            FENCE_PENDING.store(true, Ordering::Relaxed);
+            if !sync_fd_gl_wait(api) {
+                return 0; // BROKEN latched inside
+            }
+        } else {
+            // Wait-idle fallback: wait the queue idle so the SDK's timewarp only ever samples a
+            // fully-copied slot. Tear-free; costs about 8 FPS against sync v2. Everything is
+            // provably complete here, so no fence is pipelined into the next tick.
+            let r = (api.queue_wait_idle)(api.queue);
+            if r != VK_SUCCESS {
+                broken(&format!("vkQueueWaitIdle -> {r}"));
+                return 0;
+            }
         }
         drop(bundles);
         if n < 8 || n.is_multiple_of(300) {

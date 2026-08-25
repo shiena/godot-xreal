@@ -31,8 +31,11 @@ camera rendering -> FPV stream, one commit each.
   `vk_sync` A/B 0 = 51-58 FPS vs 2 (default) = 60. Sync v2 needs `VK_KHR_external_semaphore_fd`,
   which stock Godot never enables: the export template must be built from a Godot 4.7 tree with
   PR #114940 backported, and project.godot requests the extension through
-  `additional_device_extensions`. No fallback by design - on a stock template the default sync
-  latches the bridge BROKEN, with `vk_sync 0/1` as explicit measurement overrides**; 10 min soak: 20/20 alive checks, 60 FPS at thermal
+  `additional_device_extensions`. On a stock template the bridge detects the missing extension at
+  init (`vkGetSemaphoreFdKHR` unresolved through `vkGetDeviceProcAddr`, the device-truth probe)
+  and falls back to the wait-idle sync automatically - tear-free at ~52 FPS (fallback added
+  2026-08-26, replacing the earlier latch-BROKEN-by-design; the `vk_sync 0/1` measurement props
+  went with the 2026-08-09 prop cleanup)**; 10 min soak: 20/20 alive checks, 60 FPS at thermal
   steady state, clean Exit-button teardown; **color A/B vs the GL build: cyan object mean
   (151,236,254) IDENTICAL, pink floor within 2/255** - the raw-copy path carries display-ready
   bytes exactly as designed, no sRGB double-transform. **Vulkan-vs-GL FPS parity, same method

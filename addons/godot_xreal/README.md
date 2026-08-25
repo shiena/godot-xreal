@@ -145,13 +145,14 @@ Forward+ nothing errors out at all. The session starts, head tracking runs, the 
 and the glasses stay black.
 
 `mobile` is the default. The glasses reach the SDK compositor through the Vulkan bridge, which
-shares each eye as an opaque-fd `VkImage`. A `VK_KHR_external_semaphore_fd` fence on that image is
-what keeps the glasses tear-free at 60 FPS. The extension has to be listed in
-`rendering/rendering_device/vulkan/additional_device_extensions`, so the export template has to come
-from a Godot that offers that setting. Where it does not, the bridge stops rather than falling back,
-by design.
+shares each eye as an opaque-fd `VkImage`. The bridge selects its sync at startup. With the
+`VK_KHR_external_semaphore_fd` device extension it fences the eye copies on the GPU, and the
+glasses render tear-free at 60 FPS. Without the extension it waits the copies out on the CPU,
+still tear-free, at about 52 FPS. Godot enables the extension when
+`rendering/rendering_device/vulkan/additional_device_extensions` lists it, so 60 FPS needs an
+export template from a Godot that offers that setting.
 
-`gl_compatibility` is the choice on a Godot without that setting, and it stays fully supported. The
+`gl_compatibility` is fully supported. The
 glasses path there hands its eye-viewport textures to the compositor as GL texture names, which that
 renderer's context supplies directly.
 
